@@ -1,0 +1,324 @@
+{
+  "baseline": {
+    "per_symbol": {
+      "BTC/USDT": {
+        "total_return_pct": -0.22,
+        "max_drawdown_pct": 0.92,
+        "sharpe_ratio": -0.68,
+        "win_rate": 28.2,
+        "total_trades": 39,
+        "profit_factor": 0.96,
+        "avg_pnl_pct": 0.11,
+        "winning_trades": 11,
+        "losing_trades": 28,
+        "expectancy_r": -0.1774
+      },
+      "ETH/USDT": {
+        "total_return_pct": -0.96,
+        "max_drawdown_pct": 1.32,
+        "sharpe_ratio": -5.76,
+        "win_rate": 18.2,
+        "total_trades": 33,
+        "profit_factor": 0.48,
+        "avg_pnl_pct": -0.65,
+        "winning_trades": 6,
+        "losing_trades": 27,
+        "expectancy_r": -0.4686
+      },
+      "SOL/USDT": {
+        "total_return_pct": -0.48,
+        "max_drawdown_pct": 0.75,
+        "sharpe_ratio": -2.56,
+        "win_rate": 28.1,
+        "total_trades": 32,
+        "profit_factor": 0.76,
+        "avg_pnl_pct": -0.33,
+        "winning_trades": 9,
+        "losing_trades": 23,
+        "expectancy_r": -0.2569
+      },
+      "BNB/USDT": {
+        "total_return_pct": -1.26,
+        "max_drawdown_pct": 1.26,
+        "sharpe_ratio": -16.94,
+        "win_rate": 4.2,
+        "total_trades": 24,
+        "profit_factor": 0.12,
+        "avg_pnl_pct": -1.24,
+        "winning_trades": 1,
+        "losing_trades": 23,
+        "expectancy_r": -1.1256
+      },
+      "XRP/USDT": {
+        "total_return_pct": -1.0,
+        "max_drawdown_pct": 1.14,
+        "sharpe_ratio": -11.41,
+        "win_rate": 16.7,
+        "total_trades": 24,
+        "profit_factor": 0.27,
+        "avg_pnl_pct": -1.03,
+        "winning_trades": 4,
+        "losing_trades": 20,
+        "expectancy_r": -0.5221
+      }
+    },
+    "aggregate_metrics": {
+      "total_return_pct": -3.33,
+      "max_drawdown_pct": 3.6,
+      "sharpe_ratio": -3.67,
+      "win_rate": 20.4,
+      "total_trades": 152,
+      "profit_factor": 0.56,
+      "avg_pnl_pct": -0.54,
+      "winning_trades": 31,
+      "losing_trades": 121,
+      "expectancy_r": -0.4615
+    }
+  },
+  "staged": {
+    "per_symbol": {
+      "BTC/USDT": {
+        "total_return_pct": -0.09,
+        "max_drawdown_pct": 0.63,
+        "sharpe_ratio": -0.53,
+        "win_rate": 57.1,
+        "total_trades": 21,
+        "profit_factor": 0.99,
+        "avg_pnl_pct": 0.2,
+        "winning_trades": 12,
+        "losing_trades": 9,
+        "expectancy_r": 0.0383
+      },
+      "ETH/USDT": {
+        "total_return_pct": -0.59,
+        "max_drawdown_pct": 0.8,
+        "sharpe_ratio": -5.12,
+        "win_rate": 25.0,
+        "total_trades": 20,
+        "profit_factor": 0.53,
+        "avg_pnl_pct": -0.66,
+        "winning_trades": 5,
+        "losing_trades": 15,
+        "expectancy_r": -0.5037
+      },
+      "SOL/USDT": {
+        "total_return_pct": -0.61,
+        "max_drawdown_pct": 0.61,
+        "sharpe_ratio": -6.45,
+        "win_rate": 38.9,
+        "total_trades": 18,
+        "profit_factor": 0.46,
+        "avg_pnl_pct": -0.74,
+        "winning_trades": 7,
+        "losing_trades": 11,
+        "expectancy_r": -0.3454
+      },
+      "BNB/USDT": {
+        "total_return_pct": -1.04,
+        "max_drawdown_pct": 1.19,
+        "sharpe_ratio": -11.6,
+        "win_rate": 13.3,
+        "total_trades": 15,
+        "profit_factor": 0.21,
+        "avg_pnl_pct": -1.66,
+        "winning_trades": 2,
+        "losing_trades": 13,
+        "expectancy_r": -0.7797
+      },
+      "XRP/USDT": {
+        "total_return_pct": -0.46,
+        "max_drawdown_pct": 0.65,
+        "sharpe_ratio": -4.97,
+        "win_rate": 37.5,
+        "total_trades": 16,
+        "profit_factor": 0.56,
+        "avg_pnl_pct": -0.84,
+        "winning_trades": 6,
+        "losing_trades": 10,
+        "expectancy_r": -0.1227
+      }
+    },
+    "aggregate_metrics": {
+      "total_return_pct": -2.43,
+      "max_drawdown_pct": 2.7,
+      "sharpe_ratio": -4.24,
+      "win_rate": 35.6,
+      "total_trades": 90,
+      "profit_factor": 0.53,
+      "avg_pnl_pct": -0.68,
+      "winning_trades": 32,
+      "losing_trades": 58,
+      "expectancy_r": -0.3238
+    },
+    "candidate_lifecycle": {
+      "total_created": 149,
+      "total_confirmed": 90,
+      "total_executed": 90,
+      "total_voided": 0,
+      "total_expired": 59,
+      "conversion_rate": 0.604,
+      "expiry_rate": 0.396,
+      "void_rate": 0.0,
+      "avg_confirmation_delay_15m": 0.0,
+      "avg_candidate_age_15m": 0.0,
+      "confirmation_delay_distribution": {
+        "min": 0,
+        "max": 0,
+        "median": 0
+      },
+      "execution_clustering": {
+        "total_cycles_with_executions": 0,
+        "max_executions_per_cycle": 0,
+        "avg_executions_per_cycle": 0.0,
+        "burst_cycles": 0
+      }
+    },
+    "per_symbol_lifecycle": {
+      "BTC/USDT": {
+        "total_created": 38,
+        "total_confirmed": 21,
+        "total_executed": 21,
+        "total_voided": 0,
+        "total_expired": 17,
+        "conversion_rate": 0.5526,
+        "expiry_rate": 0.4474,
+        "void_rate": 0.0,
+        "avg_confirmation_delay_15m": 7.33,
+        "avg_candidate_age_15m": 11.21,
+        "confirmation_delay_distribution": {
+          "min": 4,
+          "max": 13,
+          "median": 6
+        },
+        "execution_clustering": {
+          "total_cycles_with_executions": 21,
+          "max_executions_per_cycle": 1,
+          "avg_executions_per_cycle": 0.012360211889346674,
+          "burst_cycles": 0
+        }
+      },
+      "ETH/USDT": {
+        "total_created": 32,
+        "total_confirmed": 20,
+        "total_executed": 20,
+        "total_voided": 0,
+        "total_expired": 12,
+        "conversion_rate": 0.625,
+        "expiry_rate": 0.375,
+        "void_rate": 0.0,
+        "avg_confirmation_delay_15m": 8.85,
+        "avg_candidate_age_15m": 11.53,
+        "confirmation_delay_distribution": {
+          "min": 2,
+          "max": 12,
+          "median": 9
+        },
+        "execution_clustering": {
+          "total_cycles_with_executions": 20,
+          "max_executions_per_cycle": 1,
+          "avg_executions_per_cycle": 0.012277470841006752,
+          "burst_cycles": 0
+        }
+      },
+      "SOL/USDT": {
+        "total_created": 30,
+        "total_confirmed": 18,
+        "total_executed": 18,
+        "total_voided": 0,
+        "total_expired": 12,
+        "conversion_rate": 0.6,
+        "expiry_rate": 0.4,
+        "void_rate": 0.0,
+        "avg_confirmation_delay_15m": 8.44,
+        "avg_candidate_age_15m": 11.47,
+        "confirmation_delay_distribution": {
+          "min": 0,
+          "max": 15,
+          "median": 8
+        },
+        "execution_clustering": {
+          "total_cycles_with_executions": 18,
+          "max_executions_per_cycle": 1,
+          "avg_executions_per_cycle": 0.010410641989589358,
+          "burst_cycles": 0
+        }
+      },
+      "BNB/USDT": {
+        "total_created": 24,
+        "total_confirmed": 15,
+        "total_executed": 15,
+        "total_voided": 0,
+        "total_expired": 9,
+        "conversion_rate": 0.625,
+        "expiry_rate": 0.375,
+        "void_rate": 0.0,
+        "avg_confirmation_delay_15m": 7.2,
+        "avg_candidate_age_15m": 10.5,
+        "confirmation_delay_distribution": {
+          "min": 0,
+          "max": 11,
+          "median": 7
+        },
+        "execution_clustering": {
+          "total_cycles_with_executions": 15,
+          "max_executions_per_cycle": 1,
+          "avg_executions_per_cycle": 0.009208103130755065,
+          "burst_cycles": 0
+        }
+      },
+      "XRP/USDT": {
+        "total_created": 25,
+        "total_confirmed": 16,
+        "total_executed": 16,
+        "total_voided": 0,
+        "total_expired": 9,
+        "conversion_rate": 0.64,
+        "expiry_rate": 0.36,
+        "void_rate": 0.0,
+        "avg_confirmation_delay_15m": 6.5,
+        "avg_candidate_age_15m": 9.92,
+        "confirmation_delay_distribution": {
+          "min": 0,
+          "max": 14,
+          "median": 7
+        },
+        "execution_clustering": {
+          "total_cycles_with_executions": 16,
+          "max_executions_per_cycle": 1,
+          "avg_executions_per_cycle": 0.009362200117027502,
+          "burst_cycles": 0
+        }
+      }
+    }
+  },
+  "comparison": {
+    "profit_factor_baseline": 0.56,
+    "profit_factor_staged": 0.53,
+    "profit_factor_change_pct": -5.36,
+    "max_drawdown_baseline": 3.6,
+    "max_drawdown_staged": 2.7,
+    "max_drawdown_change_pct": -25.0,
+    "expectancy_baseline": -0.4615,
+    "expectancy_staged": -0.3238,
+    "expectancy_change_pct": 29.84,
+    "win_rate_baseline": 20.4,
+    "win_rate_staged": 35.6,
+    "trade_count_baseline": 152,
+    "trade_count_staged": 90,
+    "total_return_baseline": -3.33,
+    "total_return_staged": -2.43
+  },
+  "validation": {
+    "all_passed": true,
+    "violations": []
+  },
+  "symbols": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT",
+    "BNB/USDT",
+    "XRP/USDT"
+  ],
+  "timeframe": "1h",
+  "initial_capital": 10000.0
+}

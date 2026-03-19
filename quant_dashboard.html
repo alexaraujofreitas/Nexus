@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexusTrader — Quant Command Center</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg-base:     #060b14;
+    --bg-panel:    #0b1220;
+    --bg-card:     #0f1a2e;
+    --bg-hover:    #152035;
+    --border:      #1a2d4a;
+    --border-dim:  #0f1e30;
+    --text-primary:#e2e8f0;
+    --text-muted:  #637a96;
+    --text-dim:    #3a506e;
+    --accent-blue: #1e90ff;
+    --accent-cyan: #00d4ff;
+    --bull:        #00cc77;
+    --bear:        #ff3355;
+    --warn:        #f59e0b;
+    --purple:      #a855f7;
+    --panel-radius:6px;
+    --header-h:    40px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 11px;
+    overflow-x: hidden;
+  }
+
+  /* ── TOP BAR ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    height: var(--header-h);
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .topbar-logo { font-size: 14px; font-weight: 700; letter-spacing: 2px; color: var(--accent-cyan); }
+  .topbar-logo span { color: var(--text-muted); font-weight: 400; }
+  .topbar-prices { display: flex; gap: 20px; }
+  .price-chip { display: flex; align-items: center; gap: 6px; }
+  .price-chip .coin-icon { width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; }
+  .ic-btc { background: #f7931a22; color: #f7931a; }
+  .ic-eth { background: #627eea22; color: #627eea; }
+  .ic-bnb { background: #f3ba2f22; color: #f3ba2f; }
+  .ic-sol { background: #9945ff22; color: #9945ff; }
+  .price-chip .val { font-size: 12px; font-weight: 600; }
+  .price-chip .chg { font-size: 10px; }
+  .chg.up { color: var(--bull); }
+  .chg.dn { color: var(--bear); }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bull); box-shadow: 0 0 6px var(--bull); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .status-label { font-size: 10px; color: var(--text-muted); }
+  .clock { font-size: 11px; color: var(--text-muted); }
+
+  /* ── LAYOUT ── */
+  .dashboard {
+    display: grid;
+    grid-template-rows: 300px auto auto auto;
+    gap: 6px;
+    padding: 6px;
+    height: calc(100vh - var(--header-h));
+    overflow-y: auto;
+  }
+
+  /* ROW 1 */
+  .row1 { display: grid; grid-template-columns: 1fr; }
+
+  /* ROW 2 */
+  .row2 { display: grid; grid-template-columns: 380px 1fr; gap: 6px; }
+
+  /* ROW 3 */
+  .row3 { display: grid; grid-template-columns: 1fr 320px; gap: 6px; }
+
+  /* ROW 4 */
+  .row4 { display: grid; grid-template-columns: 1fr 1fr 300px; gap: 6px; }
+
+  /* ── PANEL ── */
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--panel-radius);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border-dim);
+    background: var(--bg-card);
+    flex-shrink: 0;
+  }
+  .panel-title {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+    color: var(--text-muted); text-transform: uppercase;
+  }
+  .panel-title .accent { color: var(--accent-cyan); }
+  .panel-body { flex: 1; overflow: auto; padding: 10px 12px; }
+  .panel-body::-webkit-scrollbar { width: 4px; }
+  .panel-body::-webkit-scrollbar-track { background: transparent; }
+  .panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── CHART PANEL ── */
+  .chart-panel { position: relative; }
+  .chart-panel .panel-header { background: transparent; border-bottom: 1px solid var(--border-dim); }
+  #chart-container { flex: 1; min-height: 0; }
+
+  /* Timeframe buttons */
+  .tf-btns { display: flex; gap: 2px; }
+  .tf-btn {
+    padding: 2px 8px; font-size: 10px; font-family: inherit;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); border-radius: 3px; cursor: pointer;
+    transition: all .15s;
+  }
+  .tf-btn:hover, .tf-btn.active { background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); }
+
+  /* Chart toolbar extras */
+  .chart-extras { display: flex; gap: 6px; align-items: center; }
+  .indicator-tag {
+    padding: 2px 7px; font-size: 9px; border-radius: 10px;
+    background: #1e2d45; color: var(--text-muted); border: 1px solid var(--border);
+    cursor: pointer; transition: all .15s;
+  }
+  .indicator-tag.active { background: #1e3a6b; color: var(--accent-cyan); border-color: var(--accent-blue); }
+
+  /* ── TABLES ── */
+  .data-table { width: 100%; border-collapse: collapse; }
+  .data-table th {
+    font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--text-dim); padding: 4px 8px; text-align: left;
+    border-bottom: 1px solid var(--border-dim);
+    position: sticky; top: 0; background: var(--bg-panel); z-index: 1;
+  }
+  .data-table td {
+    padding: 5px 8px; font-size: 10px; color: var(--text-primary);
+    border-bottom: 1px solid var(--border-dim);
+    white-space: nowrap;
+  }
+  .data-table tr:hover td { background: var(--bg-hover); }
+  .data-table tr:last-child td { border-bottom: none; }
+
+  .val-up   { color: var(--bull) !important; }
+  .val-dn   { color: var(--bear) !important; }
+  .val-warn { color: var(--warn) !important; }
+  .val-blue { color: var(--accent-blue) !important; }
+  .val-dim  { color: var(--text-muted) !important; }
+
+  /* ── BADGES ── */
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 9px; font-weight: 700; letter-spacing: .5px;
+  }
+  .badge-buy    { background: #003322; color: var(--bull); border: 1px solid #004433; }
+  .badge-sell   { background: #330011; color: var(--bear); border: 1px solid #440022; }
+  .badge-hold   { background: #1a2840; color: var(--accent-blue); border: 1px solid #1e3a6b; }
+  .badge-long   { background: #003322; color: var(--bull); }
+  .badge-exit   { background: #330011; color: var(--bear); }
+  .badge-bull   { background: #003322; color: var(--bull); border: 1px solid #004433; }
+  .badge-bear   { background: #330011; color: var(--bear); border: 1px solid #440022; }
+  .badge-range  { background: #2a1f00; color: var(--warn); border: 1px solid #3a2e00; }
+  .badge-vol    { background: #2a0040; color: var(--purple); border: 1px solid #3a0060; }
+
+  /* ── COIN CELL ── */
+  .coin-cell { display: flex; align-items: center; gap: 6px; }
+
+  /* ── CONFIDENCE BAR ── */
+  .conf-wrap { display: flex; align-items: center; gap: 6px; }
+  .conf-bar { width: 50px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; flex-shrink: 0; }
+  .conf-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan)); }
+  .conf-text { font-size: 10px; font-weight: 700; color: var(--accent-cyan); }
+
+  /* ── BOT DECISION PANEL ── */
+  .decision-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px; margin-bottom: 8px;
+  }
+  .decision-coin-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .decision-coin { display: flex; align-items: center; gap: 8px; }
+  .decision-coin .name { font-size: 13px; font-weight: 700; }
+  .decision-strategy { font-size: 9px; color: var(--text-muted); letter-spacing: .5px; }
+  .signal-list { list-style: none; margin: 6px 0; }
+  .signal-list li {
+    font-size: 10px; color: var(--text-muted); padding: 2px 0;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .signal-list li::before { content: "◆"; font-size: 6px; color: var(--accent-blue); }
+  .decision-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; border-top: 1px solid var(--border-dim); padding-top: 8px; }
+  .decision-meta { font-size: 9px; color: var(--text-dim); }
+
+  /* ── PORTFOLIO SUMMARY ── */
+  .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .metric-card {
+    background: var(--bg-card); border: 1px solid var(--border-dim);
+    border-radius: 4px; padding: 10px 12px;
+  }
+  .metric-label { font-size: 9px; color: var(--text-muted); letter-spacing: .5px; text-transform: uppercase; margin-bottom: 4px; }
+  .metric-value { font-size: 16px; font-weight: 700; color: var(--text-primary); line-height: 1; }
+  .metric-value.up { color: var(--bull); }
+  .metric-value.dn { color: var(--bear); }
+  .metric-sub { font-size: 9px; color: var(--text-dim); margin-top: 3px; }
+
+  /* ── RISK METER ── */
+  .risk-section { margin-top: 10px; }
+  .risk-header { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
+  .risk-bar-wrap { margin-bottom: 6px; }
+  .risk-bar-label { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-muted); margin-bottom: 3px; }
+  .risk-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .risk-bar-fill { height: 100%; border-radius: 3px; }
+  .fill-blue  { background: linear-gradient(90deg, #1e3a6b, var(--accent-blue)); }
+  .fill-warn  { background: linear-gradient(90deg, #3a2000, var(--warn)); }
+  .fill-red   { background: linear-gradient(90deg, #440011, var(--bear)); }
+  .fill-green { background: linear-gradient(90deg, #003322, var(--bull)); }
+  .risk-score-row {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--bg-card); border: 1px solid var(--border-dim);
+    border-radius: 4px; padding: 8px 12px; margin-top: 8px;
+  }
+  .risk-score-label { font-size: 10px; color: var(--text-muted); }
+  .risk-score-val { font-size: 18px; font-weight: 700; color: var(--warn); }
+
+  /* ── MARKET REGIME ── */
+  .regime-card {
+    background: var(--bg-card); border: 1px solid var(--border-dim);
+    border-radius: 4px; padding: 12px; margin-bottom: 8px;
+  }
+  .regime-name { font-size: 18px; font-weight: 700; color: var(--bull); margin-bottom: 4px; }
+  .regime-conf { font-size: 10px; color: var(--text-muted); }
+  .regime-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+  .regime-tag { font-size: 9px; padding: 2px 6px; border-radius: 3px; }
+
+  /* ── MARKET INTELLIGENCE ── */
+  .intel-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 0; border-bottom: 1px solid var(--border-dim);
+  }
+  .intel-row:last-child { border-bottom: none; }
+  .intel-label { font-size: 10px; color: var(--text-muted); }
+  .intel-val { font-size: 10px; font-weight: 700; }
+  .intel-indicator { width: 6px; height: 6px; border-radius: 50%; margin-left: 4px; display: inline-block; }
+
+  /* ── ALERTS ── */
+  .alert-feed { display: flex; flex-direction: column; gap: 4px; }
+  .alert-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    background: var(--bg-card); border: 1px solid var(--border-dim);
+    border-radius: 4px; padding: 6px 8px;
+    animation: slideIn .3s ease;
+  }
+  @keyframes slideIn { from { opacity:0; transform: translateX(-8px); } to { opacity:1; transform: translateX(0); } }
+  .alert-type { font-size: 8px; font-weight: 700; letter-spacing: .5px; padding: 1px 5px; border-radius: 2px; flex-shrink: 0; margin-top: 1px; }
+  .a-trade  { background: #003322; color: var(--bull); }
+  .a-risk   { background: #330011; color: var(--bear); }
+  .a-signal { background: #1a2840; color: var(--accent-blue); }
+  .a-regime { background: #2a1f00; color: var(--warn); }
+  .alert-msg { font-size: 10px; color: var(--text-muted); line-height: 1.4; }
+  .alert-time { font-size: 9px; color: var(--text-dim); flex-shrink: 0; margin-left: auto; }
+
+  /* ── SIGNAL CONDITION ── */
+  .sig-cond { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted) !important; font-size: 9px !important; }
+
+  /* ── FILTER ROW ── */
+  .filter-row { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .filter-select {
+    background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--text-muted); padding: 3px 8px; border-radius: 3px;
+    font-family: inherit; font-size: 10px; cursor: pointer;
+  }
+  .filter-select:focus { outline: none; border-color: var(--accent-blue); }
+
+  /* Scrollable tbody */
+  .table-wrap { overflow: auto; max-height: 100%; }
+
+  /* Separator */
+  .sep { height: 1px; background: var(--border-dim); margin: 8px 0; }
+
+  /* Dots */
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--bull); box-shadow: 0 0 5px var(--bull); display: inline-block; animation: pulse 2s infinite; }
+
+  /* Panel corner badge */
+  .corner-badge {
+    font-size: 8px; padding: 1px 5px; border-radius: 3px;
+    background: var(--bg-base); border: 1px solid var(--border-dim); color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+
+<!-- ── TOP BAR ── -->
+<div class="topbar">
+  <div class="topbar-logo">NEXUS<span>TRADER</span> &nbsp;|&nbsp; <span style="font-size:10px;letter-spacing:1px;">QUANT COMMAND CENTER</span></div>
+  <div class="topbar-prices" id="live-prices">
+    <div class="price-chip">
+      <div class="coin-icon ic-btc">₿</div>
+      <span class="val" id="p-btc">$113,784</span>
+      <span class="chg up" id="c-btc">+0.18%</span>
+    </div>
+    <div class="price-chip">
+      <div class="coin-icon ic-eth">Ξ</div>
+      <span class="val" id="p-eth">$4,072</span>
+      <span class="chg up" id="c-eth">+0.14%</span>
+    </div>
+    <div class="price-chip">
+      <div class="coin-icon ic-bnb">⬡</div>
+      <span class="val" id="p-bnb">$1,291</span>
+      <span class="chg dn" id="c-bnb">−1.30%</span>
+    </div>
+    <div class="price-chip">
+      <div class="coin-icon ic-sol">◎</div>
+      <span class="val" id="p-sol">$194</span>
+      <span class="chg up" id="c-sol">+0.70%</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="status-dot"></div>
+    <span class="status-label">BOT ACTIVE — 4 OPEN</span>
+    <span class="clock" id="clock">--:--:-- UTC</span>
+  </div>
+</div>
+
+<!-- ── DASHBOARD GRID ── -->
+<div class="dashboard">
+
+  <!-- ═══════════════════════════════════════════════════════ ROW 1: CHART -->
+  <div class="row1">
+    <div class="panel chart-panel">
+      <div class="panel-header">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="panel-title"><span class="accent">BTC</span>/USDT · PERPETUAL</span>
+          <div class="tf-btns">
+            <button class="tf-btn" onclick="setTF('1m')">1m</button>
+            <button class="tf-btn" onclick="setTF('5m')">5m</button>
+            <button class="tf-btn" onclick="setTF('15m')">15m</button>
+            <button class="tf-btn active" onclick="setTF('1h')">1h</button>
+            <button class="tf-btn" onclick="setTF('4h')">4h</button>
+            <button class="tf-btn" onclick="setTF('1D')">1D</button>
+          </div>
+        </div>
+        <div class="chart-extras">
+          <span class="indicator-tag active" id="tag-ema" onclick="toggleIndicator('ema')">EMA20</span>
+          <span class="indicator-tag" id="tag-rsi" onclick="toggleIndicator('rsi')">RSI</span>
+          <span class="indicator-tag" id="tag-macd" onclick="toggleIndicator('macd')">MACD</span>
+          <span class="indicator-tag active" id="tag-vol" onclick="toggleIndicator('vol')">Volume</span>
+          <span class="indicator-tag active" id="tag-markers" onclick="toggleIndicator('markers')">Trades</span>
+          <span class="live-dot"></span>
+          <span style="font-size:9px;color:var(--text-dim);">LIVE</span>
+        </div>
+      </div>
+      <div id="chart-container"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ ROW 2: DECISION + SIGNALS -->
+  <div class="row2">
+
+    <!-- Bot Decision Engine -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">⚡ <span class="accent">BOT</span> DECISION ENGINE</span>
+        <span class="corner-badge">AUTO</span>
+      </div>
+      <div class="panel-body" id="decision-panel"></div>
+    </div>
+
+    <!-- AI Signal Analysis -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">📊 AI <span class="accent">SIGNAL</span> ANALYSIS</span>
+        <span class="live-dot"></span>
+      </div>
+      <div class="panel-body" style="padding:0;">
+        <div class="table-wrap" style="max-height:100%;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>COIN</th><th>SIGNAL</th><th>TP TARGET</th><th>SL PRICE</th>
+                <th>RISK $</th><th>CONFIDENCE</th><th>CONDITION</th>
+              </tr>
+            </thead>
+            <tbody id="signal-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═════════════════════════════════════════════════ ROW 3: POSITIONS + PORTFOLIO -->
+  <div class="row3">
+
+    <!-- Current Positions -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">📂 CURRENT <span class="accent">POSITIONS</span></span>
+        <span style="font-size:9px;color:var(--text-dim);">4 OPEN · REALTIME PNL</span>
+      </div>
+      <div class="panel-body" style="padding:0;">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>COIN</th><th>DIR</th><th>SIZE</th><th>ENTRY</th>
+                <th>CURRENT</th><th>PNL</th><th>TP TARGET</th><th>STOP LOSS</th><th>DURATION</th>
+              </tr>
+            </thead>
+            <tbody id="positions-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Portfolio + Risk -->
+    <div class="panel" style="overflow:visible;">
+      <div class="panel-header">
+        <span class="panel-title">💼 PORTFOLIO <span class="accent">SUMMARY</span></span>
+      </div>
+      <div class="panel-body" id="portfolio-panel" style="overflow:auto;"></div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════ ROW 4: STRATEGY + HISTORY + INTEL -->
+  <div class="row4">
+
+    <!-- Strategy Performance -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">🎯 STRATEGY <span class="accent">PERFORMANCE</span></span>
+      </div>
+      <div class="panel-body" style="padding:0;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>STRATEGY</th><th>TRADES</th><th>WIN%</th><th>AVG PROFIT</th><th>SHARPE</th>
+            </tr>
+          </thead>
+          <tbody id="strategy-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Trade History -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">📋 TRADE <span class="accent">HISTORY</span></span>
+      </div>
+      <div class="panel-body">
+        <div class="filter-row">
+          <select class="filter-select" id="filter-coin" onchange="filterHistory()">
+            <option value="">All Coins</option>
+            <option>BTC</option><option>ETH</option><option>BNB</option><option>SOL</option>
+          </select>
+          <select class="filter-select" id="filter-strategy" onchange="filterHistory()">
+            <option value="">All Strategies</option>
+            <option>Momentum Breakout</option>
+            <option>Mean Reversion</option>
+            <option>EMA Crossover</option>
+            <option>Trend Following</option>
+          </select>
+          <select class="filter-select" id="filter-result" onchange="filterHistory()">
+            <option value="">All Results</option>
+            <option>Wins</option><option>Losses</option>
+          </select>
+        </div>
+        <div class="table-wrap" style="max-height:calc(100% - 38px);">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>COIN</th><th>STRATEGY</th><th>ENTRY</th>
+                <th>EXIT</th><th>PNL</th><th>RESULT</th>
+              </tr>
+            </thead>
+            <tbody id="history-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Market Intelligence + Regime + Alerts -->
+    <div style="display:flex;flex-direction:column;gap:6px;">
+
+      <!-- Market Regime -->
+      <div class="panel" style="flex:0 0 auto;">
+        <div class="panel-header">
+          <span class="panel-title">🌐 MARKET <span class="accent">REGIME</span></span>
+        </div>
+        <div class="panel-body" id="regime-panel"></div>
+      </div>
+
+      <!-- Market Intelligence -->
+      <div class="panel" style="flex:1;">
+        <div class="panel-header">
+          <span class="panel-title">📡 MARKET <span class="accent">INTELLIGENCE</span></span>
+        </div>
+        <div class="panel-body" id="intel-panel"></div>
+      </div>
+
+      <!-- Alerts -->
+      <div class="panel" style="flex:1;min-height:0;">
+        <div class="panel-header">
+          <span class="panel-title">🔔 <span class="accent">LIVE</span> ALERTS</span>
+          <div class="live-dot"></div>
+        </div>
+        <div class="panel-body" id="alerts-panel"></div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// DATA MODELS
+// ═══════════════════════════════════════════════════════════
+
+const COINS = {
+  BTC: { icon: "₿", cls: "ic-btc", color: "#f7931a" },
+  ETH: { icon: "Ξ", cls: "ic-eth", color: "#627eea" },
+  BNB: { icon: "⬡", cls: "ic-bnb", color: "#f3ba2f" },
+  SOL: { icon: "◎", cls: "ic-sol", color: "#9945ff" },
+};
+
+const signalData = [
+  { coin:"BTC", signal:"Hold Position", tp:115500, sl:112500, risk:791.44, conf:72,
+    condition:"Price above EMA20 (113132) with bullish MACD, stop-loss not triggered" },
+  { coin:"ETH", signal:"Long Entry",    tp:4200,   sl:4020,   risk:480,    conf:70,
+    condition:"Bullish breakout above EMA20 (4031), RSI 66, MACD turning positive" },
+  { coin:"BNB", signal:"Hold Position", tp:1350,   sl:1280,   risk:791.44, conf:78,
+    condition:"Price holding above SL at 1288.86, invalidation at 1270 not breached" },
+  { coin:"SOL", signal:"Hold Position", tp:198,    sl:188.5,  risk:791.44, conf:75,
+    condition:"Price above EMA20 (190.49), positive MACD, all exit conditions valid" },
+];
+
+const positionsData = [
+  { coin:"BTC", dir:"Long", size:0.146,  entry:113580.1, current:113784, pnl:+0.18, tp:115500, sl:112500, dur:"2h 14m" },
+  { coin:"ETH", dir:"Long", size:2.956,  entry:4067.01,  current:4072.81, pnl:+0.14, tp:4200,   sl:4020,   dur:"2h 14m" },
+  { coin:"BNB", dir:"Long", size:13.26,  entry:1308.43,  current:1291.45, pnl:-1.30, tp:1350,   sl:1280,   dur:"2h 14m" },
+  { coin:"SOL", dir:"Long", size:59.98,  entry:192.65,   current:194,    pnl:+0.70, tp:198,    sl:188.5,  dur:"2h 14m" },
+];
+
+const decisions = [
+  {
+    coin:"BTC", strategy:"Momentum Breakout", conf:74, decision:"HOLD LONG",
+    signals:["Price above EMA20 (113,132)","MACD bullish crossover detected","RSI at 63 — momentum zone","Rising volume on last 3 candles","Exchange outflows increasing"],
+  },
+  {
+    coin:"ETH", strategy:"EMA Crossover", conf:70, decision:"BUY",
+    signals:["Breakout above EMA20 (4031)","RSI 66 — bullish but not overbought","MACD histogram turning positive","Good risk-reward: 3 active positions"],
+  },
+];
+
+const strategyData = [
+  { name:"Momentum Breakout", trades:47, win:68, avgProfit:"+1.82%", avgLoss:"-0.91%", sharpe:1.74 },
+  { name:"EMA Crossover",     trades:31, win:61, avgProfit:"+1.41%", avgLoss:"-0.78%", sharpe:1.48 },
+  { name:"Mean Reversion",    trades:22, win:55, avgProfit:"+0.93%", avgLoss:"-1.12%", sharpe:0.89 },
+  { name:"Trend Following",   trades:15, win:73, avgProfit:"+2.21%", avgLoss:"-1.05%", sharpe:2.02 },
+];
+
+const historyData = [
+  { id:"BTC_001", coin:"BTC", strat:"Momentum Breakout", entry:"03-10 14:00", exit:"03-11 02:31", ep:111200, xp:113580, pnl:"+2.14%" },
+  { id:"ETH_002", coin:"ETH", strat:"EMA Crossover",     entry:"03-09 18:00", exit:"03-10 09:15", ep:3890,   xp:4067,   pnl:"+4.55%" },
+  { id:"BNB_003", coin:"BNB", strat:"Momentum Breakout", entry:"03-08 12:00", exit:"03-09 07:40", ep:1342,   xp:1309,   pnl:"-2.46%" },
+  { id:"SOL_004", coin:"SOL", strat:"Trend Following",   entry:"03-07 08:00", exit:"03-08 16:55", ep:177,    xp:193,    pnl:"+9.04%" },
+  { id:"BTC_005", coin:"BTC", strat:"EMA Crossover",     entry:"03-06 20:00", exit:"03-07 04:00", ep:108900, xp:107200, pnl:"-1.56%" },
+  { id:"ETH_006", coin:"ETH", strat:"Mean Reversion",    entry:"03-05 10:30", exit:"03-06 14:00", ep:3720,   xp:3810,   pnl:"+2.42%" },
+  { id:"SOL_007", coin:"SOL", strat:"Momentum Breakout", entry:"03-04 16:00", exit:"03-05 09:00", ep:161,    xp:175,    pnl:"+8.70%" },
+  { id:"BNB_008", coin:"BNB", strat:"Trend Following",   entry:"03-03 06:00", exit:"03-04 18:30", ep:1275,   xp:1340,   pnl:"+5.10%" },
+];
+
+const marketIntel = [
+  { label:"BTC Funding Rate",        val:"+0.0102%",  dir:"up",   hint:"Mild bullish bias" },
+  { label:"Exchange Outflow 24h",    val:"4,821 BTC", dir:"up",   hint:"Accumulation signal" },
+  { label:"Open Interest",           val:"$18.4B",    dir:"warn", hint:"Elevated — watch spikes" },
+  { label:"Whale Txns (>$1M)",       val:"38",        dir:"up",   hint:"Above 30-day avg" },
+  { label:"Stablecoin Supply Δ",     val:"+$2.1B",    dir:"up",   hint:"Dry powder building" },
+  { label:"Liq. Clusters Below",     val:"$108K",     dir:"dn",   hint:"Major support zone" },
+  { label:"Fear & Greed Index",      val:"62 — Greed",dir:"warn", hint:"" },
+];
+
+const alertsData = [
+  { type:"TRADE",  cls:"a-trade",  msg:"BTC Long entered @ $113,580 · Size: 0.146 · Strategy: Momentum Breakout",  time:"22:31" },
+  { type:"SIGNAL", cls:"a-signal", msg:"ETH Long entry signal generated · Conf: 70% · EMA crossover breakout",      time:"22:29" },
+  { type:"REGIME", cls:"a-regime", msg:"Market regime shifted → Bull Trend (68%) from Sideways Range",              time:"21:55" },
+  { type:"RISK",   cls:"a-risk",   msg:"BNB position PnL below −1.0% threshold · Monitor SL at $1,280",            time:"21:41" },
+  { type:"TRADE",  cls:"a-trade",  msg:"SOL TP partially triggered @ $193 · Partial close 20% of position",        time:"20:12" },
+];
+
+// ═══════════════════════════════════════════════════════════
+// CHART SETUP (Lightweight Charts)
+// ═══════════════════════════════════════════════════════════
+
+let chart, candleSeries, volumeSeries, emaSeries;
+let activeIndicators = { ema: true, vol: true, markers: true, rsi: false, macd: false };
+
+function initChart() {
+  const container = document.getElementById("chart-container");
+  const h = container.parentElement.clientHeight - 34; // minus header
+  container.style.height = h + "px";
+
+  chart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: h,
+    layout: {
+      background: { color: "#060b14" },
+      textColor: "#637a96",
+      fontSize: 10,
+      fontFamily: "'SF Mono', 'Fira Code', monospace",
+    },
+    grid: {
+      vertLines: { color: "#0f1e30" },
+      horzLines: { color: "#0f1e30" },
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: "#1e3a6b", style: 2 },
+      horzLine: { color: "#1e3a6b", style: 2 },
+    },
+    rightPriceScale: { borderColor: "#1a2d4a", scaleMargins: { top: 0.1, bottom: 0.25 } },
+    timeScale: { borderColor: "#1a2d4a", timeVisible: true, secondsVisible: false },
+  });
+
+  // Candles
+  candleSeries = chart.addCandlestickSeries({
+    upColor: "#00cc77", downColor: "#ff3355",
+    borderUpColor: "#00cc77", borderDownColor: "#ff3355",
+    wickUpColor: "#4A5568", wickDownColor: "#4A5568",
+  });
+
+  // Volume
+  volumeSeries = chart.addHistogramSeries({
+    color: "#1e3a6b", priceFormat: { type: "volume" },
+    priceScaleId: "volume",
+  });
+  chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, borderVisible: false });
+
+  // EMA
+  emaSeries = chart.addLineSeries({
+    color: "#1e90ff", lineWidth: 1,
+    priceLineVisible: false, lastValueVisible: false,
+  });
+
+  loadChartData("1h");
+  window.addEventListener("resize", () => {
+    chart.applyOptions({ width: container.clientWidth });
+  });
+}
+
+function generateOHLCV(bars, startPrice, tf) {
+  const data = []; const vdata = [];
+  let t = Math.floor(Date.now() / 1000) - bars * tfSeconds(tf);
+  let p = startPrice;
+  const step = tfSeconds(tf);
+  for (let i = 0; i < bars; i++) {
+    const move = (Math.random() - 0.48) * startPrice * 0.004;
+    const o = p;
+    const c = p + move;
+    const hi = Math.max(o,c) + Math.random() * startPrice * 0.001;
+    const lo = Math.min(o,c) - Math.random() * startPrice * 0.001;
+    const vol = (Math.random() * 800 + 200) * (1 + Math.abs(move/startPrice)*20);
+    data.push({ time: t, open: +o.toFixed(1), high: +hi.toFixed(1), low: +lo.toFixed(1), close: +c.toFixed(1) });
+    vdata.push({ time: t, value: +vol.toFixed(0), color: c >= o ? "#004433aa" : "#44001188" });
+    p = c; t += step;
+  }
+  return { candles: data, volumes: vdata };
+}
+
+function tfSeconds(tf) {
+  return { "1m":60,"5m":300,"15m":900,"1h":3600,"4h":14400,"1D":86400 }[tf]||3600;
+}
+
+function calcEMA(candles, period) {
+  const k = 2 / (period + 1); let ema = candles[0].close;
+  return candles.map((c,i) => {
+    if (i === 0) return { time: c.time, value: ema };
+    ema = c.close * k + ema * (1 - k);
+    return { time: c.time, value: +ema.toFixed(2) };
+  });
+}
+
+function loadChartData(tf) {
+  const { candles, volumes } = generateOHLCV(200, 113580, tf);
+  candleSeries.setData(candles);
+  if (activeIndicators.vol) volumeSeries.setData(volumes); else volumeSeries.setData([]);
+  if (activeIndicators.ema) emaSeries.setData(calcEMA(candles, 20)); else emaSeries.setData([]);
+
+  // Trade markers
+  if (activeIndicators.markers) {
+    const markers = [
+      { time: candles[40].time, position:"belowBar", color:"#00cc77", shape:"arrowUp",   text:"BUY 0.146" },
+      { time: candles[80].time, position:"aboveBar", color:"#ff3355", shape:"arrowDown", text:"SELL 0.146" },
+      { time: candles[120].time,position:"belowBar", color:"#00cc77", shape:"arrowUp",   text:"BUY 2.956" },
+      { time: candles[160].time,position:"belowBar", color:"#00cc77", shape:"arrowUp",   text:"BUY 59.98" },
+    ];
+    candleSeries.setMarkers(markers);
+  } else {
+    candleSeries.setMarkers([]);
+  }
+}
+
+let currentTF = "1h";
+function setTF(tf) {
+  currentTF = tf;
+  document.querySelectorAll(".tf-btn").forEach(b => b.classList.toggle("active", b.textContent===tf));
+  loadChartData(tf);
+}
+
+function toggleIndicator(key) {
+  activeIndicators[key] = !activeIndicators[key];
+  document.getElementById("tag-"+key).classList.toggle("active", activeIndicators[key]);
+  loadChartData(currentTF);
+}
+
+// ═══════════════════════════════════════════════════════════
+// RENDER PANELS
+// ═══════════════════════════════════════════════════════════
+
+function coinCell(coin) {
+  const c = COINS[coin];
+  return `<div class="coin-cell">
+    <div class="coin-icon ${c.cls}">${c.icon}</div>
+    <span style="font-weight:700;font-size:11px;">${coin}</span>
+  </div>`;
+}
+
+function confBar(pct) {
+  return `<div class="conf-wrap">
+    <div class="conf-bar"><div class="conf-fill" style="width:${pct}%"></div></div>
+    <span class="conf-text">${pct}%</span>
+  </div>`;
+}
+
+function signalBadge(sig) {
+  if (sig.includes("Long") || sig.includes("Buy")) return `<span class="badge badge-buy">${sig}</span>`;
+  if (sig.includes("Short") || sig.includes("Sell")) return `<span class="badge badge-sell">${sig}</span>`;
+  return `<span class="badge badge-hold">${sig}</span>`;
+}
+
+function renderSignalTable() {
+  const tb = document.getElementById("signal-table-body");
+  tb.innerHTML = signalData.map(r => `
+    <tr>
+      <td>${coinCell(r.coin)}</td>
+      <td>${signalBadge(r.signal)}</td>
+      <td style="font-weight:700;color:var(--bull);">$${r.tp.toLocaleString()}</td>
+      <td style="font-weight:700;color:var(--bear);">$${r.sl.toLocaleString()}</td>
+      <td class="val-warn">$${r.risk.toFixed(0)}</td>
+      <td>${confBar(r.conf)}</td>
+      <td><span class="sig-cond">${r.condition}</span></td>
+    </tr>`).join("");
+}
+
+function renderPositions() {
+  const tb = document.getElementById("positions-table-body");
+  tb.innerHTML = positionsData.map(p => {
+    const cls = p.pnl >= 0 ? "val-up" : "val-dn";
+    const sign = p.pnl >= 0 ? "+" : "";
+    const pnlDollar = (p.pnl / 100 * p.entry * p.size).toFixed(0);
+    return `<tr>
+      <td>${coinCell(p.coin)}</td>
+      <td><span class="badge badge-long">Long ↑</span></td>
+      <td style="font-weight:600;">${p.size}</td>
+      <td>$${p.entry.toLocaleString()}</td>
+      <td style="font-weight:700;">$${p.current.toLocaleString()}</td>
+      <td class="${cls}" style="font-weight:700;">${sign}${p.pnl.toFixed(2)}% <span style="font-size:9px;opacity:.7;">(${sign}$${pnlDollar})</span></td>
+      <td class="val-up">$${p.tp.toLocaleString()}</td>
+      <td class="val-dn">$${p.sl.toLocaleString()}</td>
+      <td class="val-dim">${p.dur}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderDecisions() {
+  const panel = document.getElementById("decision-panel");
+  panel.innerHTML = decisions.map(d => {
+    const decBadge = d.decision === "BUY"
+      ? `<span class="badge badge-buy">${d.decision}</span>`
+      : `<span class="badge badge-hold">${d.decision}</span>`;
+    return `<div class="decision-card">
+      <div class="decision-coin-row">
+        <div class="decision-coin">
+          <div class="coin-icon ${COINS[d.coin].cls}">${COINS[d.coin].icon}</div>
+          <div>
+            <div class="name">${d.coin}/USDT</div>
+            <div class="decision-strategy">STRATEGY: ${d.strategy}</div>
+          </div>
+        </div>
+        ${decBadge}
+      </div>
+      <ul class="signal-list">
+        ${d.signals.map(s=>`<li>${s}</li>`).join("")}
+      </ul>
+      <div class="decision-footer">
+        <span class="decision-meta">SIGNALS DETECTED: ${d.signals.length}</span>
+        ${confBar(d.conf)}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderPortfolio() {
+  const panel = document.getElementById("portfolio-panel");
+  const totalPnl = positionsData.reduce((s,p) => s + p.pnl * p.entry * p.size / 100, 0);
+  const capital = 32400;
+  const deployed = positionsData.reduce((s,p) => s + p.entry * p.size, 0);
+  const pnlCls = totalPnl >= 0 ? "up" : "dn";
+
+  panel.innerHTML = `
+    <div class="metric-grid">
+      <div class="metric-card">
+        <div class="metric-label">Open Positions</div>
+        <div class="metric-value" style="color:var(--accent-cyan);">4</div>
+        <div class="metric-sub">BTC · ETH · BNB · SOL</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Capital Deployed</div>
+        <div class="metric-value">$${deployed.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,",")}</div>
+        <div class="metric-sub">${(deployed/capital*100).toFixed(1)}% of portfolio</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Portfolio PnL</div>
+        <div class="metric-value ${pnlCls}">${totalPnl>=0?"+":""}$${totalPnl.toFixed(0)}</div>
+        <div class="metric-sub" style="color:var(--text-dim);">−0.06% avg</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Win Rate (30d)</div>
+        <div class="metric-value up">63%</div>
+        <div class="metric-sub">75 trades · $2,840 net</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Avg Trade Return</div>
+        <div class="metric-value up">+1.42%</div>
+        <div class="metric-sub">Best: +9.04% SOL</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Max Drawdown</div>
+        <div class="metric-value dn">-4.21%</div>
+        <div class="metric-sub">Mar 3 — 08:14 UTC</div>
+      </div>
+    </div>
+
+    <div class="risk-section">
+      <div class="risk-header">⚠ RISK METER</div>
+      <div class="risk-bar-wrap">
+        <div class="risk-bar-label"><span>Portfolio Exposure</span><span class="val-warn">38.4%</span></div>
+        <div class="risk-bar"><div class="risk-bar-fill fill-warn" style="width:38%"></div></div>
+      </div>
+      <div class="risk-bar-wrap">
+        <div class="risk-bar-label"><span>Leverage Used</span><span class="val-blue">1.4×</span></div>
+        <div class="risk-bar"><div class="risk-bar-fill fill-blue" style="width:28%"></div></div>
+      </div>
+      <div class="risk-bar-wrap">
+        <div class="risk-bar-label"><span>Drawdown Used</span><span style="color:var(--bull);">42%</span></div>
+        <div class="risk-bar"><div class="risk-bar-fill fill-green" style="width:42%"></div></div>
+      </div>
+      <div class="risk-score-row">
+        <span class="risk-score-label">RISK SCORE</span>
+        <span class="risk-score-val">MODERATE</span>
+        <span style="font-size:10px;color:var(--warn);">38 / 100</span>
+      </div>
+    </div>`;
+}
+
+function renderStrategies() {
+  const tb = document.getElementById("strategy-table-body");
+  tb.innerHTML = strategyData.map(s => `<tr>
+    <td style="font-weight:700;color:var(--text-primary);">${s.name}</td>
+    <td class="val-dim">${s.trades}</td>
+    <td class="${s.win>=60?'val-up':'val-dn'}" style="font-weight:700;">${s.win}%</td>
+    <td class="val-up">${s.avgProfit}</td>
+    <td style="font-size:10px;color:var(--accent-cyan);font-weight:700;">${s.sharpe.toFixed(2)}</td>
+  </tr>`).join("");
+}
+
+let allHistory = [...historyData];
+function renderHistory(data) {
+  const tb = document.getElementById("history-table-body");
+  tb.innerHTML = (data||allHistory).map(h => {
+    const isWin = h.pnl.includes("+");
+    return `<tr>
+      <td class="val-dim" style="font-size:9px;">${h.id}</td>
+      <td>${coinCell(h.coin)}</td>
+      <td class="val-dim" style="font-size:9px;">${h.strat}</td>
+      <td class="val-dim">${h.entry}</td>
+      <td class="val-dim">${h.exit}</td>
+      <td class="${isWin?'val-up':'val-dn'}" style="font-weight:700;">${h.pnl}</td>
+      <td><span class="badge ${isWin?'badge-buy':'badge-sell'}">${isWin?"WIN":"LOSS"}</span></td>
+    </tr>`;
+  }).join("");
+}
+
+function filterHistory() {
+  const coin = document.getElementById("filter-coin").value;
+  const strat = document.getElementById("filter-strategy").value;
+  const result = document.getElementById("filter-result").value;
+  let filtered = allHistory;
+  if (coin) filtered = filtered.filter(h => h.coin === coin);
+  if (strat) filtered = filtered.filter(h => h.strat.includes(strat.split(" ")[0]));
+  if (result === "Wins") filtered = filtered.filter(h => h.pnl.includes("+"));
+  if (result === "Losses") filtered = filtered.filter(h => !h.pnl.includes("+"));
+  renderHistory(filtered);
+}
+
+function renderRegime() {
+  document.getElementById("regime-panel").innerHTML = `
+    <div class="regime-card">
+      <div class="regime-name">Bull Trend</div>
+      <div class="regime-conf">Confidence: 68% · Updated 4 min ago</div>
+      <div class="regime-tags">
+        <span class="regime-tag badge-bull">EMA Stack ↑</span>
+        <span class="regime-tag badge-bull">Higher Highs</span>
+        <span class="regime-tag badge-hold">Vol Normal</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <div style="flex:1;background:var(--bg-card);border:1px solid var(--border-dim);border-radius:4px;padding:6px 8px;text-align:center;">
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:3px;">VOLATILITY</div>
+        <div style="font-size:12px;font-weight:700;color:var(--warn);">MEDIUM</div>
+      </div>
+      <div style="flex:1;background:var(--bg-card);border:1px solid var(--border-dim);border-radius:4px;padding:6px 8px;text-align:center;">
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:3px;">LIQUIDITY</div>
+        <div style="font-size:12px;font-weight:700;color:var(--bull);">HIGH</div>
+      </div>
+    </div>`;
+}
+
+function renderIntel() {
+  document.getElementById("intel-panel").innerHTML = marketIntel.map(m => {
+    const dotColor = m.dir === "up" ? "var(--bull)" : m.dir === "dn" ? "var(--bear)" : "var(--warn)";
+    const valColor = m.dir === "up" ? "val-up" : m.dir === "dn" ? "val-dn" : "val-warn";
+    return `<div class="intel-row">
+      <span class="intel-label">${m.label}</span>
+      <span style="display:flex;align-items:center;gap:5px;">
+        <span class="intel-val ${valColor}">${m.val}</span>
+        <span class="intel-indicator" style="background:${dotColor};box-shadow:0 0 4px ${dotColor};"></span>
+      </span>
+    </div>`;
+  }).join("");
+}
+
+function renderAlerts() {
+  document.getElementById("alerts-panel").innerHTML =
+    `<div class="alert-feed">` +
+    alertsData.map(a => `
+      <div class="alert-item">
+        <span class="alert-type ${a.cls}">${a.type}</span>
+        <span class="alert-msg">${a.msg}</span>
+        <span class="alert-time">${a.time}</span>
+      </div>`).join("") +
+    `</div>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+// LIVE PRICE SIMULATION
+// ═══════════════════════════════════════════════════════════
+
+const livePrices = { BTC: 113784, ETH: 4072.81, BNB: 1291.45, SOL: 194 };
+const basePrices = { BTC: 113784, ETH: 4072.81, BNB: 1291.45, SOL: 194 };
+
+function tickPrices() {
+  const updates = [
+    { id:"p-btc", cid:"c-btc", coin:"BTC",  fmt: v => "$"+Math.round(v).toLocaleString() },
+    { id:"p-eth", cid:"c-eth", coin:"ETH",  fmt: v => "$"+v.toFixed(2) },
+    { id:"p-bnb", cid:"c-bnb", coin:"BNB",  fmt: v => "$"+v.toFixed(2) },
+    { id:"p-sol", cid:"c-sol", coin:"SOL",  fmt: v => "$"+v.toFixed(2) },
+  ];
+  updates.forEach(u => {
+    const jitter = (Math.random()-0.5)*0.001;
+    livePrices[u.coin] *= (1 + jitter);
+    const chg = (livePrices[u.coin] - basePrices[u.coin]) / basePrices[u.coin] * 100;
+    const el = document.getElementById(u.id);
+    const ec = document.getElementById(u.cid);
+    if(el) el.textContent = u.fmt(livePrices[u.coin]);
+    if(ec) {
+      ec.textContent = (chg>=0?"+":"") + chg.toFixed(2)+"%";
+      ec.className = "chg " + (chg>=0?"up":"dn");
+    }
+  });
+  // Also append a new candle tick to chart
+  if(candleSeries) {
+    try {
+      const now = Math.floor(Date.now()/1000);
+      const last = candleSeries.data ? candleSeries.data[candleSeries.data.length-1] : null;
+    } catch(e){}
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════════════════════════
+
+function updateClock() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,"0");
+  document.getElementById("clock").textContent =
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+}
+
+// ═══════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════
+
+window.addEventListener("DOMContentLoaded", () => {
+  initChart();
+  renderSignalTable();
+  renderPositions();
+  renderDecisions();
+  renderPortfolio();
+  renderStrategies();
+  renderHistory();
+  renderRegime();
+  renderIntel();
+  renderAlerts();
+  updateClock();
+  setInterval(updateClock, 1000);
+  setInterval(tickPrices, 1500);
+});
+</script>
+</body>
+</html>

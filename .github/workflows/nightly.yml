@@ -1,0 +1,84 @@
+name: Nightly Intelligence Agent Tests
+
+# Runs every night at 02:00 UTC (off-peak, avoids daytime CI queues).
+# Also triggerable manually from the GitHub Actions UI.
+#
+# This workflow:
+#   1. Runs the full intelligence agent suite including @pytest.mark.slow tests
+#   2. Uploads a JUnit XML report as a downloadable artifact
+#   3. Posts a summary comment if any test fails
+#
+# Standard (non-slow) tests run on every push/PR via a separate CI workflow.
+# This nightly job is intentionally separate to keep PR feedback fast.
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 02:00 UTC daily
+  workflow_dispatch:        # Manual trigger from GitHub Actions UI
+
+jobs:
+  intelligence-suite:
+    name: Intelligence Agents — Full Suite (incl. slow)
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python setup ──────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # ── System dependencies (PySide6 needs Qt libs) ───────────────
+      - name: Install system Qt libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libxkbcommon-x11-0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 \
+            libxcb-xfixes0 libxcb1 libegl1
+
+      # ── Python dependencies ───────────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # VADER lexicon for RedditAgent fallback scorer
+          python -c "import nltk; nltk.download('vader_lexicon', quiet=True)" || true
+
+      # ── Run full intelligence suite with slow tests ───────────────
+      - name: Run intelligence agent tests (--include-slow)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          pytest tests/intelligence/ \
+            --include-slow \
+            --tb=short \
+            --junit-xml=test-results/intelligence-nightly.xml \
+            -v \
+            2>&1 | tee nightly-test-output.txt
+
+      # ── Upload JUnit XML report ───────────────────────────────────
+      - name: Upload test results
+        if: always()   # Upload even if tests failed
+        uses: actions/upload-artifact@v4
+        with:
+          name: intelligence-nightly-results-${{ github.run_number }}
+          path: |
+            test-results/intelligence-nightly.xml
+            nightly-test-output.txt
+          retention-days: 30
+
+      # ── Summary annotation ────────────────────────────────────────
+      - name: Publish test summary
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: test-results/intelligence-nightly.xml
+          check_name: "Intelligence Agent Nightly Results"
+          comment_mode: off   # Don't post PR comments on scheduled runs

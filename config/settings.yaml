@@ -1,0 +1,125 @@
+app:
+  theme: dark
+  language: en
+  auto_start_feeds: false
+
+risk:
+  max_concurrent_positions: 10
+  max_portfolio_drawdown_pct: 15.0
+  max_position_capital_pct: 5.0
+  max_spread_pct: 0.30
+  min_risk_reward: 1.3
+  max_capital_usdt: 0.0
+
+idss:
+  min_confluence_score: 0.55
+
+ai:
+  openai_model: gpt-4o
+  anthropic_model: claude-opus-4-6
+  strategy_generation_enabled: true
+  ml_confidence_threshold: 0.65
+  retrain_interval_hours: 24
+
+sentiment:
+  news_enabled: true
+  reddit_enabled: false
+  twitter_enabled: false
+  onchain_enabled: false
+  update_interval_minutes: 15
+
+backtesting:
+  default_fee_pct: 0.1
+  default_slippage_pct: 0.05
+  default_initial_capital: 10000.0
+  walk_forward_train_months: 24
+  walk_forward_validate_months: 6
+  walk_forward_step_months: 3
+
+data:
+  default_timeframe: 1h
+  historical_days: 365
+  max_candles_per_request: 1000
+  cache_enabled: true
+  websocket_enabled: false
+  feed_interval_seconds: 3
+  ws_reconnect_attempts: 5
+
+notifications:
+  desktop_enabled: true
+  sound_enabled: false
+  trade_alerts: true
+  strategy_alerts: true
+  system_alerts: true
+  dedup_window_seconds: 60
+  whatsapp:
+    enabled: false
+    from_number: ''
+    to_number: ''
+  telegram:
+    enabled: false
+    chat_id: ''
+  email:
+    enabled: false
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    username: ''
+    from_address: ''
+    to_addresses: ''
+    use_tls: true
+  sms:
+    enabled: false
+    from_number: ''
+    to_number: ''
+  gemini:
+    enabled: false
+    username: ''
+    to_address: ''
+    ai_enrich: false
+  preferences:
+    trade_opened: true
+    trade_closed: true
+    trade_stopped: true
+    trade_rejected: false
+    trade_modified: false
+    strategy_signal: false
+    risk_warning: true
+    market_condition: false
+    system_error: true
+    emergency_stop: true
+    daily_summary: true
+
+agents:
+  auto_start: true
+  min_confluence_boost: 0.25
+  funding_enabled: true
+  orderbook_enabled: true
+  options_enabled: true
+  options_max_days_expiry: 35
+  onchain:
+    enabled: true
+    symbols:
+    - bitcoin
+    - ethereum
+  volatility_surface:
+    enabled: true
+  liquidation_flow:
+    enabled: true
+  fred_api_key: __vault__
+  lunarcrush_api_key: __vault__
+
+scanner:
+  auto_execute: false
+  auto_execute_cooldown_seconds: 30
+
+rl:
+  enabled: true
+
+execution:
+  auto_execute_enabled: false
+  auto_execute_min_confidence: 0.72
+  auto_execute_min_signal: 0.55
+  auto_execute_regime_whitelist:
+  - TRENDING_UP
+  - TRENDING_DOWN
+  - RECOVERY

@@ -1,0 +1,92 @@
+# ============================================================
+# NexusTrader — .gitignore
+# ============================================================
+# SECURITY: Never commit API keys, secrets, or live trading data.
+# The vault and encryption key are the most critical files to protect.
+
+# ── Secrets & API keys (NEVER COMMIT) ─────────────────────
+data/.nexus_vault.json
+data/.nexus_key
+Anthropic Key.txt
+*.env
+.env.*
+**/secrets.json
+**/credentials.json
+
+# ── Live trading & account state ──────────────────────────
+# These are machine-specific runtime files; each machine generates its own.
+data/nexus_trader.db
+data/nexus_trader.db-shm
+data/nexus_trader.db-wal
+data/open_positions.json
+data/trade_outcomes.jsonl
+data/outcome_tracker.json
+data/level2_tracker.json
+
+# ── Large binary / generated data ─────────────────────────
+data/cache/
+data/models/
+reports/walk_forward/*.png
+reports/walk_forward/*.html
+reports/walk_forward/*.csv
+
+# ── Log files (large and machine-specific) ────────────────
+logs/nexus_trader.log
+logs/nexus_trader.log.*
+
+# ── Python cache and build artifacts ──────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+.eggs/
+
+# ── Pytest / test artifacts ────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+junit*.xml
+
+# ── Virtual environments ───────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── IDEs ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+
+# ── Windows temp / lock files ─────────────────────────────
+~$*
+*.tmp
+
+# ── Linux FUSE mount artifacts (Cowork VM) ────────────────
+# These .fuse_hidden* files appear in the Windows folder due to the
+# Cowork VM mount. They are temporary Linux filesystem artifacts and
+# must never be committed.
+.fuse_hidden*
+
+# ── Jupyter ───────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Optional: local config overrides ──────────────────────
+# Uncomment the line below if you want each machine to have
+# its own settings.yaml (exchange keys, watchlists, etc.)
+# config/settings.yaml

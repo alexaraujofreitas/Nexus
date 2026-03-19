@@ -1,0 +1,264 @@
+{
+  "result_id": "c2ca2f18-5d00-4ced-8afa-30cfd15c054f",
+  "timestamp": "2026-03-19T04:02:27.208784Z",
+  "name": "Integration Test - BTC/USDT 1h",
+  "strategy_name": "IDSS",
+  "symbol": "BTC/USDT",
+  "timeframe": "1h",
+  "start_date": "2026-01-01",
+  "end_date": "2026-03-18",
+  "initial_capital": 100000.0,
+  "fee_pct": 0.001,
+  "slippage_pct": 0.002,
+  "data_source": "bybit",
+  "data_source_info": {
+    "primary_source": "bybit",
+    "fallback_used": false
+  },
+  "model_weights": {
+    "trend_model": 1.0,
+    "momentum_breakout": 0.8,
+    "mean_reversion": 0.6
+  },
+  "disabled_models": [
+    "liquidity_sweep"
+  ],
+  "regime_affinity": {
+    "bull_trend": 1.0,
+    "ranging": 0.8,
+    "bear_trend": 0.9
+  },
+  "global_params": {
+    "confluence_threshold": 0.45,
+    "ev_gate_threshold": 0.05,
+    "position_size_cap": 0.04
+  },
+  "kpis": {
+    "net_profit_usdt": 750.0,
+    "total_return_pct": 0.75,
+    "total_trades": 6,
+    "winning_trades": 4,
+    "losing_trades": 2,
+    "win_rate": 0.6667,
+    "loss_rate": 0.3333,
+    "profit_factor": 2.5,
+    "expectancy_r": 0.4,
+    "avg_win_usdt": 312.5,
+    "avg_loss_usdt": -250.0,
+    "avg_win_r": 0.9333,
+    "avg_loss_r": -0.6667,
+    "avg_rr_ratio": 1.4,
+    "max_drawdown_pct": 0.49,
+    "max_drawdown_usdt": 500.0,
+    "max_consecutive_losses": 2,
+    "max_consecutive_wins": 3,
+    "avg_trade_duration_bars": 13.0,
+    "avg_trade_duration_hours": 13.0,
+    "total_bars_in_market": 78,
+    "exposure_pct": 15.6,
+    "sharpe_ratio": 40.39,
+    "sortino_ratio": 235.18,
+    "calmar_ratio": 1.52,
+    "long_trades": 5,
+    "short_trades": 1,
+    "long_win_rate": 0.6,
+    "short_win_rate": 1.0,
+    "long_pnl_usdt": 550.0,
+    "short_pnl_usdt": 200.0,
+    "by_regime": {
+      "bull_trend": {
+        "total_trades": 2,
+        "winning_trades": 2,
+        "losing_trades": 0,
+        "win_rate": 1.0,
+        "profit_factor": "inf",
+        "total_pnl_usdt": 900.0,
+        "avg_win_r": 0.9,
+        "avg_loss_r": 0.0,
+        "expectancy_r": 0.9,
+        "max_consecutive_losses": 0
+      },
+      "ranging": {
+        "total_trades": 1,
+        "winning_trades": 1,
+        "losing_trades": 0,
+        "win_rate": 1.0,
+        "profit_factor": "inf",
+        "total_pnl_usdt": 150.0,
+        "avg_win_r": 1.0,
+        "avg_loss_r": 0.0,
+        "expectancy_r": 1.0,
+        "max_consecutive_losses": 0
+      },
+      "uncertain": {
+        "total_trades": 1,
+        "winning_trades": 0,
+        "losing_trades": 1,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "total_pnl_usdt": -200.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -0.6667,
+        "expectancy_r": 0.0,
+        "max_consecutive_losses": 1
+      },
+      "bear_trend": {
+        "total_trades": 2,
+        "winning_trades": 1,
+        "losing_trades": 1,
+        "win_rate": 0.5,
+        "profit_factor": 0.67,
+        "total_pnl_usdt": -100.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -0.6667,
+        "expectancy_r": 0.0,
+        "max_consecutive_losses": 1
+      }
+    },
+    "by_model": {
+      "trend_model": {
+        "total_trades": 3,
+        "winning_trades": 3,
+        "losing_trades": 0,
+        "win_rate": 1.0,
+        "profit_factor": "inf",
+        "total_pnl_usdt": 1100.0,
+        "avg_win_r": 0.9,
+        "avg_loss_r": -0.6667,
+        "expectancy_r": 0.9,
+        "max_consecutive_losses": 0
+      },
+      "momentum_breakout": {
+        "total_trades": 2,
+        "winning_trades": 1,
+        "losing_trades": 1,
+        "win_rate": 0.5,
+        "profit_factor": 0.5,
+        "total_pnl_usdt": -150.0,
+        "avg_win_r": 1.0,
+        "avg_loss_r": -0.6667,
+        "expectancy_r": 0.1667,
+        "max_consecutive_losses": 1
+      },
+      "mean_reversion": {
+        "total_trades": 1,
+        "winning_trades": 0,
+        "losing_trades": 1,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "total_pnl_usdt": -200.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -0.6667,
+        "expectancy_r": 0.0,
+        "max_consecutive_losses": 1
+      }
+    }
+  },
+  "trades": [
+    {
+      "entry_price": 100.0,
+      "exit_price": 105.0,
+      "pnl": 500.0,
+      "pnl_pct": 5.0,
+      "side": "long",
+      "duration_bars": 24,
+      "regime": "bull_trend",
+      "models_fired": [
+        "trend_model"
+      ],
+      "score": 0.85,
+      "stop_loss_price": 95.0
+    },
+    {
+      "entry_price": 106.0,
+      "exit_price": 110.0,
+      "pnl": 400.0,
+      "pnl_pct": 3.8,
+      "side": "long",
+      "duration_bars": 18,
+      "regime": "bull_trend",
+      "models_fired": [
+        "trend_model"
+      ],
+      "score": 0.82,
+      "stop_loss_price": 101.0
+    },
+    {
+      "entry_price": 110.0,
+      "exit_price": 112.0,
+      "pnl": 150.0,
+      "pnl_pct": 1.8,
+      "side": "long",
+      "duration_bars": 6,
+      "regime": "ranging",
+      "models_fired": [
+        "momentum_breakout"
+      ],
+      "score": 0.75,
+      "stop_loss_price": 108.0
+    },
+    {
+      "entry_price": 105.0,
+      "exit_price": 103.0,
+      "pnl": -200.0,
+      "pnl_pct": -1.9,
+      "side": "long",
+      "duration_bars": 12,
+      "regime": "uncertain",
+      "models_fired": [
+        "mean_reversion"
+      ],
+      "score": 0.65,
+      "stop_loss_price": 108.0
+    },
+    {
+      "entry_price": 112.0,
+      "exit_price": 110.0,
+      "pnl": -300.0,
+      "pnl_pct": -1.8,
+      "side": "long",
+      "duration_bars": 8,
+      "regime": "bear_trend",
+      "models_fired": [
+        "momentum_breakout"
+      ],
+      "score": 0.55,
+      "stop_loss_price": 115.0
+    },
+    {
+      "entry_price": 100.0,
+      "exit_price": 98.0,
+      "pnl": 200.0,
+      "pnl_pct": 2.0,
+      "side": "short",
+      "duration_bars": 10,
+      "regime": "bear_trend",
+      "models_fired": [
+        "trend_model"
+      ],
+      "score": 0.8,
+      "stop_loss_price": 103.0
+    }
+  ],
+  "equity_curve": [
+    100000.0,
+    100500.0,
+    100900.0,
+    101050.0,
+    100850.0,
+    100550.0,
+    100750.0
+  ],
+  "equity_timestamps": [
+    "2026-01-01T00:00:00Z",
+    "2026-01-02T00:00:00Z",
+    "2026-01-03T00:00:00Z",
+    "2026-01-04T00:00:00Z",
+    "2026-01-05T00:00:00Z",
+    "2026-01-06T00:00:00Z",
+    "2026-01-07T00:00:00Z"
+  ],
+  "total_bars": 500,
+  "warmup_bars": 50,
+  "notes": "Integration test with realistic trade distribution across regimes and models"
+}

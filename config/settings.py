@@ -1,0 +1,486 @@
+# ============================================================
+# NEXUS TRADER — Application Settings Manager
+# ============================================================
+
+import yaml
+import logging
+from pathlib import Path
+from typing import Any, Optional
+from config.constants import CONFIG_PATH
+
+logger = logging.getLogger(__name__)
+
+# Default configuration values
+DEFAULT_CONFIG = {
+    "disabled_models": [],  # model names to skip in SignalGenerator (e.g. ["mean_reversion", "liquidity_sweep"])
+    "model_weights": {
+        "trend": 0.35,
+        "mean_reversion": 0.25,
+        "momentum_breakout": 0.25,
+        "vwap_reversion": 0.28,
+        "liquidity_sweep": 0.15,
+        "funding_rate": 0.20,
+        "order_book": 0.18,
+        "sentiment": 0.12,
+        "rl_ensemble": 0.0,
+        "orchestrator": 0.22,
+    },
+    "models": {
+        "trend": {
+            "entry_buffer_atr": 0.20,
+            "adx_min": 25.0,
+            "rsi_long_min": 45,
+            "rsi_long_max": 70,
+            "rsi_short_min": 30,
+            "rsi_short_max": 55,
+            "strength_base": 0.15,
+            "ema20_bonus": 0.25,
+            "macd_bonus": 0.20,
+            "adx_bonus_max": 0.40,
+        },
+        "momentum_breakout": {
+            "entry_buffer_atr": 0.10,
+            "lookback": 20,
+            "vol_mult_min": 1.5,
+            "rsi_bullish": 55,
+            "rsi_bearish": 45,
+            "strength_base": 0.35,
+        },
+        "vwap_reversion": {
+            "entry_buffer_atr": -0.10,
+            "z_threshold": 1.5,
+            "rsi_oversold": 42,
+            "rsi_overbought": 58,
+            "deviation_window": 20,
+            "sl_atr_mult": 1.2,
+            "tp_atr_offset": 0.5,
+        },
+        "mean_reversion": {
+            "entry_buffer_atr": -0.15,
+            "bb_lower_dist": 0.15,
+            "rsi_oversold": 35,
+            "rsi_overbought": 65,
+            "stoch_rsi_oversold": 25,
+            "stoch_rsi_overbought": 75,
+        },
+        "liquidity_sweep": {
+            "swing_lookback": 15,
+            "min_sweep_pct": 0.10,
+            "vol_mult_min": 1.3,
+            "cascade_risk_cutoff": 0.70,
+            "liq_density_threshold": 0.60,
+        },
+        "funding_rate": {
+            "min_signal": 0.40,
+            "min_confidence": 0.55,
+            "sl_atr_mult": 1.5,
+            "tp_atr_mult": 2.5,
+        },
+        "order_book": {
+            "min_signal": 0.35,
+            "min_confidence": 0.60,
+            "sl_atr_mult": 1.5,
+            "tp_atr_mult": 2.0,
+        },
+        "sentiment": {
+            "min_signal": 0.35,
+            "min_confidence": 0.55,
+            "min_headlines": 3,
+            "max_age_minutes": 480,
+            "sl_atr_mult": 1.5,
+            "tp_atr_mult": 2.5,
+        },
+    },
+    "regime_affinity": {
+        "trend": {"bull_trend": 1.0, "bear_trend": 0.9, "ranging": 0.1, "volatility_expansion": 0.25, "volatility_compression": 0.2, "uncertain": 0.3, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.3, "recovery": 0.7, "accumulation": 0.2, "distribution": 0.2},
+        "mean_reversion": {"bull_trend": 0.05, "bear_trend": 0.08, "ranging": 1.0, "volatility_expansion": 0.02, "volatility_compression": 0.8, "uncertain": 0.20, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.4, "recovery": 0.4, "accumulation": 0.8, "distribution": 0.7},
+        "momentum_breakout": {"bull_trend": 0.7, "bear_trend": 0.7, "ranging": 0.1, "volatility_expansion": 0.70, "volatility_compression": 0.1, "uncertain": 0.2, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.8, "recovery": 0.6, "accumulation": 0.3, "distribution": 0.4},
+        "vwap_reversion": {"bull_trend": 0.5, "bear_trend": 0.5, "ranging": 0.8, "volatility_expansion": 0.15, "volatility_compression": 0.7, "uncertain": 0.5, "crisis": 0.1, "liquidation_cascade": 0.1, "squeeze": 0.4, "recovery": 0.5, "accumulation": 0.7, "distribution": 0.6},
+        "liquidity_sweep": {"bull_trend": 0.4, "bear_trend": 0.6, "ranging": 0.9, "volatility_expansion": 0.25, "volatility_compression": 0.5, "uncertain": 0.4, "crisis": 0.2, "liquidation_cascade": 0.3, "squeeze": 0.5, "recovery": 0.5, "accumulation": 0.7, "distribution": 0.8},
+        "funding_rate": {"bull_trend": 0.8, "bear_trend": 0.8, "ranging": 0.5, "volatility_expansion": 0.7, "volatility_compression": 0.4, "uncertain": 0.5, "crisis": 0.6, "liquidation_cascade": 0.7, "squeeze": 0.8, "recovery": 0.7, "accumulation": 0.5, "distribution": 0.6},
+        "order_book": {"bull_trend": 0.7, "bear_trend": 0.7, "ranging": 0.6, "volatility_expansion": 0.5, "volatility_compression": 0.6, "uncertain": 0.5, "crisis": 0.3, "liquidation_cascade": 0.2, "squeeze": 0.6, "recovery": 0.6, "accumulation": 0.6, "distribution": 0.7},
+        "sentiment": {"bull_trend": 0.9, "bear_trend": 0.7, "ranging": 0.4, "volatility_expansion": 0.5, "volatility_compression": 0.3, "uncertain": 0.4, "crisis": 0.2, "liquidation_cascade": 0.1, "squeeze": 0.4, "recovery": 0.8, "accumulation": 0.7, "distribution": 0.3},
+        "rl_ensemble": {"bull_trend": 0.8, "bear_trend": 0.8, "ranging": 0.7, "volatility_expansion": 0.6, "volatility_compression": 0.6, "uncertain": 0.5, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.5, "recovery": 0.7, "accumulation": 0.7, "distribution": 0.6},
+        "orchestrator": {"bull_trend": 0.8, "bear_trend": 0.8, "ranging": 0.7, "volatility_expansion": 0.7, "volatility_compression": 0.6, "uncertain": 0.5, "crisis": 0.1, "liquidation_cascade": 0.1, "squeeze": 0.6, "recovery": 0.7, "accumulation": 0.7, "distribution": 0.7},
+    },
+    "app": {
+        "theme": "dark",
+        "language": "en",
+        "auto_start_feeds": False,
+    },
+    "risk": {
+        "max_position_pct": 2.0,
+        "max_portfolio_drawdown_pct": 15.0,
+        "max_strategy_drawdown_pct": 10.0,
+        "min_sharpe_live": 0.5,
+        "max_spread_pct": 0.3,
+        "max_open_positions": 10,
+        "default_stop_loss_pct": 2.0,
+        "default_take_profit_pct": 4.0,
+        # IDSS RiskGate parameters (hot-applied to scanner on save)
+        "max_concurrent_positions": 5,
+        "min_risk_reward": 1.3,
+    },
+    "idss": {
+        # Minimum confluence score to generate an OrderCandidate (hot-applied on save)
+        "min_confluence_score": 0.55,
+    },
+    "ai": {
+        "openai_model": "gpt-4o",
+        "anthropic_model": "claude-opus-4-6",
+        "strategy_generation_enabled": True,
+        "ml_confidence_threshold": 0.65,
+        "retrain_interval_hours": 24,
+    },
+    "sentiment": {
+        "news_enabled": True,
+        "reddit_enabled": False,
+        "twitter_enabled": False,
+        "onchain_enabled": False,
+        "update_interval_minutes": 15,
+    },
+    "backtesting": {
+        "default_fee_pct": 0.1,
+        "default_slippage_pct": 0.05,
+        "default_initial_capital": 10000.0,
+        "walk_forward_train_months": 24,
+        "walk_forward_validate_months": 6,
+        "walk_forward_step_months": 3,
+    },
+    "data": {
+        "default_timeframe": "1h",
+        "historical_days": 365,
+        "max_candles_per_request": 1000,
+        "cache_enabled": True,
+        "websocket_enabled": True,
+        "feed_interval_seconds": 3,
+        "ws_reconnect_attempts": 5,
+    },
+    "notifications": {
+        "desktop_enabled": True,
+        "sound_enabled": False,
+        "trade_alerts": True,
+        "strategy_alerts": True,
+        "system_alerts": True,
+        "dedup_window_seconds": 60,
+        # Per-channel configs (secrets via vault, not stored here)
+        "whatsapp": {
+            "enabled": False,
+            "from_number": "",
+            "to_number": "",
+        },
+        "telegram": {
+            "enabled": False,
+            "chat_id": "",
+        },
+        "email": {
+            "enabled": False,
+            "smtp_host": "smtp.gmail.com",
+            "smtp_port": 587,
+            "username": "",
+            "from_address": "",
+            "to_addresses": "",
+            "use_tls": True,
+        },
+        "sms": {
+            "enabled": False,
+            "from_number": "",
+            "to_number": "",
+        },
+        # Per-type enable/disable preferences
+        "preferences": {
+            "trade_opened":     True,
+            "trade_closed":     True,
+            "trade_stopped":    True,
+            "trade_rejected":   False,
+            "trade_modified":   False,
+            "strategy_signal":  False,
+            "risk_warning":     True,
+            "market_condition": False,
+            "system_error":     True,
+            "emergency_stop":   True,
+            "daily_summary":    True,
+        },
+    },
+    "agents": {
+        "auto_start": True,
+        "min_confluence_boost": 0.25,
+        "funding_enabled": True,
+        "orderbook_enabled": True,
+        "options_enabled": True,
+        "options_max_days_expiry": 35,
+        "onchain": {"enabled": True, "symbols": ["bitcoin", "ethereum"]},
+        "volatility_surface": {"enabled": True},
+        "liquidation_flow": {"enabled": True},
+        # API keys stored in vault — placeholders here for discovery
+        "fred_api_key": "__vault__",
+        "lunarcrush_api_key": "__vault__",
+        "coinglass_api_key": "",
+        "cryptopanic_api_key": "",
+    },
+    "execution": {
+        "base_size_usdt": 500.0,
+        "auto_execute_enabled": False,
+        "auto_execute_min_confidence": 0.72,
+        "auto_execute_min_signal": 0.55,
+        "auto_execute_regime_whitelist": ["TRENDING_UP", "TRENDING_DOWN", "RECOVERY"],
+    },
+    # Phase 1 settings
+    "scanner": {
+        "btc_only_mode": False,
+        "websocket_enabled": False,
+        "websocket_symbol": "BTC/USDT",
+        "websocket_timeframe": "1h",
+        "ohlcv_bars": 300,
+        # Auto-execute: when True, approved IDSS candidates are submitted to
+        # PaperExecutor automatically after each scan cycle (no manual click needed).
+        # Default is True — NexusTrader should auto-execute on every restart.
+        "auto_execute": True,
+        "auto_execute_cooldown_seconds": 30,
+    },
+    # Phase 2 settings
+    "regime": {
+        "use_ensemble": True,
+        "hmm_weight": 0.35,
+        "rule_weight": 0.65,
+    },
+    # Phase 3 settings
+    "rl": {
+        "enabled": False,
+        "model_dir": "",
+        "replay_buffer_size": 50000,
+        "reward_leverage": 10.0,
+        "train_every_n_candles": 10,
+    },
+    "orchestrator": {
+        "veto_enabled": True,
+    },
+    # Phase 4 settings
+    "multi_asset": {
+        "enabled": False,
+    },
+    "finbert": {
+        "enabled": True,
+        "min_confidence": 0.55,
+        "min_headlines": 3,
+        "min_net_score": 0.35,
+    },
+    "ms_garch": {
+        "enabled": True,
+        "refit_every_n_bars": 100,
+    },
+    "rlmf": {
+        "enabled": False,
+        "feedback_interval_episodes": 50,
+    },
+    "hmm_regime": {
+        "enabled": True,
+        "n_components": 6,
+        "min_train_bars": 300,
+        "retrain_every_n_bars": 50,
+        "hmm_rule_blend_weight": 0.60,
+    },
+    "crash_detector": {
+        "enabled": True,
+        "eval_interval_seconds": 60,
+        "recovery_bars_required": 5,
+        "recovery_hysteresis": 1.5,
+        "weights": {
+            "atr_spike": 2.0,
+            "price_velocity": 1.8,
+            "liquidation_cascade": 1.5,
+            "cross_asset_decline": 1.5,
+            "orderbook_imbalance": 1.2,
+            "funding_rate_flip": 1.0,
+            "oi_collapse": 1.0,
+        },
+        "tier_thresholds": {
+            "defensive": 5.0,
+            "high_alert": 7.0,
+            "emergency": 8.0,
+            "systemic": 9.0,
+        },
+    },
+    "adaptive_activation": {
+        "enabled": True,
+        "min_activation_weight": 0.10,
+        "crash_long_multiplier": 0.0,
+        "crash_short_multiplier": 1.5,
+    },
+    "dynamic_confluence": {
+        "enabled": True,
+        "base_threshold": 0.45,
+        "min_floor": 0.28,
+        "max_ceiling": 0.65,
+        "regime_confidence_high": 0.70,
+        "regime_confidence_low": 0.40,
+        "vol_expansion_factor": 1.15,
+        "vol_compression_factor": 0.95,
+        "win_rate_tracking": True,
+        "win_rate_window": 30,
+    },
+    "expected_value": {
+        "enabled": True,
+        "ev_threshold": 0.05,
+        "min_rr_floor": 1.0,
+        # Lowered from 0.55 → 0.50 to eliminate the dead zone where signals above
+        # min_confluence_score (0.45) always produce negative EV.  At midpoint=0.50
+        # a score of 0.45 yields win_prob≈0.40; a score of 0.50 yields win_prob=0.50.
+        # Positive EV is achievable at R:R ≥ 1.5 for scores ≥ 0.50, consistent with
+        # the dynamic confluence threshold range (0.28–0.65).
+        "score_midpoint": 0.50,
+        "sigmoid_steepness": 8.0,
+        "regime_uncertainty_penalty": 0.15,
+    },
+    "risk_engine": {
+        "portfolio_heat_max_pct": 0.06,
+        "vol_adjusted_sizing": True,
+        "atr_percentile_lookback_days": 90,
+        "loss_streak_trigger": 3,
+        "loss_streak_size_multiplier": 0.50,
+        "fat_tail_risk_multiplier": 1.5,
+        "kelly_fraction": 0.25,
+        "max_position_pct": 0.04,
+        "min_position_pct": 0.003,
+        "max_leverage_by_regime": {
+            "bull_trend": 3.0,
+            "bear_trend": 2.0,
+            "ranging": 1.5,
+            "volatility_expansion": 1.5,
+            "uncertain": 1.0,
+        },
+        "max_leverage_defensive_mode": 1.0,
+        "max_positions_per_symbol": 10,
+        "max_trades_per_scan_cycle": 1,
+    },
+    "staged_candidates": {
+        "enabled": True,
+        "ttl_seconds": 10800,           # 3 hours — max age before expiry
+        "max_active": 20,               # capacity limit
+        "retention_seconds": 86400,     # keep terminal candidates 24h for audit
+    },
+    "multi_tf": {
+        # Enabled for demo trading: signals that directly contradict the
+        # higher-timeframe regime (e.g., 1h buy vs 4h bear_trend) are rejected.
+        "confirmation_required": True,
+        "confirmation_timeframes": {
+            "1h": "4h",
+            "4h": "1d",
+            "1d": "1w",
+        },
+    },
+    # Directional conflict threshold for ConfluenceScorer.
+    # If abs(long_weight - short_weight) / total < min_direction_dominance,
+    # the candidate is rejected as too conflicted.
+    "confluence": {
+        "min_direction_dominance": 0.30,
+    },
+    # Per-symbol HMM persistence configuration.
+    "hmm_per_symbol": {
+        "enabled": True,                # use per-symbol HMM instances
+        "retrain_every_n_scans": 50,    # retrain a symbol's HMM every N scan cycles
+    },
+    # Entry price model configuration.
+    "entry_model": {
+        "enabled": True,               # apply ENTRY_BUFFER_ATR offsets
+    },
+    # LTF (Lower-Timeframe) confirmation for staged candidates.
+    # 15m closed-candle confirmation before executing HTF signals.
+    "ltf_confirmation": {
+        "ema_period": 9,               # EMA span for trend alignment
+        "rsi_period": 14,              # RSI lookback
+        "rsi_max_long": 72.0,          # reject long if 15m RSI above this
+        "rsi_min_short": 28.0,         # reject short if 15m RSI below this
+        "rsi_void_long": 78.0,         # void long candidate (anti-churn)
+        "rsi_void_short": 22.0,        # void short candidate (anti-churn)
+        "volume_ratio_min": 0.6,       # min volume vs 20-bar average (lowered from 0.80 — backtest validated)
+        "volume_lookback": 20,         # bars for volume average
+        "ema_slope_bars": 3,           # bars for EMA trend direction
+        "timeframe": "15m",            # LTF candle timeframe
+        "ohlcv_limit": 100,            # bars to fetch for LTF evaluation
+    },
+}
+
+
+class AppSettings:
+    """Manages application configuration with YAML file persistence."""
+
+    def __init__(self):
+        self._config: dict = {}
+        self.load()
+
+    def load(self):
+        """Load config from YAML file, merging with defaults."""
+        self._config = self._deep_merge(DEFAULT_CONFIG.copy(), {})
+        if CONFIG_PATH.exists():
+            try:
+                with open(CONFIG_PATH, "r") as f:
+                    file_config = yaml.safe_load(f) or {}
+                self._config = self._deep_merge(self._config, file_config)
+                logger.debug("Configuration loaded from %s", CONFIG_PATH)
+            except Exception as e:
+                logger.warning("Could not load config file: %s — using defaults", e)
+        else:
+            self.save()
+
+        # D3: migrate any plain-text API keys left in YAML to the encrypted vault
+        try:
+            from core.security.key_vault import key_vault
+            key_vault.migrate_from_settings()
+        except Exception as exc:
+            logger.debug("Vault migration skipped: %s", exc)
+
+    def save(self):
+        """Persist current config to YAML file."""
+        try:
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(CONFIG_PATH, "w") as f:
+                yaml.dump(self._config, f, default_flow_style=False, indent=2)
+        except Exception as e:
+            logger.error("Could not save config: %s", e)
+
+    def get(self, key_path: str, default: Any = None) -> Any:
+        """Get a config value using dot notation (e.g., 'risk.max_position_pct')."""
+        keys = key_path.split(".")
+        val = self._config
+        for k in keys:
+            if isinstance(val, dict) and k in val:
+                val = val[k]
+            else:
+                return default
+        return val
+
+    def set(self, key_path: str, value: Any):
+        """Set a config value using dot notation or top-level key, and persist.
+        Examples:
+            settings.set("risk.max_position_pct", 0.25)
+            settings.set("risk", {"max_concurrent_positions": 3, ...})
+        """
+        if isinstance(key_path, str) and "." not in key_path and isinstance(value, dict):
+            # Setting entire section
+            self._config[key_path] = value
+        else:
+            # Setting nested key with dot notation
+            keys = key_path.split(".")
+            d = self._config
+            for k in keys[:-1]:
+                d = d.setdefault(k, {})
+            d[keys[-1]] = value
+        self.save()
+
+    def get_section(self, section: str) -> dict:
+        """Return an entire config section as a dict."""
+        return self._config.get(section, {})
+
+    def _deep_merge(self, base: dict, override: dict) -> dict:
+        result = base.copy()
+        for k, v in override.items():
+            if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+                result[k] = self._deep_merge(result[k], v)
+            else:
+                result[k] = v
+        return result
+
+
+# Global singleton
+settings = AppSettings()

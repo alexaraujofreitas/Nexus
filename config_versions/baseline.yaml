@@ -1,0 +1,428 @@
+_test:
+  value: null
+adaptive_activation:
+  crash_long_multiplier: 0.0
+  crash_short_multiplier: 1.5
+  enabled: true
+  min_activation_weight: 0.1
+agents:
+  auto_start: true
+  coinglass_api_key: __vault__
+  cryptopanic_api_key: __vault__
+  fred_api_key: __vault__
+  funding_enabled: true
+  liquidation_flow:
+    enabled: true
+  lunarcrush_api_key: __vault__
+  min_confluence_boost: 0.25
+  onchain:
+    enabled: true
+    symbols:
+    - bitcoin
+    - ethereum
+  options_enabled: true
+  options_max_days_expiry: 35.0
+  orderbook_enabled: true
+  volatility_surface:
+    enabled: true
+ai:
+  active_provider: Local (Ollama)
+  agent_models:
+    crash_detection:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    funding_rate:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    geopolitical:
+      extra: {}
+      max_tokens: 512
+      model_name: vader
+      provider: vader
+      temperature: 0.1
+    leverage_crowding:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    liquidation_flow:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    liquidity_vacuum:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    macro:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    miner_flow:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    narrative_shift:
+      extra: {}
+      max_tokens: 512
+      model_name: ProsusAI/finbert
+      provider: finbert
+      temperature: 0.1
+    news:
+      extra: {}
+      max_tokens: 512
+      model_name: vader-v2
+      provider: vader
+      temperature: 0.1
+    onchain:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    options_flow:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    order_book:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    position_monitor:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    reddit:
+      extra: {}
+      max_tokens: 512
+      model_name: vader
+      provider: vader
+      temperature: 0.1
+    scalp:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    sector_rotation:
+      extra: {}
+      max_tokens: 512
+      model_name: vader
+      provider: vader
+      temperature: 0.1
+    social_sentiment:
+      extra: {}
+      max_tokens: 512
+      model_name: vader
+      provider: vader
+      temperature: 0.1
+    squeeze_detection:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    stablecoin:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    telegram:
+      extra: {}
+      max_tokens: 512
+      model_name: vader
+      provider: vader
+      temperature: 0.1
+    test_agent:
+      extra: {}
+      max_tokens: 256
+      model_name: vader-test
+      provider: vader
+      temperature: 0.5
+    twitter:
+      extra: {}
+      max_tokens: 512
+      model_name: vader
+      provider: vader
+      temperature: 0.1
+    volatility_surface:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+    whale:
+      extra: {}
+      max_tokens: 512
+      model_name: rule-based
+      provider: rule
+      temperature: 0.1
+  anthropic_api_key: __vault__
+  anthropic_model: claude-sonnet-4-6
+  gemini_api_key: __vault__
+  gemini_model: gemini-2.0-flash
+  ml_confidence_threshold: 0.65
+  ollama_model: deepseek-r1:14b
+  ollama_url: http://localhost:11434/v1
+  openai_api_key: __vault__
+  openai_model: gpt-4o
+  retrain_interval_hours: 24.0
+  strategy_generation_enabled: true
+app:
+  auto_start_feeds: true
+  language: en
+  theme: dark
+backtesting:
+  default_fee_pct: 0.1
+  default_initial_capital: 10000.0
+  default_slippage_pct: 0.05
+  walk_forward_step_months: 3
+  walk_forward_train_months: 24.0
+  walk_forward_validate_months: 6.0
+confluence:
+  min_direction_dominance: 0.3
+crash_detector:
+  enabled: true
+  eval_interval_seconds: 60
+  recovery_bars_required: 5
+  recovery_hysteresis: 1.5
+  tier_thresholds:
+    defensive: 5.0
+    emergency: 8.0
+    high_alert: 7.0
+    systemic: 9.0
+  weights:
+    atr_spike: 2.0
+    cross_asset_decline: 1.5
+    funding_rate_flip: 1.0
+    liquidation_cascade: 1.5
+    oi_collapse: 1.0
+    orderbook_imbalance: 1.2
+    price_velocity: 1.8
+data:
+  cache_enabled: true
+  default_timeframe: 5m
+  feed_interval_seconds: 3
+  historical_days: 365.0
+  max_candles_per_request: 1000
+  websocket_enabled: false
+  ws_reconnect_attempts: 5
+disabled_models:
+- mean_reversion
+- liquidity_sweep
+dynamic_confluence:
+  base_threshold: 0.52
+  enabled: true
+  max_ceiling: 0.75
+  min_floor: 0.45
+  regime_confidence_high: 0.7
+  regime_confidence_low: 0.4
+  vol_compression_factor: 0.95
+  vol_expansion_factor: 1.15
+  win_rate_tracking: true
+  win_rate_window: 30
+entry_model:
+  enabled: true
+execution:
+  auto_execute_enabled: false
+  auto_execute_min_confidence: 0.72
+  auto_execute_min_signal: 0.55
+  auto_execute_regime_whitelist:
+  - TRENDING_UP
+  - TRENDING_DOWN
+  - RECOVERY
+expected_value:
+  enabled: true
+  ev_threshold: 0.05
+  min_rr_floor: 1.0
+  regime_uncertainty_penalty: 0.15
+  score_midpoint: 0.5
+  sigmoid_steepness: 2.5
+finbert:
+  enabled: true
+  min_confidence: 0.55
+  min_headlines: 3
+  min_net_score: 0.35
+hmm_per_symbol:
+  enabled: true
+  retrain_every_n_scans: 50
+hmm_regime:
+  enabled: true
+  hmm_rule_blend_weight: 0.6
+  min_train_bars: 300
+  n_components: 6
+  retrain_every_n_bars: 50
+idss:
+  min_confluence_score: 0.45
+ltf_confirmation:
+  ema_period: 9
+  ema_slope_bars: 3
+  ohlcv_limit: 100
+  rsi_max_long: 72.0
+  rsi_min_short: 28.0
+  rsi_period: 14
+  rsi_void_long: 78.0
+  rsi_void_short: 22.0
+  timeframe: 15m
+  volume_lookback: 20
+  volume_ratio_min: 0.8
+ms_garch:
+  enabled: true
+  refit_every_n_bars: 100
+multi_asset:
+  enabled: false
+multi_tf:
+  confirmation_required: true
+  confirmation_timeframes:
+    1d: 1w
+    1h: 4h
+    4h: 1d
+notifications:
+  dedup_window_seconds: 60
+  desktop_enabled: true
+  email:
+    enabled: true
+    from_address: alexaraujofreitas@gmail.com
+    password: nejadcuayofrlfce
+    smtp_host: smtp.gmail.com
+    smtp_port: '587'
+    to_addresses: alexaraujofreitas@gmail.com
+    use_tls: true
+    username: alexaraujofreitas@gmail.com
+  email_password: __vault__
+  gemini:
+    ai_enrich: false
+    enabled: false
+    password: nejadcuayofrlfce
+    to_address: alexaraujofreitas@gmail.com
+    username: alexaraujofreitas@gmail.com
+  gemini_password: __vault__
+  preferences:
+    daily_summary: true
+    emergency_stop: true
+    market_condition: false
+    risk_warning: true
+    strategy_signal: false
+    system_error: false
+    trade_closed: true
+    trade_modified: false
+    trade_opened: true
+    trade_rejected: false
+    trade_stopped: false
+  sms:
+    enabled: false
+    from_number: ''
+    to_number: ''
+  sound_enabled: false
+  strategy_alerts: true
+  system_alerts: true
+  telegram:
+    chat_id: ''
+    enabled: false
+  telegram_token: __vault__
+  trade_alerts: true
+  twilio_sid: __vault__
+  twilio_token: __vault__
+  whatsapp:
+    enabled: false
+    from_number: ''
+    to_number: ''
+regime:
+  hmm_weight: 0.35
+  rule_weight: 0.65
+  use_ensemble: true
+risk:
+  default_stop_loss_pct: 2.0
+  default_take_profit_pct: 4.0
+  max_capital_usdt: 0.0
+  max_concurrent_positions: 5
+  max_open_positions: 10
+  max_portfolio_drawdown_pct: 4.0
+  max_position_capital_pct: 25.0
+  max_position_pct: 2.0
+  max_spread_pct: 0.3
+  max_strategy_drawdown_pct: 10.0
+  min_risk_reward: 1.3
+  min_sharpe_live: 0.5
+risk_engine:
+  atr_percentile_lookback_days: 90
+  fat_tail_risk_multiplier: 1.5
+  kelly_fraction: 0.25
+  loss_streak_size_multiplier: 0.5
+  loss_streak_trigger: 3
+  max_leverage_by_regime:
+    bear_trend: 2.0
+    bull_trend: 3.0
+    ranging: 1.5
+    uncertain: 1.0
+    volatility_expansion: 1.5
+  max_leverage_defensive_mode: 1.0
+  max_position_pct: 0.04
+  max_positions_per_symbol: 10
+  max_trades_per_scan_cycle: 1
+  min_position_pct: 0.003
+  portfolio_heat_max_pct: 0.06
+  vol_adjusted_sizing: true
+rl:
+  enabled: true
+  model_dir: ''
+  replay_buffer_size: 50000
+  reward_leverage: 10.0
+  train_every_n_candles: 10
+rlmf:
+  enabled: false
+  feedback_interval_episodes: 50
+scanner:
+  auto_execute: true
+  auto_execute_cooldown_seconds: 30
+  btc_only_mode: false
+  capital_usdt: 100000.0
+  ohlcv_bars: 300
+  watchlists:
+    Default:
+      description: Major crypto assets
+      enabled: true
+      symbols:
+      - BTC/USDT
+      - ETH/USDT
+      - BNB/USDT
+      - SOL/USDT
+      - XRP/USDT
+  websocket_enabled: false
+  websocket_symbol: BTC/USDT
+  websocket_timeframe: 1h
+sentiment:
+  news_api_key: __vault__
+  news_enabled: true
+  onchain_enabled: false
+  reddit_client_id: __vault__
+  reddit_client_secret: __vault__
+  reddit_enabled: true
+  twitter_enabled: false
+  update_interval_minutes: 15
+staged_candidates:
+  enabled: true
+  max_active: 20
+  retention_seconds: 86400
+  ttl_seconds: 10800
