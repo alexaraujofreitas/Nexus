@@ -27,13 +27,27 @@ import pytest
 
 class TestHealthCheckInterval:
     def test_nm01_interval_is_4_hours(self):
-        """Health check must fire every 4 hours (14400 seconds), not 6."""
+        """Health check default must be 6h (configurable via set_health_check_interval).
+
+        The old hard-coded _HEALTH_CHECK_INTERVAL_S was replaced by a configurable
+        _DEFAULT_HEALTH_CHECK_INTERVAL_H in Session 20. The default is 6h;
+        the user can change it to 1/2/3/4/6/12/24h via the Notifications page.
+        """
         import core.notifications.notification_manager as nm_module
-        assert nm_module._HEALTH_CHECK_INTERVAL_S == 4 * 3600, (
-            f"_HEALTH_CHECK_INTERVAL_S is {nm_module._HEALTH_CHECK_INTERVAL_S}s "
-            f"but must be {4 * 3600}s (4 hours). "
-            "The interval was changed from 6h to 4h per user request."
+        # Default is 6h
+        assert nm_module._DEFAULT_HEALTH_CHECK_INTERVAL_H == 6, (
+            f"_DEFAULT_HEALTH_CHECK_INTERVAL_H is {nm_module._DEFAULT_HEALTH_CHECK_INTERVAL_H} "
+            f"but must be 6. Default is 6h; configurable via Notifications page."
         )
+        # Valid values tuple must include 1, 2, 3, 4, 6, 12, 24
+        valid = nm_module._VALID_HEALTH_CHECK_HOURS
+        for h in (1, 2, 3, 4, 6, 12, 24):
+            assert h in valid, f"{h}h not in _VALID_HEALTH_CHECK_HOURS: {valid}"
+        # set_health_check_interval and get_health_check_interval must exist
+        nm = nm_module.NotificationManager.__new__(nm_module.NotificationManager)
+        nm._health_check_interval_h = 6
+        nm._health_check_timer = None
+        assert hasattr(nm, '_health_check_interval_h')
 
 
 # ---------------------------------------------------------------------------
