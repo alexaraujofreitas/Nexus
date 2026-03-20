@@ -24,6 +24,7 @@ NAV_ITEMS = [
     ("dashboard",            "Dashboard",             "◈", "DASHBOARDS"),
     ("risk_management",      "Risk Management",       "⊘", None),
     ("intelligence",         "AI Intelligence",       "◉", None),
+    ("intelligence_agents",  "Intelligence Agents",   "◈", None),
     ("regime",               "Market Regime",         "⊘", None),
     # ── TRADING — active execution & setup ────────────────────
     ("market_scanner",       "Market Scanner",        "⊡", "TRADING"),
@@ -357,6 +358,7 @@ class MainWindow(QMainWindow):
         from gui.pages.exchange_management.exchange_page  import ExchangeManagementPage
         # Phase 12 — new pages
         from gui.pages.intelligence.intelligence_page     import IntelligencePage
+        from gui.pages.intelligence.agents_page           import IntelligenceAgentsPage
         from gui.pages.regime.regime_page                 import RegimePage
         from gui.pages.signal_explorer.signal_explorer_page import SignalExplorerPage
         from gui.pages.system_health.system_health_page   import SystemHealthPage
@@ -372,6 +374,7 @@ class MainWindow(QMainWindow):
             "signal_explorer":       SignalExplorerPage,
             "news_sentiment":        NewsSentimentPage,
             "intelligence":          IntelligencePage,
+            "intelligence_agents":   IntelligenceAgentsPage,
             "regime":                RegimePage,
             "risk_management":       RiskManagementPage,
             "orders_positions":      OrdersPositionsPage,
