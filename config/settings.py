@@ -200,6 +200,8 @@ DEFAULT_CONFIG = {
             "system_error":     True,
             "emergency_stop":   True,
             "daily_summary":    True,
+            "health_check":     True,
+            "health_check_interval_hours": 6,   # valid: 1, 2, 3, 4, 6, 12, 24
         },
     },
     "agents": {

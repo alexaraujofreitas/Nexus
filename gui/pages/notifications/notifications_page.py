@@ -14,7 +14,7 @@ import logging
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QScrollArea, QGroupBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QPushButton, QCheckBox, QGridLayout,
+    QHeaderView, QPushButton, QCheckBox, QGridLayout, QComboBox,
 )
 from PySide6.QtCore import Qt, QTimer, QMetaObject
 from PySide6.QtGui import QColor
@@ -37,9 +37,12 @@ class NotificationsPage(QWidget):
     Notification history and preferences page.
     """
 
+    _HEALTH_INTERVAL_OPTIONS = (1, 2, 3, 4, 6, 12, 24)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pref_checkboxes: dict[str, QCheckBox] = {}
+        self._health_interval_combo: QComboBox | None = None
         self._build()
 
         # Try to subscribe to notification events; fallback to 30-second timer if not available
@@ -152,17 +155,16 @@ class NotificationsPage(QWidget):
         grid.setSpacing(8)
 
         pref_items = [
-            ("trade_opened",     "Trade Opened",           True,  0, 0),
-            ("trade_closed",     "Trade Closed",           True,  0, 1),
-            ("trade_stopped",    "Stop-Loss Hit",          True,  1, 0),
-            ("trade_rejected",   "Signal Rejected",        False, 1, 1),
-            ("strategy_signal",  "Strategy Signal",        False, 2, 0),
-            ("risk_warning",     "Risk Warning",           True,  2, 1),
-            ("market_condition", "Market Alert",           False, 3, 0),
-            ("system_error",     "System Errors",          True,  3, 1),
-            ("emergency_stop",   "Emergency Stop",         True,  4, 0),
-            ("daily_summary",    "Daily Summary",          True,  4, 1),
-            ("health_check",     "Health Check (every 6h)",True,  5, 0),
+            ("trade_opened",     "Trade Opened",    True,  0, 0),
+            ("trade_closed",     "Trade Closed",    True,  0, 1),
+            ("trade_stopped",    "Stop-Loss Hit",   True,  1, 0),
+            ("trade_rejected",   "Signal Rejected", False, 1, 1),
+            ("strategy_signal",  "Strategy Signal", False, 2, 0),
+            ("risk_warning",     "Risk Warning",    True,  2, 1),
+            ("market_condition", "Market Alert",    False, 3, 0),
+            ("system_error",     "System Errors",   True,  3, 1),
+            ("emergency_stop",   "Emergency Stop",  True,  4, 0),
+            ("daily_summary",    "Daily Summary",   True,  4, 1),
         ]
 
         for key, label, default, r, c in pref_items:
@@ -174,6 +176,44 @@ class NotificationsPage(QWidget):
             )
             self._pref_checkboxes[key] = cb
             grid.addWidget(cb, r, c)
+
+        # ── Health Check row (checkbox + interval combo) ───────
+        hc_cb = QCheckBox("Health Check")
+        hc_cb.setChecked(True)
+        hc_cb.setStyleSheet(f"color:{_LIGHT}; font-size:13px;")
+        hc_cb.stateChanged.connect(
+            lambda state: self._on_pref_changed("health_check", bool(state))
+        )
+        self._pref_checkboxes["health_check"] = hc_cb
+        grid.addWidget(hc_cb, 5, 0)
+
+        interval_widget = QWidget()
+        ih = QHBoxLayout(interval_widget)
+        ih.setContentsMargins(0, 0, 0, 0)
+        ih.setSpacing(6)
+        every_lbl = QLabel("Every")
+        every_lbl.setStyleSheet(f"color:{_GRAY}; font-size:13px;")
+        ih.addWidget(every_lbl)
+
+        self._health_interval_combo = QComboBox()
+        self._health_interval_combo.setFixedWidth(60)
+        self._health_interval_combo.setStyleSheet(
+            f"color:{_LIGHT}; background:#0D1B2A; border:1px solid #1E3A5F;"
+            " border-radius:4px; padding:2px 4px; font-size:13px;"
+        )
+        for h in self._HEALTH_INTERVAL_OPTIONS:
+            self._health_interval_combo.addItem(f"{h}h", userData=h)
+        # Default: 6h
+        self._health_interval_combo.setCurrentIndex(
+            self._HEALTH_INTERVAL_OPTIONS.index(6)
+        )
+        self._health_interval_combo.currentIndexChanged.connect(
+            self._on_health_interval_changed
+        )
+        ih.addWidget(self._health_interval_combo)
+        ih.addStretch()
+        grid.addWidget(interval_widget, 5, 1)
+        # ── end health check row ───────────────────────────────
 
         save_btn = QPushButton("Save Preferences")
         save_btn.clicked.connect(self._save_preferences)
@@ -297,6 +337,18 @@ class NotificationsPage(QWidget):
             for key, cb in self._pref_checkboxes.items():
                 val = settings.get(f"notifications.preferences.{key}", cb.isChecked())
                 cb.setChecked(bool(val))
+
+            # Restore health-check interval combo without triggering the save handler
+            if self._health_interval_combo is not None:
+                saved_h = int(
+                    settings.get("notifications.preferences.health_check_interval_hours", 6)
+                )
+                self._health_interval_combo.blockSignals(True)
+                idx = self._HEALTH_INTERVAL_OPTIONS.index(saved_h) \
+                    if saved_h in self._HEALTH_INTERVAL_OPTIONS else \
+                    self._HEALTH_INTERVAL_OPTIONS.index(6)
+                self._health_interval_combo.setCurrentIndex(idx)
+                self._health_interval_combo.blockSignals(False)
         except Exception:
             pass
 
@@ -384,6 +436,22 @@ class NotificationsPage(QWidget):
             notification_manager.set_preference(key, enabled)
         except Exception:
             pass
+
+    def _on_health_interval_changed(self, _index: int) -> None:
+        """User picked a new health-check interval — apply immediately and persist."""
+        if self._health_interval_combo is None:
+            return
+        hours = self._health_interval_combo.currentData()
+        if hours is None:
+            return
+        try:
+            from core.notifications.notification_manager import notification_manager
+            from config.settings import settings
+            notification_manager.set_health_check_interval(int(hours))
+            settings.set("notifications.preferences.health_check_interval_hours", int(hours))
+            settings.save()
+        except Exception as exc:
+            logger.debug("Failed to apply health check interval: %s", exc)
 
     def _save_preferences(self) -> None:
         try:

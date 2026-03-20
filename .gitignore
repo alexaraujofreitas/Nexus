@@ -77,6 +77,15 @@ Thumbs.db
 ~$*
 *.tmp
 
+# ── UI test artifacts (generated output) ──────────────────
+# Screenshots, JSON reports, and PNGs from run_ui_checks.py / --test-ui
+artifacts/
+
+# ── Additional runtime data files ─────────────────────────
+data/trade_monitor.json
+data/backtest_results/
+data/archive/
+
 # ── Linux FUSE mount artifacts (Cowork VM) ────────────────
 # These .fuse_hidden* files appear in the Windows folder due to the
 # Cowork VM mount. They are temporary Linux filesystem artifacts and

@@ -60,7 +60,8 @@ _DEFAULT_PREFS: dict[str, bool] = {
     "health_check":     True,   # 4-hour system health check — on by default
 }
 
-_HEALTH_CHECK_INTERVAL_S = 4 * 3600   # 4 hours
+_DEFAULT_HEALTH_CHECK_INTERVAL_H = 6   # default: every 6 hours
+_VALID_HEALTH_CHECK_HOURS = (1, 2, 3, 4, 6, 12, 24)
 
 _DEDUP_WINDOW_S = 60        # seconds to suppress duplicate notifications
 _THREAD_POOL_SIZE = 4       # concurrent channel sends
@@ -123,8 +124,9 @@ class NotificationManager:
         self._daily_summary_hour: int = 22  # 10pm local time
         self._daily_summary_timer: Optional[threading.Timer] = None
 
-        # Health check scheduling (every 6 hours)
+        # Health check scheduling — interval is user-configurable (hours)
         self._health_check_enabled: bool = True
+        self._health_check_interval_h: int = _DEFAULT_HEALTH_CHECK_INTERVAL_H
         self._health_check_timer: Optional[threading.Timer] = None
 
         # Last known feed status — updated via FEED_STATUS events
@@ -212,6 +214,13 @@ class NotificationManager:
             if k in self._prefs:
                 self._prefs[k] = bool(v)
 
+        # Health check interval (hours) — read separately, not a boolean pref
+        raw_h = pref_override.get("health_check_interval_hours", _DEFAULT_HEALTH_CHECK_INTERVAL_H)
+        try:
+            self._health_check_interval_h = int(raw_h)
+        except (TypeError, ValueError):
+            self._health_check_interval_h = _DEFAULT_HEALTH_CHECK_INTERVAL_H
+
         with self._lock:
             self._channels = channels
 
@@ -257,7 +266,7 @@ class NotificationManager:
         if self._daily_summary_enabled:
             self._schedule_daily_summary()
 
-        # Schedule 6-hour health check
+        # Schedule health check (interval configured by user, default 6h)
         if self._health_check_enabled:
             self._schedule_health_check()
 
@@ -381,6 +390,29 @@ class NotificationManager:
             self._daily_summary_timer.cancel()
             if self._running and self._daily_summary_enabled:
                 self._schedule_daily_summary()
+
+    def set_health_check_interval(self, hours: int) -> None:
+        """Set the health-check send interval (hours).  Reschedules immediately."""
+        if hours not in _VALID_HEALTH_CHECK_HOURS:
+            raise ValueError(
+                f"hours must be one of {_VALID_HEALTH_CHECK_HOURS}, got {hours}"
+            )
+        with self._lock:
+            self._health_check_interval_h = hours
+        # Cancel current timer and restart with new interval
+        if self._health_check_timer:
+            self._health_check_timer.cancel()
+            self._health_check_timer = None
+        if self._running and self._health_check_enabled:
+            self._schedule_health_check()
+        logger.info(
+            "NotificationManager: health check interval set to %d hour(s)", hours
+        )
+
+    def get_health_check_interval(self) -> int:
+        """Return current health-check interval in hours."""
+        with self._lock:
+            return self._health_check_interval_h
 
     def get_delivery_stats(self) -> dict:
         """Return delivery statistics."""
@@ -627,15 +659,14 @@ class NotificationManager:
         if self._health_check_timer:
             self._health_check_timer.cancel()
 
-        self._health_check_timer = threading.Timer(
-            _HEALTH_CHECK_INTERVAL_S, self._send_health_check
-        )
+        interval_s = self._health_check_interval_h * 3600
+        self._health_check_timer = threading.Timer(interval_s, self._send_health_check)
         self._health_check_timer.daemon = True
         self._health_check_timer.start()
 
         logger.debug(
-            "NotificationManager: health check scheduled in %.0f hours",
-            _HEALTH_CHECK_INTERVAL_S / 3600,
+            "NotificationManager: health check scheduled in %d hour(s)",
+            self._health_check_interval_h,
         )
 
     def _send_health_check(self) -> None:
