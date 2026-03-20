@@ -1157,3 +1157,55 @@ Whenever `fetch_tickers` or any Bybit Demo API call returns 403 Forbidden (`api-
 
 ### Test Results
 - **1,024/1,024 pass**, 9 skipped (GPU), 0 failures
+
+## Session 20 — IDSS All-Symbols Display, Status Column, Candle-Boundary Alignment (2026-03-20)
+
+### Change 1 — IDSS AI Scanner: Show All Symbols Always (Status Column)
+Previously the IDSS table only showed rows for APPROVED candidates — 0 rows was indistinguishable from "not working."
+
+**New behavior**: Every scan cycle emits a full per-symbol result dict for ALL symbols in the watchlist (approved, rejected, no-signal, filtered). The table always has 5 rows.
+
+| File | Changes |
+|------|---------|
+| `core/scanning/scanner.py` | `scan_all_results = Signal(list)` on both `ScanWorker` and `AssetScanner`; `_empty_sym_result()` static method; `_scan_symbol_with_regime()` returns 5-tuple with `pre_rejection` ∈ `{"No data", "Stale data", "No signal", "Below threshold", ""}`;  `_all_sym_results` dict tracks all symbols through pipeline; `generated_at` stamped for ALL symbols; risk-gate rejection reasons stamped per symbol; `AssetScanner._watchdog_last_fired_at` for sleep/wake gap detection |
+| `gui/pages/market_scanner/scanner_page.py` | Added `Status` column (index 10) + `Age` column (index 11); green ✓ Approved / amber ✗ risk-gate rejection / dim ✗ pre-gate rejection; `_on_scan_all_results()` handler sorts approved first; `_refresh_ages()` ticks ALL rows every 60s; `_scan_all_results_received` flag prevents double-load |
+
+**Status color coding:**
+- `#00CC77` green — `✓ Approved`
+- `#FFB300` amber — risk-gate rejection (had valid signal + prices): `✗ EV gate`, `✗ MTF conflict`, etc.
+- `#4A6A8A` dim — pre-gate rejection (no signal reached gate): `✗ No signal`, `✗ Below threshold`, `✗ Stale data`
+
+### Change 2 — Sleep/Wake Watchdog via Wall-Clock Gap
+Added `_watchdog_last_fired_at: Optional[float]` to `AssetScanner`. Each watchdog tick compares current `time.time()` to the previous tick. If gap > 3× the 30s watchdog interval (90s), the system almost certainly woke from sleep — triggers an immediate recovery scan instead of waiting up to 1.5× the HTF interval.
+
+### Change 3 — Candle-Boundary Alignment for IDSS Scan Timers
+**Problem**: Scanner fired every N seconds from NexusTrader startup time. A restart at 13:22 would scan at 13:22, 14:22, 15:22 — always 22 minutes behind candle close, potentially reading a 22-minute-old candle.
+
+**Solution**: Timers now align to candle-close boundaries + 30s buffer.
+
+**New module-level helper** (`core/scanning/scanner.py`):
+```python
+def _seconds_to_next_candle(timeframe: str, buffer_s: int = 30) -> int:
+    """Compute delay to next candle-close boundary + buffer_s seconds."""
+```
+Example: current UTC 13:22:47 → 1h scan fires at 14:00:30 UTC (2263s from now).
+
+**`AssetScanner.start()` flow:**
+1. Immediate startup scan (fast initial data, no wait)
+2. `QTimer.singleShot(htf_delay_s * 1000, _fire_aligned_htf_scan)` — fires at next candle close
+3. `_fire_aligned_htf_scan()` → triggers scan + calls `_timer.start()` (repeating from here on-boundary)
+4. Same pattern for LTF 15m confirmation timer via `_fire_aligned_ltf_scan()`
+
+**Guard: `_htf_alignment_pending` / `_ltf_alignment_pending` flags** — prevent watchdog timer-heartbeat from restarting timers during the alignment window (timers are intentionally inactive before the singleShot fires). Both flags cleared in `stop()`.
+
+**Log output on startup:**
+```
+AssetScanner: HTF timer aligned — first repeating scan in 2263s (at 14:00:30 UTC, 37.7min from now)
+AssetScanner: LTF timer aligned — first repeating scan in 550s (at 13:30:30 UTC, 9.2min from now)
+AssetScanner: HTF aligned tick — starting repeating 1h timer   ← fires at 14:00:30
+```
+
+**Rule**: `_seconds_to_next_candle()` computes boundaries via `epoch_s % interval_s` — uses UTC epoch seconds, works for any TF divisor of a day (1m, 5m, 15m, 1h, 4h, etc.).
+
+### Test Results
+- **1,024/1,024 pass**, 9 skipped (GPU), 0 failures
