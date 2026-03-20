@@ -1027,3 +1027,122 @@ User has explicitly stated: Architecture changes ARE allowed during the demo tes
 - Auto-Execute defaults to ON (code default `True`, config default `true`)
 - Auto-Scan starts automatically on launch (no manual button click needed)
 - Button text: "Auto-Execute is ON" / "Auto-Execute is OFF" (clear wording)
+
+## Session 18 — Autonomous UI Validation System (2026-03-20)
+
+Full implementation of internal UI instrumentation for autonomous validation. No user screenshots needed — Claude can now validate all UI pages independently.
+
+### New Files
+| File | Description |
+|------|-------------|
+| `gui/ui_test_controller.py` | `UITestController` class — navigate pages, capture screenshots, data cross-checks, structured pass/fail report |
+| `scripts/run_ui_checks.py` | Standalone validation runner — 69 checks across all 20 pages, offscreen Qt, EGL stub bootstrap, exit code 0/1 |
+| `scripts/lib/libEGL.so.1` | Pre-compiled EGL stub for headless Qt6 on this Linux VM (no Mesa EGL installed) |
+
+### Modified Files
+| File | Changes |
+|------|---------|
+| `main.py` | Added `--test-ui` mode: `python main.py --test-ui` runs full headless validation. Added `_parse_args()`, `_run_ui_tests()`. Added EGL stub bootstrap for the test-ui path. |
+| `gui/main_window.py` | Added `go_to_page(key)` public navigation hook and `capture_ui(name)` screenshot method |
+| `core/database/engine.py` | Each PRAGMA wrapped in individual try/except — WAL and other write PRAGMAs fail gracefully on VM mounts (NFS/FUSE) without crashing the engine |
+
+### How to Use
+
+**Full validation run (with screenshots):**
+```
+python scripts/run_ui_checks.py
+```
+
+**Checks only (faster — no screenshots):**
+```
+python scripts/run_ui_checks.py --no-screenshots
+```
+
+**Specific pages:**
+```
+python scripts/run_ui_checks.py --pages market_scanner paper_trading
+```
+
+**Via main.py --test-ui mode:**
+```
+python main.py --test-ui
+```
+
+Exit code: `0` = all checks passed, `1` = failures, `2` = fatal startup error.
+
+### Output
+Each run creates a timestamped directory under `artifacts/ui/YYYYMMDD_HHMMSS/`:
+- `report.json` — machine-readable results for CI/scripted use
+- `report.txt` — human-readable summary
+- `dashboard_Dashboard.png` ... (one 1600×960 PNG per page)
+
+### 69 Checks Across 3 Phases
+| Phase | Checks | Description |
+|-------|--------|-------------|
+| 1 — Page Load | 60 | 3 checks × 20 pages: page loads without error, navigation sets correct page, sidebar button checked |
+| 2 — Screenshots | — | 20 PNGs captured via `QWidget.grab()` (offscreen-safe) |
+| 3 — Data Cross-checks | 9 | StatusBar clock live, PT capital, PT positions count, Logs has entries, Settings has inputs, PA stats rendered, Exchange form has fields, Scanner has buttons, Risk has controls |
+
+### Baseline Result
+**69/69 pass (100%), ~70s runtime, 20 screenshots 75KB–310KB each**
+
+### Self-Usage Instructions (for Claude)
+Run after ANY change that touches GUI files:
+```
+python scripts/run_ui_checks.py --no-screenshots  # for quick check
+python scripts/run_ui_checks.py                    # with screenshots when reviewing layout
+```
+Read `artifacts/ui/<latest>/report.json` for failures. Investigate the failing page's source file. Fix. Re-run. Never ask the user for screenshots.
+
+### EGL Stub Technical Notes
+- `scripts/run_ui_checks.py` bootstraps automatically: detects missing libEGL, compiles stub if needed, self-re-execs with `LD_LIBRARY_PATH` pointing to `scripts/lib/`
+- The re-exec is guarded by `_NEXUS_EGL_READY` env var to prevent infinite loops
+- The pre-compiled stub is checked into `scripts/lib/libEGL.so.1` (x86-64 Linux)
+- WAL mode: `engine.py` now wraps all PRAGMAs individually — WAL fails on VM mounts silently, falls back to DELETE mode, other PRAGMAs continue
+
+### Rule
+Always run `python scripts/run_ui_checks.py --no-screenshots` after any UI change before committing.
+
+## Session 19 — CryptoPanic v2, CoinGecko Cache, HMM State Map Fix (2026-03-20)
+
+Three bugs identified during the post-restart audit (2026-03-20 10:00:35 log) were investigated and fixed. 1,024/1,024 tests pass (previous: 886 + 138 new from sessions 15–18). 9 skipped (GPU). 0 failures.
+
+### Bug 1 — CryptoPanic API 404 (Issue 1)
+- **Root cause**: CryptoPanic migrated to `/api/developer/v2/posts/` as the base endpoint. The old `/api/v1/posts/` path 404s for all plan tiers. Additionally, `filter=` in v2 means SENTIMENT filter (rising/hot/bullish/bearish), not content-type; content-type filter is now `kind=` parameter. Session 13 incorrectly concluded `/api/v1/posts/` was correct — that was wrong.
+- **Compounding issue**: User's Japan VPN caused Cloudflare to block all API calls. VPN must be disabled or split-tunneled for cryptopanic.com.
+- **Fix**: Updated base URL to `/api/developer/v2/posts/` and changed `filter=news` → `kind=news` in:
+  - `core/nlp/news_feed.py` — also added `public=true` and `size=50` params
+  - `core/agents/twitter_agent.py` — kept `filter=hot` (valid v2 sentiment filter) and added `public=true`
+- **Tests**: Rewrote `TestCryptoPanicEndpointURL` class in `tests/unit/test_log_review_fixes.py`:
+  - `test_lr09_uses_v2_developer_endpoint` — asserts `/api/developer/v2/posts/` in news_feed
+  - `test_lr09_does_not_use_deprecated_paths` — rejects `/api/v1/` and `/api/free/` in both files
+  - `test_lr09_uses_kind_param_not_filter_for_content_type` — asserts `kind=news` present, `filter=news` absent
+- **Rule**: CryptoPanic v2 URL is always `/api/developer/v2/posts/?auth_token=...`. Content-type = `kind=`. Sentiment = `filter=`. `public=true` required for non-personalized posts.
+
+### Bug 2 — CoinGecko 429 Rate Limiting in CrashDetectionAgent (Issue 2)
+- **Root cause**: `CrashDetectionAgent` polls every 60s. Each poll called:
+  - `_fetch_btc_dominance()` → 1 call to `/api/v3/global`
+  - `_fetch_stablecoin_ratio()` → 2 calls (`/api/v3/coins/bitcoin` + `/api/v3/global`)
+  - Total: 3 calls/minute → triggers CoinGecko free-tier 429 rate limits
+- **Fix** (`core/agents/crash_detection_agent.py`):
+  - Added `_COINGECKO_CACHE_TTL = 300` module constant (5-minute TTL)
+  - Added cache instance variables: `_btc_dominance_cache`, `_ssr_cache`, `_coingecko_global_cache` (each with `_ts` timestamp)
+  - Extracted shared `_fetch_coingecko_global()` method with 5-minute TTL cache — used by both `_fetch_btc_dominance()` and `_fetch_stablecoin_ratio()`, eliminating duplicate `/api/v3/global` calls
+  - Both data-fetch methods now check their own cache before making API calls
+  - **New call pattern**: 2 calls/5min (1 × `/api/v3/global`, 1 × `/api/v3/coins/bitcoin`) — was 3 calls/min
+- **Rule**: Any agent polling faster than 5 minutes must cache CoinGecko responses. Never make more than 1 call to the same CoinGecko endpoint per poll cycle.
+
+### Bug 3 — HMMClassifier Degenerate State Map (Issue 3)
+- **Symptom from log**: `state_map={0:'ranging', 1:'trend_bear', 2:'trend_bear', 3:'trend_bear'}` — all 4 states labeled, but 3 have `trend_bear`, `high_volatility` never assigned
+- **Root cause** (`core/regime/hmm_classifier.py` `_compute_state_mapping()`): Sequential `if/elif` chain assigned labels in priority order, but when `idx_min_ret == idx_max_vol` (the most bearish state is also the most volatile — common in bear markets), `trend_bear` fired first and `high_volatility` was never assigned. The remaining states all fell through to `else: trend_bear` because their mean_ret ≤ 0.
+- **Fix**: Replaced the sequential `if/elif` chain with a priority-based assignment using sorted candidate lists. Each label iterates its sorted candidates and takes the first unlabeled state:
+  1. `trend_bull` → highest-return state (only if return > 0)
+  2. `trend_bear` → lowest-return state (only if return < 0, not yet labeled)
+  3. `ranging` → lowest-vol state not yet labeled
+  4. `high_volatility` → highest-vol state not yet labeled ← guaranteed unique now
+  5. Remaining → `uncertain`
+- The new logic guarantees no label conflicts regardless of how indices overlap.
+- **Rule**: Never use sequential `if/elif` to assign labels from multiple heuristics when the same index can satisfy multiple conditions. Always use priority-ordered iteration with "skip if already labeled" guards.
+
+### Test Results
+- **1,024/1,024 pass**, 9 skipped (GPU), 0 failures

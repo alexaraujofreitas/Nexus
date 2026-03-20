@@ -1857,8 +1857,8 @@ class PerformanceAnalyticsPage(QWidget):
         self._s_best    = _StatCard("BEST TRADE",     "—",      _C_GREEN)
         self._s_worst   = _StatCard("WORST TRADE",    "—",      _C_RED)
         self._s_avgdur  = _StatCard("AVG DURATION",   "—")
-        self._s_dd      = _StatCard("MAX DRAWDOWN",   "0.00%",  _C_GREEN)
-        self._s_ready   = _StatCard("DEMO READINESS", "—",      _C_MUTED)
+        self._s_dd      = _StatCard("MAX DD",          "0.00%",  _C_GREEN)
+        self._s_ready   = _StatCard("READINESS",       "—",      _C_MUTED)
 
         cards = [
             self._s_trades, self._s_winrate, self._s_pnl,   self._s_pf,

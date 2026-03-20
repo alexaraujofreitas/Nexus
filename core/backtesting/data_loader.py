@@ -394,11 +394,15 @@ class HistoricalDataLoader:
             )
 
             try:
-                # Use ThreadPoolExecutor with timeout to prevent hangs
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(
+                # IMPORTANT: Do NOT use `with ThreadPoolExecutor` — shutdown(wait=True)
+                # in __exit__ blocks indefinitely if the thread hangs on a network call
+                # even after TimeoutError is raised.  Use explicit pool + finally shutdown.
+                _tp = ThreadPoolExecutor(max_workers=1)
+                try:
+                    _since_val = since  # capture loop variable for lambda closure
+                    future = _tp.submit(
                         lambda: exchange.fetch_ohlcv(
-                            symbol, timeframe, since=since, limit=batch_limit
+                            symbol, timeframe, since=_since_val, limit=batch_limit
                         )
                     )
                     try:
@@ -415,6 +419,8 @@ class HistoricalDataLoader:
                         raise TimeoutError(
                             f"fetch_ohlcv timed out after {FETCH_TIMEOUT}s"
                         )
+                finally:
+                    _tp.shutdown(wait=False, cancel_futures=True)
 
             except Exception as e:
                 logger.error(

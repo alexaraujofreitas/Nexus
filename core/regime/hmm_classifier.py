@@ -314,33 +314,57 @@ class HMMClassifier:
                         "mean_atr_ratio": float(np.mean(state_data[:, 3])),
                     }
 
-            # Assign regimes based on statistics
-            # Find states with highest/lowest metrics
+            # Assign regimes based on statistics.
+            # Priority-based assignment that avoids degeneracy:
+            #   Previously, a sequential if/elif chain caused all-trend_bear maps
+            #   when idx_min_ret == idx_max_vol (the most bearish state is also the
+            #   most volatile).  trend_bear fired first and high_volatility was never
+            #   assigned; remaining states fell through to the trend_bear else-branch,
+            #   producing degenerate maps like {0:'ranging', 1:'trend_bear',
+            #   2:'trend_bear', 3:'trend_bear'}.
+            #
+            #   Fix: assign labels in priority order, iterating candidates by their
+            #   heuristic sort and skipping states already labeled — each label always
+            #   gets exactly one state regardless of index overlaps.
+
             mean_rets = {s: state_stats[s]["mean_ret"] for s in range(_N_COMPONENTS)}
             mean_vols = {s: state_stats[s]["mean_vol"] for s in range(_N_COMPONENTS)}
 
-            idx_max_ret = max(mean_rets, key=mean_rets.get)
-            idx_min_ret = min(mean_rets, key=mean_rets.get)
-            idx_max_vol = max(mean_vols, key=mean_vols.get)
-            idx_min_vol = min(mean_vols, key=mean_vols.get)
+            # Pre-sorted candidate lists for each heuristic
+            by_ret_desc = sorted(range(_N_COMPONENTS), key=lambda s: mean_rets[s], reverse=True)
+            by_ret_asc  = sorted(range(_N_COMPONENTS), key=lambda s: mean_rets[s])
+            by_vol_asc  = sorted(range(_N_COMPONENTS), key=lambda s: mean_vols[s])
+            by_vol_desc = sorted(range(_N_COMPONENTS), key=lambda s: mean_vols[s], reverse=True)
 
             new_state_map: dict[int, str] = {}
 
+            # 1. trend_bull — highest return, only if return is positive
+            if mean_rets[by_ret_desc[0]] > 0.0:
+                new_state_map[by_ret_desc[0]] = "trend_bull"
+
+            # 2. trend_bear — lowest return, only if return is negative & unlabeled
+            bear_candidate = by_ret_asc[0]
+            if mean_rets[bear_candidate] < 0.0 and bear_candidate not in new_state_map:
+                new_state_map[bear_candidate] = "trend_bear"
+
+            # 3. ranging — lowest vol, first unlabeled candidate
+            for s in by_vol_asc:
+                if s not in new_state_map:
+                    new_state_map[s] = "ranging"
+                    break
+
+            # 4. high_volatility — highest vol, first unlabeled candidate
+            # Guaranteed to be different from trend_bear when idx_min_ret == idx_max_vol
+            # because trend_bear already claimed that state in step 2.
+            for s in by_vol_desc:
+                if s not in new_state_map:
+                    new_state_map[s] = "high_volatility"
+                    break
+
+            # 5. Any remaining unlabeled states → uncertain (ambiguous regime)
             for state in range(_N_COMPONENTS):
-                if state == idx_max_ret and mean_rets[state] > 0.0:
-                    new_state_map[state] = "trend_bull"
-                elif state == idx_min_ret and mean_rets[state] < 0.0:
-                    new_state_map[state] = "trend_bear"
-                elif state == idx_min_vol:
-                    new_state_map[state] = "ranging"
-                elif state == idx_max_vol:
-                    new_state_map[state] = "high_volatility"
-                else:
-                    # Fallback assignment
-                    if state_stats[state]["mean_ret"] > 0:
-                        new_state_map[state] = "trend_bull"
-                    else:
-                        new_state_map[state] = "trend_bear"
+                if state not in new_state_map:
+                    new_state_map[state] = "uncertain"
 
             with self._lock:
                 self._state_map = new_state_map

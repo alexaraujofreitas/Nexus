@@ -1,0 +1,32 @@
+============================================================
+  NEXUS TRADER — UI VALIDATION REPORT
+  2026-03-20T13:12:05.565883
+============================================================
+  Total:  69
+  Passed: 69  ✓
+  Failed: 0  ✗
+  Rate:   100.0%
+
+
+  Screenshots saved to: /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/dashboard_Dashboard.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/quant_dashboard_Command_Center.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/market_scanner_Market_Scanner.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/chart_workspace_Chart_Workspace.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/strategies_Strategies.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/backtesting_Backtesting.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/paper_trading_Paper_Trading.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/signal_explorer_Signal_Explorer.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/news_sentiment_News_&_Sentiment.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/intelligence_AI_Intelligence.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/regime_Market_Regime.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/risk_management_Risk_Management.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/orders_positions_Orders_&_Positions.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/performance_analytics_Performance_Analytics.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/notifications_Notifications.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/system_health_System_Health.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/logs_Logs.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/help_center_Help_Center.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/settings_Settings.png
+    /sessions/exciting-epic-bell/mnt/NexusTrader/artifacts/ui/20260320_131205/exchange_management_Exchange_Management.png
+============================================================

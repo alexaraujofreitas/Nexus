@@ -362,7 +362,7 @@ class TestCryptoPanicVaultResolution:
             with pytest.raises(ValueError):
                 if not resolved_key or resolved_key == "__vault__":
                     raise ValueError("No CryptoPanic API key configured")
-        url = f"https://cryptopanic.com/api/v1/posts/?auth_token={resolved_key}"
+        url = f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={resolved_key}"
         assert "__vault__" not in url
 
 
@@ -429,67 +429,87 @@ class TestTwitterAgentCryptoPanicKey:
 
 
 # ---------------------------------------------------------------------------
-# LR-09: CryptoPanic API endpoint URL format (Session 13 fix)
+# LR-09: CryptoPanic API endpoint URL format (Session 18 fix — v2 migration)
 # ---------------------------------------------------------------------------
-# Root cause: CryptoPanic API URL is /api/v1/posts/ — the plan tier is
-# determined by the auth_token, not the URL path. Previous attempts used
-# /api/free/v1/ and /api/free/v2/ which both 404.
-# `kind=` parameter was renamed to `filter=`.
+# CryptoPanic migrated to /api/developer/v2/posts/ (confirmed from official docs).
+# The old /api/v1/posts/ path now returns 404 for all plan tiers.
+# Breaking parameter changes in v2:
+#   OLD: filter=news  (content-type filter)   NEW: kind=news
+#   OLD: /api/v1/     (base path)              NEW: /api/developer/v2/
+#   NEW: public=true  (non-personalised posts, required)
+# The `filter` param now means SENTIMENT filter (rising/hot/bullish/bearish/etc.)
 
 class TestCryptoPanicEndpointURL:
-    """LR-09 — _fetch_cryptopanic must use the correct /api/v1/posts/ endpoint."""
+    """LR-09 — _fetch_cryptopanic must use the v2 /api/developer/v2/posts/ endpoint."""
 
     def _read_news_feed_source(self) -> str:
-        import ast, pathlib
+        import pathlib
         return pathlib.Path("core/nlp/news_feed.py").read_text(encoding="utf-8")
 
-    def test_lr09_uses_v1_posts_endpoint(self):
-        """URL must contain /api/v1/posts/ (tier determined by token, not path)."""
+    def _read_twitter_agent_source(self) -> str:
+        import pathlib
+        return pathlib.Path("core/agents/twitter_agent.py").read_text(encoding="utf-8")
+
+    def test_lr09_uses_v2_developer_endpoint(self):
+        """URL must contain /api/developer/v2/posts/ — v1 path now 404s."""
         src = self._read_news_feed_source()
         start = src.find("def _fetch_cryptopanic")
         assert start != -1, "_fetch_cryptopanic method not found in news_feed.py"
         next_def = src.find("\n    def ", start + 1)
         method_src = src[start:next_def] if next_def != -1 else src[start:]
 
-        assert "/api/v1/posts/" in method_src, (
-            "CryptoPanic URL must use /api/v1/posts/ — tier is determined by "
-            "auth_token, not the URL path. /api/free/v1/ and /api/free/v2/ return 404."
+        assert "/api/developer/v2/posts/" in method_src, (
+            "CryptoPanic URL must use /api/developer/v2/posts/ — the v1 path "
+            "(/api/v1/posts/) now returns 404. Confirmed from official v2 API docs."
         )
 
-    def test_lr09_does_not_use_free_path(self):
-        """URL string literals must NOT contain /api/free/ — this path 404s."""
+    def test_lr09_does_not_use_deprecated_paths(self):
+        """URL string literals must NOT contain /api/v1/ or /api/free/ — both 404."""
         import ast
-        src = self._read_news_feed_source()
-        tree = ast.parse(src)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                val = node.value
-                if "/api/free/" in val:
-                    pytest.fail(
-                        f"Incorrect /api/free/ path detected in string literal at "
-                        f"line {node.lineno}: {val!r}. "
-                        "CryptoPanic URL must use /api/v1/posts/ — tier is by token."
-                    )
+        for label, src in [
+            ("news_feed.py", self._read_news_feed_source()),
+            ("twitter_agent.py", self._read_twitter_agent_source()),
+        ]:
+            tree = ast.parse(src)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    val = node.value
+                    if "cryptopanic.com" in val:
+                        if "/api/v1/" in val:
+                            pytest.fail(
+                                f"Deprecated /api/v1/ path in {label} at line "
+                                f"{node.lineno}: {val!r}. Must use /api/developer/v2/."
+                            )
+                        if "/api/free/" in val:
+                            pytest.fail(
+                                f"Incorrect /api/free/ path in {label} at line "
+                                f"{node.lineno}: {val!r}. Must use /api/developer/v2/."
+                            )
 
-    def test_lr09_uses_filter_param_not_kind(self):
-        """Parameter must be `filter=news`, not the deprecated `kind=news`."""
+    def test_lr09_uses_kind_param_not_filter_for_content_type(self):
+        """news_feed.py must use kind=news (content-type), not filter=news (sentiment)."""
         src = self._read_news_feed_source()
         start = src.find("def _fetch_cryptopanic")
+        assert start != -1, "_fetch_cryptopanic method not found in news_feed.py"
         next_def = src.find("\n    def ", start + 1)
         method_src = src[start:next_def] if next_def != -1 else src[start:]
 
-        assert "filter=" in method_src, (
-            "CryptoPanic URL must use 'filter=news' parameter (renamed from 'kind=')"
+        assert "kind=news" in method_src, (
+            "CryptoPanic v2 API uses 'kind=news' to filter by content type. "
+            "In v2, 'filter=' is a SENTIMENT filter (rising/hot/bullish/etc.), "
+            "not a content-type filter."
         )
-        # Check for the old `kind=` parameter as a string literal (not just substring)
+        # filter=news is wrong in v2 — filter is now the sentiment filter
+        # (filter=hot is valid in twitter_agent since 'hot' is a sentiment value)
         import ast
         tree = ast.parse(src)
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if "kind=" in node.value and "cryptopanic" in src[max(0, src.find(node.value)-200):src.find(node.value)]:
+                if "filter=news" in node.value:
                     pytest.fail(
-                        f"Found deprecated 'kind=' parameter in CryptoPanic URL "
-                        f"at line {node.lineno} — must use 'filter=' instead"
+                        f"Found 'filter=news' in news_feed.py at line {node.lineno}: "
+                        f"{node.value!r}. In CryptoPanic v2, 'filter' is a SENTIMENT "
+                        "filter — use 'kind=news' to filter by content type."
                     )
 
 

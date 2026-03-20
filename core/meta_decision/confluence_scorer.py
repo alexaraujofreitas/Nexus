@@ -31,6 +31,24 @@ from config.settings import settings as _s
 
 logger = logging.getLogger(__name__)
 
+# Module-level cached references to avoid import lock contention in score().
+# Python's import lock blocks ALL threads when any thread is importing.
+# FinBERT/HuggingFace model loading can hold the import lock for 30+ seconds,
+# causing the scanner thread to hang inside lazy imports.
+_adaptive_engine_ref = None
+
+def _get_adaptive_engine_safe():
+    """Get AdaptiveWeightEngine without lazy import in hot path."""
+    global _adaptive_engine_ref
+    if _adaptive_engine_ref is None:
+        try:
+            from core.learning.adaptive_weight_engine import get_adaptive_weight_engine
+            _adaptive_engine_ref = get_adaptive_weight_engine()
+        except Exception:
+            return None
+    return _adaptive_engine_ref
+
+
 # Regime affinity per model: how much weight to give each model when regime prob is that regime
 REGIME_AFFINITY: dict[str, dict[str, float]] = {
     "trend":              {"bull_trend": 1.0, "bear_trend": 0.9, "ranging": 0.1, "volatility_expansion": 0.25, "volatility_compression": 0.2, "uncertain": 0.3, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.3, "recovery": 0.7, "accumulation": 0.2, "distribution": 0.2},
@@ -338,8 +356,7 @@ class ConfluenceScorer:
             if regime_probs else "unknown"
         )
         try:
-            from core.learning.adaptive_weight_engine import get_adaptive_weight_engine
-            _adaptive_engine = get_adaptive_weight_engine()
+            _adaptive_engine = _get_adaptive_engine_safe()
         except Exception:
             _adaptive_engine = None
 

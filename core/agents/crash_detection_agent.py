@@ -40,6 +40,7 @@ from core.event_bus import bus, Topics
 logger = logging.getLogger(__name__)
 
 _POLL_SECONDS = 60  # fast poll for crash detection
+_COINGECKO_CACHE_TTL = 300  # 5-minute cache — CoinGecko free tier: max ~30 req/min
 
 # Category weights — must sum to 1.0
 CATEGORY_WEIGHTS = {
@@ -101,6 +102,16 @@ class CrashDetectionAgent(BaseAgent):
         self._current_score: float = 0.0
         self._current_tier: str = TIER_NORMAL
         self._score_history: list[tuple[datetime, float]] = []
+
+        # CoinGecko API caches — shared by _fetch_btc_dominance and _fetch_stablecoin_ratio
+        # to avoid 429 rate-limit errors (3 calls/min without cache → 3 calls/5min with cache)
+        self._btc_dominance_cache: Optional[dict] = None
+        self._btc_dominance_cache_ts: float = 0.0
+        self._ssr_cache: Optional[dict] = None
+        self._ssr_cache_ts: float = 0.0
+        # Shared global data cache (both methods call /api/v3/global — share it)
+        self._coingecko_global_cache: Optional[dict] = None
+        self._coingecko_global_cache_ts: float = 0.0
 
         # Subscribe to other agent signals for aggregation
         bus.subscribe(Topics.FUNDING_RATE_UPDATED, self._on_agent_signal)
@@ -580,38 +591,57 @@ class CrashDetectionAgent(BaseAgent):
     # ── Data fetchers ─────────────────────────────────────────
 
     def _fetch_btc_dominance(self) -> dict:
-        """Fetch BTC dominance from CoinGecko global data (free)."""
-        import urllib.request, json as _json
-        url = "https://api.coingecko.com/api/v3/global"
-        req = urllib.request.Request(url, headers={
-            "Accept": "application/json",
-            "User-Agent": "NexusTrader/1.0",
-        })
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = _json.loads(resp.read().decode())
+        """
+        Fetch BTC dominance from CoinGecko global data (free).
 
-        global_data = data.get("data", {})
+        Cached for _COINGECKO_CACHE_TTL seconds (5 min) to avoid 429 rate-limit
+        errors — the agent polls every 60s but CoinGecko data changes slowly.
+        """
+        # Return cached result if still fresh
+        with self._lock:
+            if (self._btc_dominance_cache is not None and
+                    time.time() - self._btc_dominance_cache_ts < _COINGECKO_CACHE_TTL):
+                logger.debug("CrashDetectionAgent: BTC dominance served from cache")
+                return self._btc_dominance_cache
+
+        global_data = self._fetch_coingecko_global()
+
         market_cap_pct = global_data.get("market_cap_percentage", {})
         btc_dominance = market_cap_pct.get("btc", 50.0)
-
-        # Try to get 7-day change via market_cap_change_percentage_24h_usd as proxy
         mcap_change = global_data.get("market_cap_change_percentage_24h_usd", 0.0)
 
-        return {
+        result = {
             "btc_dominance_pct": round(btc_dominance, 2),
             "change_7d_pct": round(mcap_change * 0.5, 2),  # 24h as proxy
             "total_market_cap_usd": global_data.get("total_market_cap", {}).get("usd", 0),
         }
+
+        with self._lock:
+            self._btc_dominance_cache = result
+            self._btc_dominance_cache_ts = time.time()
+
+        return result
 
     def _fetch_stablecoin_ratio(self) -> dict:
         """
         Fetch Stablecoin Supply Ratio (SSR) from CoinGecko.
         SSR = BTC Market Cap / Stablecoin Market Cap
         Low SSR = relatively less stablecoin liquidity = bearish
+
+        Cached for _COINGECKO_CACHE_TTL seconds (5 min) to avoid 429 rate-limit
+        errors. Reuses the shared global cache from _fetch_coingecko_global() to
+        avoid a duplicate /api/v3/global call that _fetch_btc_dominance already made.
         """
         import urllib.request, json as _json
 
-        # Get BTC market cap
+        # Return cached result if still fresh
+        with self._lock:
+            if (self._ssr_cache is not None and
+                    time.time() - self._ssr_cache_ts < _COINGECKO_CACHE_TTL):
+                logger.debug("CrashDetectionAgent: SSR served from cache")
+                return self._ssr_cache
+
+        # Get BTC market cap (separate endpoint — not in /global)
         url_btc = (
             "https://api.coingecko.com/api/v3/coins/bitcoin"
             "?localization=false&tickers=false&market_data=true"
@@ -626,14 +656,8 @@ class CrashDetectionAgent(BaseAgent):
 
         btc_mcap = btc_data.get("market_data", {}).get("market_cap", {}).get("usd", 0)
 
-        # Get stablecoin market cap via global
-        url_global = "https://api.coingecko.com/api/v3/global"
-        req2 = urllib.request.Request(url_global, headers={
-            "Accept": "application/json",
-            "User-Agent": "NexusTrader/1.0",
-        })
-        with urllib.request.urlopen(req2, timeout=15) as resp2:
-            global_data = _json.loads(resp2.read().decode()).get("data", {})
+        # Reuse shared global cache — avoids a duplicate /api/v3/global call
+        global_data = self._fetch_coingecko_global()
 
         total_mcap = global_data.get("total_market_cap", {}).get("usd", 1)
         stable_pct = global_data.get("market_cap_percentage", {}).get("usdt", 5.0)
@@ -643,12 +667,48 @@ class CrashDetectionAgent(BaseAgent):
 
         ssr = (btc_mcap / stable_mcap) if stable_mcap > 0 else 10.0
 
-        return {
+        result = {
             "ssr": round(ssr, 2),
             "btc_mcap_usd": btc_mcap,
             "stable_mcap_usd": stable_mcap,
             "ssr_change_7d": 0.0,  # Would need historical to compute; placeholder
         }
+
+        with self._lock:
+            self._ssr_cache = result
+            self._ssr_cache_ts = time.time()
+
+        return result
+
+    def _fetch_coingecko_global(self) -> dict:
+        """
+        Fetch /api/v3/global from CoinGecko with a shared 5-minute cache.
+
+        Both _fetch_btc_dominance() and _fetch_stablecoin_ratio() need this
+        endpoint. Sharing the cache cuts the call rate from 2/poll to 1/5min.
+        """
+        import urllib.request, json as _json
+
+        with self._lock:
+            if (self._coingecko_global_cache is not None and
+                    time.time() - self._coingecko_global_cache_ts < _COINGECKO_CACHE_TTL):
+                return self._coingecko_global_cache
+
+        url = "https://api.coingecko.com/api/v3/global"
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/json",
+            "User-Agent": "NexusTrader/1.0",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = _json.loads(resp.read().decode())
+
+        global_data = data.get("data", {})
+
+        with self._lock:
+            self._coingecko_global_cache = global_data
+            self._coingecko_global_cache_ts = time.time()
+
+        return global_data
 
     def _fetch_fear_greed(self) -> dict:
         """Fetch Fear & Greed Index from Alternative.me (free)."""

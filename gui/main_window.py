@@ -20,26 +20,31 @@ logger = logging.getLogger(__name__)
 # ── Nav Item Definition ───────────────────────────────────────
 NAV_ITEMS = [
     # (page_key, label, icon_char, section)
-    ("dashboard",            "Dashboard",             "◈", None),
-    ("quant_dashboard",      "Command Center",        "◉", None),
+    # ── DASHBOARDS — overview & monitoring ────────────────────
+    ("dashboard",            "Dashboard",             "◈", "DASHBOARDS"),
+    ("risk_management",      "Risk Management",       "⊘", None),
+    ("intelligence",         "AI Intelligence",       "◉", None),
+    ("regime",               "Market Regime",         "⊘", None),
+    # ── TRADING — active execution & setup ────────────────────
     ("market_scanner",       "Market Scanner",        "⊡", "TRADING"),
     ("chart_workspace",      "Chart Workspace",       "⋈", None),
     ("strategies",           "Strategies",            "◉", None),
-    ("backtesting",          "Backtesting",           "⊟", "RESEARCH"),
     ("paper_trading",        "Paper Trading",         "◎", None),
+    # ── RESEARCH & SIGNALS — pre-trade analysis ───────────────
+    ("backtesting",          "Backtesting",           "⊟", "RESEARCH & SIGNALS"),
     ("signal_explorer",      "Signal Explorer",       "⊠", None),
-    ("news_sentiment",       "News & Sentiment",      "⊠", "INTELLIGENCE"),
-    ("intelligence",         "AI Intelligence",       "◉", None),
-    ("regime",               "Market Regime",         "⊘", None),
-    ("risk_management",      "Risk Management",       "⊘", "MANAGEMENT"),
-    ("orders_positions",     "Orders & Positions",    "⊕", None),
+    ("news_sentiment",       "News & Sentiment",      "⊠", None),
+    # ── TRADING ANALYSIS — post-trade review ──────────────────
+    ("orders_positions",     "Orders & Positions",    "⊕", "TRADING ANALYSIS"),
     ("performance_analytics","Performance Analytics", "◈", None),
+    # ── SYSTEM — infrastructure & configuration ───────────────
     ("notifications",        "Notifications",         "⊕", "SYSTEM"),
     ("system_health",        "System Health",         "◎", None),
+    ("exchange_management",  "Exchange Management",   "⊞", None),
+    ("settings",             "Settings",              "⊙", None),
+    # ── always last ───────────────────────────────────────────
     ("logs",                 "Logs",                  "≡", None),
     ("help_center",          "Help Center",           "?", None),
-    ("settings",             "Settings",              "⊙", None),
-    ("exchange_management",  "Exchange Management",   "⊞", None),
 ]
 
 
@@ -225,8 +230,8 @@ class NexusStatusBar(QStatusBar):
         self._clock.setStyleSheet("color: #4A5568; font-size: 13px; padding: 0 12px;")
         self.addPermanentWidget(self._clock)
 
-        # Exchange status
-        self._exchange_status = QLabel("⬤ KuCoin: Disconnected")
+        # Exchange status — name updated at runtime by MainWindow._restore_status_bar_exchange()
+        self._exchange_status = QLabel("⬤ Exchange: Disconnected")
         self._exchange_status.setObjectName("status_disconnected")
         self._exchange_status.setStyleSheet("color: #FF3355; font-size: 13px; padding: 0 12px;")
         self.addPermanentWidget(self._exchange_status)
@@ -306,6 +311,7 @@ class MainWindow(QMainWindow):
         self._connect_events()
         self._navigate_to("dashboard")
         self._restore_exchange_mode()
+        self._restore_status_bar_exchange()
         self._start_ai_health_check()
         logger.info("MainWindow initialized")
 
@@ -356,11 +362,8 @@ class MainWindow(QMainWindow):
         from gui.pages.system_health.system_health_page   import SystemHealthPage
         from gui.pages.help.help_center_page              import HelpCenterPage
         from gui.pages.notifications.notifications_page   import NotificationsPage
-        from gui.pages.quant_dashboard.quant_dashboard_page import QuantDashboardPage
-
         page_map = {
             "dashboard":             DashboardPage,
-            "quant_dashboard":       QuantDashboardPage,
             "market_scanner":        MarketScannerPage,
             "chart_workspace":       ChartWorkspacePage,
             "strategies":            StrategiesPage,
@@ -438,6 +441,24 @@ class MainWindow(QMainWindow):
                     self.sidebar.set_trading_mode("off")
         except Exception as exc:
             logger.debug("_restore_exchange_mode: %s", exc)
+
+    def _restore_status_bar_exchange(self):
+        """
+        On startup, read the active exchange name from the DB and update the
+        status bar label so it reflects the real exchange (e.g. 'Bybit: Disconnected')
+        rather than a hardcoded placeholder.  Called before any EXCHANGE_CONNECTED
+        event fires; the label is overwritten again once the exchange connects.
+        """
+        try:
+            from core.database.engine import get_session
+            from core.database.models import Exchange
+            with get_session() as session:
+                active = session.query(Exchange).filter_by(is_active=True).first()
+                if active:
+                    name = active.name or active.exchange_id or "Exchange"
+                    self.status_bar.set_exchange_connected(name, False)
+        except Exception as exc:
+            logger.debug("_restore_status_bar_exchange: %s", exc)
 
     def _navigate_to(self, page_key: str):
         if page_key in self._pages:
@@ -540,6 +561,56 @@ class MainWindow(QMainWindow):
                 online = False
             self._sig_ai_status.emit(online)
         threading.Thread(target=_probe, daemon=True).start()
+
+    # ── Public UI-test hooks ─────────────────────────────────
+
+    def go_to_page(self, page_key: str) -> bool:
+        """
+        Public navigation hook for programmatic UI testing.
+        Navigate to page_key and return True if the page exists.
+        """
+        if page_key not in self._pages:
+            logger.warning("go_to_page: unknown key '%s'", page_key)
+            return False
+        self._navigate_to(page_key)
+        return True
+
+    def capture_ui(self, name: str, out_dir: str = "") -> str:
+        """
+        Capture the entire main window using Qt-native QWidget.grab().
+        Works in both normal and offscreen (QT_QPA_PLATFORM=offscreen) mode.
+
+        Parameters
+        ----------
+        name : str
+            Base filename (without extension) — spaces/slashes replaced with _.
+        out_dir : str
+            Directory to save into.  Defaults to artifacts/ui/<timestamp>/.
+
+        Returns the absolute path to the saved PNG.
+        """
+        from pathlib import Path
+        from datetime import datetime
+        from PySide6.QtWidgets import QApplication
+        if QApplication.instance():
+            QApplication.instance().processEvents()
+
+        safe_name = name.replace(" ", "_").replace("/", "_")
+        if out_dir:
+            save_dir = Path(out_dir)
+        else:
+            root = Path(__file__).parent.parent
+            save_dir = root / "artifacts" / "ui" / datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        pixmap = self.grab()
+        path = save_dir / f"{safe_name}.png"
+        saved = pixmap.save(str(path), "PNG")
+        if saved:
+            logger.info("capture_ui: saved → %s", path)
+        else:
+            logger.warning("capture_ui: grab() returned empty pixmap for '%s'", name)
+        return str(path)
 
     def closeEvent(self, event):
         logger.info("Application closing...")

@@ -164,49 +164,6 @@ class _AgentCard(QFrame):
         )
 
 
-# ── Regime probability bar ────────────────────────────────────
-class _RegimeProbRow(QFrame):
-    """Single row showing probability for one regime."""
-
-    def __init__(self, regime_name: str, parent=None):
-        super().__init__(parent)
-        self._regime = regime_name
-        h = QHBoxLayout(self)
-        h.setContentsMargins(0, 2, 0, 2)
-        h.setSpacing(8)
-
-        lbl = QLabel(_REGIME_EMOJIS.get(regime_name, regime_name))
-        lbl.setFixedWidth(200)
-        lbl.setStyleSheet(f"color:{_LIGHT}; font-size:13px;")
-        h.addWidget(lbl)
-
-        self._bar = QProgressBar()
-        self._bar.setRange(0, 100)
-        self._bar.setValue(0)
-        self._bar.setTextVisible(False)
-        self._bar.setFixedHeight(10)
-        h.addWidget(self._bar, 1)
-
-        self._prob_lbl = QLabel("0%")
-        self._prob_lbl.setFixedWidth(40)
-        self._prob_lbl.setAlignment(Qt.AlignRight)
-        self._prob_lbl.setStyleSheet(f"color:{_GRAY}; font-size:13px;")
-        h.addWidget(self._prob_lbl)
-
-    def set_prob(self, prob: float, is_best: bool) -> None:
-        pct = int(prob * 100)
-        self._bar.setValue(pct)
-        color = _GREEN if is_best else _BLUE
-        self._bar.setStyleSheet(
-            f"QProgressBar::chunk {{ background:{color}; border-radius:5px; }}"
-            f"QProgressBar {{ background:#1A2535; border-radius:5px; }}"
-        )
-        self._prob_lbl.setText(f"{pct}%")
-        self._prob_lbl.setStyleSheet(
-            f"color:{_GREEN}; font-weight:700; font-size:13px;" if is_best
-            else f"color:{_GRAY}; font-size:13px;"
-        )
-
 
 # ── Intelligence Dashboard Page ───────────────────────────────
 class IntelligencePage(QWidget):
@@ -216,7 +173,7 @@ class IntelligencePage(QWidget):
     Sections:
       1. Meta-signal summary (orchestrator verdict)
       2. Signal contributors (each agent's vote + weight)
-      3. Regime analysis (current regime + probability distribution)
+      3. Market context indicator (regime + confidence — full detail on Market Regime page)
       4. Why bullish/bearish explanation
       5. Active risk conditions
     """
@@ -224,7 +181,6 @@ class IntelligencePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._agent_cards:  dict[str, _AgentCard] = {}
-        self._regime_rows:  dict[str, _RegimeProbRow] = {}
         self._last_orch:    dict = {}
         self._last_status:  dict = {}
         self._build()
@@ -379,61 +335,45 @@ class IntelligencePage(QWidget):
         return box
 
     def _build_regime_section(self) -> QGroupBox:
-        """Current regime + probability distribution."""
-        box = QGroupBox("Market Regime Analysis")
+        """
+        Compact market context indicator — regime name and confidence only.
+        The full probability distribution and regime history live on the
+        dedicated Market Regime page, avoiding duplication.
+        """
+        box = QGroupBox("Market Context")
         box.setStyleSheet(
             f"QGroupBox {{ color:{_LIGHT}; font-weight:700; font-size:13px;"
             f" border:1px solid #1E3A5F; border-radius:6px; margin-top:8px; padding-top:12px; }}"
         )
         h = QHBoxLayout(box)
-        h.setSpacing(24)
+        h.setContentsMargins(16, 8, 16, 12)
+        h.setSpacing(16)
 
-        # Current regime display
-        left = QFrame()
-        left.setFixedWidth(220)
-        lv = QVBoxLayout(left)
-        lv.setSpacing(8)
-        lv.addWidget(_sep_label("CURRENT REGIME"))
+        h.addWidget(_sep_label("REGIME"))
+
         self._regime_lbl = QLabel("—")
         font = QFont()
-        font.setPointSize(14)
+        font.setPointSize(13)
         font.setBold(True)
         self._regime_lbl.setFont(font)
         self._regime_lbl.setStyleSheet(f"color:{_LIGHT};")
-        lv.addWidget(self._regime_lbl)
+        h.addWidget(self._regime_lbl)
 
-        lv.addWidget(_sep_label("HMM CONFIDENCE"))
+        dot = QLabel("·")
+        dot.setStyleSheet(f"color:{_GRAY}; font-size:18px;")
+        h.addWidget(dot)
+
+        h.addWidget(_sep_label("CONFIDENCE"))
+
         self._regime_conf_lbl = QLabel("—")
-        self._regime_conf_lbl.setStyleSheet(f"color:{_BLUE}; font-size:16px; font-weight:700;")
-        lv.addWidget(self._regime_conf_lbl)
+        self._regime_conf_lbl.setStyleSheet(f"color:{_BLUE}; font-size:14px; font-weight:700;")
+        h.addWidget(self._regime_conf_lbl)
 
-        lv.addWidget(_sep_label("CLASSIFIER"))
-        self._classifier_lbl = QLabel("HMM + Rule-based Ensemble")
-        self._classifier_lbl.setStyleSheet(f"color:{_GRAY}; font-size:13px;")
-        lv.addWidget(self._classifier_lbl)
-        lv.addStretch()
-        h.addWidget(left)
+        h.addStretch()
 
-        # Vertical divider
-        div = QFrame()
-        div.setFrameShape(QFrame.VLine)
-        div.setStyleSheet(f"color:#1E3A5F;")
-        h.addWidget(div)
-
-        # Regime probability distribution
-        right = QWidget()
-        rv = QVBoxLayout(right)
-        rv.setSpacing(4)
-        rv.addWidget(_sep_label("REGIME PROBABILITY DISTRIBUTION"))
-
-        from core.regime.regime_classifier import ALL_REGIMES
-        for regime in ALL_REGIMES:
-            row = _RegimeProbRow(regime)
-            self._regime_rows[regime] = row
-            rv.addWidget(row)
-
-        rv.addStretch()
-        h.addWidget(right, 1)
+        hint = QLabel("Full analysis  →  Market Regime page")
+        hint.setStyleSheet(f"color:{_GRAY}; font-size:12px; font-style:italic;")
+        h.addWidget(hint)
 
         return box
 
@@ -492,7 +432,6 @@ class IntelligencePage(QWidget):
         """Pull latest data from coordinator and orchestrator."""
         self._refresh_agents()
         self._refresh_orchestrator()
-        self._refresh_regime()
 
     def _refresh_agents(self) -> None:
         try:
@@ -521,17 +460,6 @@ class IntelligencePage(QWidget):
         except Exception:
             pass
 
-    def _refresh_regime(self) -> None:
-        try:
-            from core.regime.hmm_regime_classifier import hmm_classifier
-            # Get latest regime probs from orchestrator cache if available
-            if self._last_orch:
-                regime     = self._last_orch.get("regime", "—")
-                regime_str = _REGIME_EMOJIS.get(regime, regime)
-                self._regime_lbl.setText(regime_str)
-        except Exception:
-            pass
-
     # ── Event handlers ────────────────────────────────────────
 
     def _on_orchestrator(self, event) -> None:
@@ -553,9 +481,6 @@ class IntelligencePage(QWidget):
             self._regime_lbl.setText(regime_str)
             conf = data.get("confidence", 0.0)
             self._regime_conf_lbl.setText(f"{conf:.0%}")
-            probs = data.get("regime_probs", {})
-            if probs:
-                self._update_regime_probs(probs)
 
     # ── Update methods ────────────────────────────────────────
 
@@ -669,16 +594,6 @@ class IntelligencePage(QWidget):
             "\n".join(neutral_drivers[:4]) if neutral_drivers else "—"
         )
 
-    def _update_regime_probs(self, probs: dict) -> None:
-        best_regime = max(probs, key=lambda k: probs.get(k, 0))
-        for regime, row in self._regime_rows.items():
-            p = probs.get(regime, 0.0)
-            row.set_prob(p, is_best=(regime == best_regime))
-
-        best_str = _REGIME_EMOJIS.get(best_regime, best_regime)
-        self._regime_lbl.setText(best_str)
-        best_conf = probs.get(best_regime, 0.0)
-        self._regime_conf_lbl.setText(f"{best_conf:.0%}")
 
 
 # ── Helper widget ─────────────────────────────────────────────

@@ -140,48 +140,58 @@ def test_pipe001_full_pipeline_happy_path(cs, gate, paper_executor):
 @pytest.mark.integration
 def test_pipe002_risk_gate_blocks_duplicate_position(cs, gate, paper_executor):
     """
-    When the executor already holds a position for a symbol, the RiskGate's
-    'already in position' check must reject a second candidate for the same
-    symbol, preventing a duplicate trade.
+    Session 11 introduced condition-based dedup:
+      - RiskGate allows multiple positions per symbol (up to max_positions_per_symbol=10)
+      - PaperExecutor blocks SAME-CONDITION entries (same side + models_fired + regime)
+
+    This test verifies BOTH layers:
+    1. RiskGate APPROVES a second candidate with a different signal condition (different
+       models_fired) — multi-position is allowed by design.
+    2. PaperExecutor.submit() REJECTS a second candidate with the EXACT SAME condition
+       fingerprint (side + models_fired + regime) as an already-open position.
     """
     symbol = "BBB/USDT"
 
-    # Open an initial position directly (bypassing the pipeline for simplicity)
+    # Open an initial position directly — models_fired=["trend","momentum_breakout"]
     from tests.unit.test_execution import make_candidate as make_exec_cand
-    paper_executor.submit(make_exec_cand(
-        symbol=symbol, entry=500.0, sl=490.0, tp=520.0
-    ))
+    first_candidate = make_exec_cand(symbol=symbol, entry=500.0, sl=490.0, tp=520.0)
+    # first_candidate: side=buy, models_fired=["trend","momentum_breakout"], regime=TRENDING_UP
+    paper_executor.submit(first_candidate)
     assert symbol in paper_executor._positions
 
-    # Now try to generate another candidate for the same symbol
+    # ── Part 1: RiskGate allows a DIFFERENT condition on same symbol ──────────
     signals = [
         make_signal("trend",          direction="long", strength=0.90, symbol=symbol,
                     entry=500.0, sl=490.0, tp=520.0),
         make_signal("mean_reversion", direction="long", strength=0.85, symbol=symbol,
                     entry=500.0, sl=490.0, tp=520.0),
     ]
-    candidate = cs.score(signals, symbol)
-    assert candidate is not None  # confluence passed
+    candidate_diff_condition = cs.score(signals, symbol)
+    assert candidate_diff_condition is not None
 
-    # Simulate the open position as known to the risk gate
     open_positions = paper_executor.get_open_positions()
-    # Open positions include BBB/USDT — risk gate must reject
-    result = gate.validate(
-        candidate,
+    result_diff = gate.validate(
+        candidate_diff_condition,
         open_positions         = open_positions,
         available_capital_usdt = 10_000.0,
         portfolio_drawdown_pct = 0.0,
     )
-
-    assert not result.approved
-    assert "open position" in result.rejection_reason.lower() or \
-           result.rejection_reason is not None, (
-        f"Expected rejection_reason about open position, got: {result.rejection_reason!r}"
+    # Different models_fired → different condition → RiskGate should approve
+    assert result_diff.approved, (
+        f"RiskGate should allow a different condition on the same symbol, "
+        f"got rejection: {result_diff.rejection_reason!r}"
     )
 
-    # Second submit also fails (executor-level guard)
-    submit_result = paper_executor.submit(result)
-    assert submit_result is False
+    # ── Part 2: PaperExecutor rejects an identical condition ─────────────────
+    # Build a candidate with the EXACT same fingerprint as the open position
+    # (side=buy, models_fired=["trend","momentum_breakout"], regime=TRENDING_UP)
+    duplicate_candidate = make_exec_cand(symbol=symbol, entry=505.0, sl=492.0, tp=525.0)
+    duplicate_candidate.approved = True
+    submit_result = paper_executor.submit(duplicate_candidate)
+    assert submit_result is False, (
+        "PaperExecutor must reject a candidate whose (side, models_fired, regime) "
+        "fingerprint exactly matches an existing open position"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

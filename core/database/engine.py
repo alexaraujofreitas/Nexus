@@ -34,11 +34,27 @@ def _create_db_engine():
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA cache_size=10000")
-        cursor.execute("PRAGMA temp_store=MEMORY")
+        # Each PRAGMA is wrapped individually.  On network/VM mounts (NFS,
+        # FUSE, Windows shares via the Cowork sandbox) some PRAGMAs that
+        # require writing to the DB can raise "disk I/O error" if the file is
+        # simultaneously open by another process (e.g. NexusTrader on the host
+        # while the VM runs UI tests).  Non-fatal: skip PRAGMAs that fail.
+        _pragmas = [
+            ("PRAGMA journal_mode=WAL",        "PRAGMA journal_mode=DELETE"),
+            ("PRAGMA foreign_keys=ON",          None),
+            ("PRAGMA synchronous=NORMAL",       None),
+            ("PRAGMA cache_size=10000",         None),
+            ("PRAGMA temp_store=MEMORY",        None),
+        ]
+        for primary, fallback in _pragmas:
+            try:
+                cursor.execute(primary)
+            except Exception:
+                if fallback:
+                    try:
+                        cursor.execute(fallback)
+                    except Exception:
+                        pass
         cursor.close()
 
     return engine

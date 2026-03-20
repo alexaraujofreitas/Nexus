@@ -180,12 +180,17 @@ class NewsFeed:
                 currencies.append(sym)
         currencies_param = ",".join(currencies) if currencies else "BTC"
 
-        # CryptoPanic API — tier is determined by auth_token, not URL path
+        # CryptoPanic API v2 — base endpoint changed from /api/v1/ to /api/developer/v2/
+        # The `kind` parameter filters by content type (news/media/all).
+        # The `filter` parameter now filters by sentiment (rising/hot/bullish/bearish/…).
+        # `public=true` requests non-personalised posts (no user-specific sources).
         url = (
-            f"https://cryptopanic.com/api/v1/posts/"
+            f"https://cryptopanic.com/api/developer/v2/posts/"
             f"?auth_token={api_key}"
-            f"&filter=news"
+            f"&kind=news"
+            f"&public=true"
             f"&currencies={currencies_param}"
+            f"&size=50"
         )
         response = requests.get(url, timeout=10, headers=_HEADERS)
         response.raise_for_status()

@@ -599,7 +599,7 @@ scanner:
   auto_execute: true
   auto_execute_cooldown_seconds: 30
   btc_only_mode: false
-  capital_usdt: 99291.0
+  capital_usdt: 99282.0
   ohlcv_bars: 300
   watchlists:
     Default:

@@ -321,8 +321,9 @@ class TwitterSentimentAgent(BaseAgent):
                 logger.debug("TwitterAgent: CryptoPanic skipped — no API key configured")
                 return None
 
-            # CryptoPanic API — tier is determined by auth_token, not URL path
-            url = f"https://cryptopanic.com/api/v1/posts/?auth_token={api_key}&filter=hot&currencies=BTC,ETH"
+            # CryptoPanic API v2 — base endpoint changed from /api/v1/ to /api/developer/v2/
+            # filter=hot still valid (sentiment filter); public=true for non-personalised posts
+            url = f"https://cryptopanic.com/api/developer/v2/posts/?auth_token={api_key}&filter=hot&currencies=BTC,ETH&public=true"
             req = urllib.request.Request(
                 url,
                 headers={"User-Agent": "NexusTrader/1.0"},

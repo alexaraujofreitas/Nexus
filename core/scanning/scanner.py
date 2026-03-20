@@ -953,10 +953,17 @@ class AssetScanner(QObject):
             logger.warning("Scanner: no exchange connected — skipping LTF scan")
             return
 
-        # Check if there are any CREATED candidates to evaluate
-        from core.scanning.candidate_store import get_candidate_store
-        store = get_candidate_store()
-        created = store.get_created()
+        # Check if there are any CREATED candidates to evaluate.
+        # Wrapped in try-except so a candidate-store failure does not escape
+        # to the caller and leave _any_scan_active in an inconsistent state.
+        try:
+            from core.scanning.candidate_store import get_candidate_store
+            store = get_candidate_store()
+            created = store.get_created()
+        except Exception as _store_exc:
+            logger.error("AssetScanner: cannot access candidate store — skipping LTF scan: %s", _store_exc)
+            return
+
         if not created:
             logger.debug("Scanner: no CREATED candidates — skipping LTF scan")
             return
@@ -981,8 +988,16 @@ class AssetScanner(QObject):
             self._ltf_worker_started_at = time.time()
             self._ltf_worker.start()
         except Exception as exc:
-            # If worker creation fails (import error, config error, etc.),
+            # If worker creation/start fails (import error, config error, etc.),
             # release the lock so HTF scans are not permanently blocked.
+            # Attempt a clean thread stop first in case start() raised AFTER
+            # spawning the OS thread (extremely rare, but possible with QThread).
+            if self._ltf_worker is not None:
+                try:
+                    self._ltf_worker.quit()
+                    self._ltf_worker.wait(1000)
+                except Exception:
+                    pass
             self._any_scan_active = False
             self._ltf_worker = None
             self._ltf_worker_started_at = None

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexusTrader — Menu Diagram</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0D1117;
+    color: #E6EDF3;
+    margin: 0;
+    padding: 32px;
+  }
+  h1 {
+    color: #00FF88;
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: #8899AA;
+    font-size: 13px;
+    margin-bottom: 32px;
+  }
+
+  .layout {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 10px;
+    width: 240px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .sidebar-header {
+    background: #0D1117;
+    padding: 16px 20px;
+    border-bottom: 1px solid #30363D;
+  }
+  .sidebar-header .logo {
+    font-size: 17px;
+    font-weight: 800;
+    color: #00FF88;
+    letter-spacing: 1px;
+  }
+  .sidebar-header .tagline {
+    font-size: 9px;
+    color: #4A5568;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #4A5568;
+    padding: 14px 20px 4px 20px;
+    text-transform: uppercase;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    padding: 9px 20px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    color: #8899AA;
+    gap: 10px;
+  }
+  .nav-item .icon {
+    color: #4A5568;
+    font-size: 14px;
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .nav-item .num {
+    color: #2D3748;
+    font-size: 10px;
+    font-family: monospace;
+    width: 16px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  /* ── Section colour coding ── */
+  .s-dashboards .section-label { color: #3B82F6; }
+  .s-dashboards .nav-item { border-left-color: #1D4ED8; }
+  .s-dashboards .nav-item .icon { color: #3B82F6; }
+
+  .s-trading .section-label { color: #10B981; }
+  .s-trading .nav-item { border-left-color: #065F46; }
+  .s-trading .nav-item .icon { color: #10B981; }
+
+  .s-research .section-label { color: #8B5CF6; }
+  .s-research .nav-item { border-left-color: #4C1D95; }
+  .s-research .nav-item .icon { color: #8B5CF6; }
+
+  .s-analysis .section-label { color: #F59E0B; }
+  .s-analysis .nav-item { border-left-color: #78350F; }
+  .s-analysis .nav-item .icon { color: #F59E0B; }
+
+  .s-system .section-label { color: #6B7280; }
+  .s-system .nav-item { border-left-color: #374151; }
+  .s-system .nav-item .icon { color: #6B7280; }
+
+  .s-bottom .nav-item { border-left-color: transparent; }
+  .s-bottom .nav-item .icon { color: #374151; }
+
+  /* ── Right panel ── */
+  .info-panel {
+    flex: 1;
+    min-width: 300px;
+    max-width: 520px;
+  }
+  .info-card {
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin-bottom: 16px;
+  }
+  .info-card h2 {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin: 0 0 10px 0;
+  }
+  .info-card p {
+    font-size: 13px;
+    color: #8899AA;
+    line-height: 1.6;
+    margin: 0 0 6px 0;
+  }
+  .info-card ul {
+    font-size: 13px;
+    color: #8899AA;
+    line-height: 1.9;
+    margin: 0;
+    padding-left: 18px;
+  }
+  .info-card li strong { color: #E6EDF3; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
+  .dot-blue   { background: #3B82F6; }
+  .dot-green  { background: #10B981; }
+  .dot-purple { background: #8B5CF6; }
+  .dot-amber  { background: #F59E0B; }
+  .dot-gray   { background: #6B7280; }
+  .tag {
+    display: inline-block;
+    background: #1C2128;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: monospace;
+    color: #8899AA;
+    padding: 1px 6px;
+    margin: 1px 2px;
+  }
+  .changed {
+    color: #00FF88;
+    font-size: 11px;
+    font-family: monospace;
+    margin-left: 6px;
+    opacity: 0.7;
+  }
+</style>
+</head>
+<body>
+
+<h1>NexusTrader — Sidebar Menu</h1>
+<p class="subtitle">Reorganised structure — v2. To request further changes, describe what you want and Claude will update <span class="tag">main_window.py</span> to match.</p>
+
+<div class="layout">
+
+  <!-- ── Sidebar preview ── -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">NEXUS</div>
+      <div class="tagline">TRADER  ▸  INSTITUTIONAL</div>
+    </div>
+
+    <!-- DASHBOARDS -->
+    <div class="s-dashboards">
+      <div class="section-label">DASHBOARDS</div>
+      <div class="nav-item"><span class="num">01</span><span class="icon">◈</span>Dashboard</div>
+      <div class="nav-item"><span class="num">02</span><span class="icon">⊘</span>Risk Management</div>
+      <div class="nav-item"><span class="num">03</span><span class="icon">◉</span>AI Intelligence</div>
+      <div class="nav-item"><span class="num">04</span><span class="icon">⊘</span>Market Regime</div>
+    </div>
+
+    <!-- TRADING -->
+    <div class="s-trading">
+      <div class="section-label">TRADING</div>
+      <div class="nav-item"><span class="num">05</span><span class="icon">⊡</span>Market Scanner</div>
+      <div class="nav-item"><span class="num">06</span><span class="icon">⋈</span>Chart Workspace</div>
+      <div class="nav-item"><span class="num">07</span><span class="icon">◉</span>Strategies</div>
+      <div class="nav-item"><span class="num">08</span><span class="icon">◎</span>Paper Trading</div>
+    </div>
+
+    <!-- RESEARCH & SIGNALS -->
+    <div class="s-research">
+      <div class="section-label">RESEARCH &amp; SIGNALS</div>
+      <div class="nav-item"><span class="num">09</span><span class="icon">⊟</span>Backtesting</div>
+      <div class="nav-item"><span class="num">10</span><span class="icon">⊠</span>Signal Explorer</div>
+      <div class="nav-item"><span class="num">11</span><span class="icon">⊠</span>News &amp; Sentiment</div>
+    </div>
+
+    <!-- TRADING ANALYSIS -->
+    <div class="s-analysis">
+      <div class="section-label">TRADING ANALYSIS</div>
+      <div class="nav-item"><span class="num">12</span><span class="icon">⊕</span>Orders &amp; Positions</div>
+      <div class="nav-item"><span class="num">13</span><span class="icon">◈</span>Performance Analytics</div>
+    </div>
+
+    <!-- SYSTEM -->
+    <div class="s-system">
+      <div class="section-label">SYSTEM</div>
+      <div class="nav-item"><span class="num">14</span><span class="icon">⊕</span>Notifications</div>
+      <div class="nav-item"><span class="num">15</span><span class="icon">◎</span>System Health</div>
+      <div class="nav-item"><span class="num">16</span><span class="icon">⊞</span>Exchange Management</div>
+      <div class="nav-item"><span class="num">17</span><span class="icon">⊙</span>Settings</div>
+    </div>
+
+    <!-- Bottom — unlabelled -->
+    <div class="s-bottom">
+      <div class="nav-item"><span class="num">18</span><span class="icon">≡</span>Logs</div>
+      <div class="nav-item"><span class="num">19</span><span class="icon">?</span>Help Center</div>
+    </div>
+
+  </div>
+
+  <!-- ── Info panel ── -->
+  <div class="info-panel">
+
+    <div class="info-card">
+      <h2 style="color:#00FF88;">Section Map</h2>
+      <ul>
+        <li><span class="dot dot-blue"></span><strong>DASHBOARDS</strong> — at-a-glance overview pages: Dashboard, Risk Management, AI Intelligence, Market Regime</li>
+        <li><span class="dot dot-green"></span><strong>TRADING</strong> — active execution tools: Market Scanner, Chart Workspace, Strategies, Paper Trading</li>
+        <li><span class="dot dot-purple"></span><strong>RESEARCH &amp; SIGNALS</strong> — pre-trade analysis: Backtesting, Signal Explorer, News &amp; Sentiment</li>
+        <li><span class="dot dot-amber"></span><strong>TRADING ANALYSIS</strong> — post-trade review: Orders &amp; Positions, Performance Analytics</li>
+        <li><span class="dot dot-gray"></span><strong>SYSTEM</strong> — infrastructure: Notifications, System Health, Exchange Management, Settings</li>
+        <li style="color:#4A5568;"><em>(unlabelled)</em> — Logs, Help Center — always last</li>
+      </ul>
+    </div>
+
+    <div class="info-card">
+      <h2 style="color:#F59E0B;">What Changed vs v1</h2>
+      <ul>
+        <li><strong>Dashboard</strong> now heads its own <em>DASHBOARDS</em> section <span class="changed">← was ungrouped</span></li>
+        <li><strong>Risk Management</strong> moved to DASHBOARDS <span class="changed">← was MANAGEMENT</span></li>
+        <li><strong>AI Intelligence</strong> moved to DASHBOARDS <span class="changed">← was INTELLIGENCE</span></li>
+        <li><strong>Market Regime</strong> moved to DASHBOARDS <span class="changed">← was INTELLIGENCE</span></li>
+        <li><strong>Paper Trading</strong> moved to TRADING <span class="changed">← was RESEARCH</span></li>
+        <li><strong>RESEARCH</strong> renamed to <em>RESEARCH &amp; SIGNALS</em></li>
+        <li><strong>News &amp; Sentiment</strong> moved to RESEARCH &amp; SIGNALS <span class="changed">← was INTELLIGENCE</span></li>
+        <li><strong>INTELLIGENCE</strong> section dissolved</li>
+        <li><strong>MANAGEMENT</strong> section dissolved</li>
+        <li><strong>Orders &amp; Positions</strong> + <strong>Performance Analytics</strong> now have their own <em>TRADING ANALYSIS</em> section <span class="changed">← were in MANAGEMENT</span></li>
+        <li><strong>Exchange Management</strong> moved to SYSTEM <span class="changed">← was floating at bottom</span></li>
+        <li><strong>Logs</strong> and <strong>Help Center</strong> are last, unlabelled <span class="changed">← Logs was in SYSTEM</span></li>
+      </ul>
+    </div>
+
+    <div class="info-card">
+      <h2 style="color:#8899AA;">To Request Further Changes</h2>
+      <p>Describe what you want in plain language. Examples:</p>
+      <ul>
+        <li>"Move Strategies to RESEARCH &amp; SIGNALS"</li>
+        <li>"Rename SYSTEM to CONFIGURATION"</li>
+        <li>"Move Settings to the very bottom, above Help Center"</li>
+        <li>"Add a new section called AUTOMATION between TRADING and RESEARCH"</li>
+      </ul>
+      <p style="margin-top:8px;">Claude will update <span class="tag">NAV_ITEMS</span> in <span class="tag">gui/main_window.py</span> and regenerate this file.</p>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

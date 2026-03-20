@@ -2,10 +2,19 @@
 # ============================================================
 # NEXUS TRADER — Application Entry Point
 # Institutional-Grade AI Trading Platform v1.0
+#
+# Launch modes:
+#   python main.py              — normal interactive mode
+#   python main.py --test-ui    — headless UI validation mode
+#     Renders offscreen, navigates all pages, captures screenshots,
+#     validates displayed data, writes report to artifacts/ui/.
+#     Exit code: 0 = all checks passed, 1 = failures found.
 # ============================================================
 
+import os
 import sys
 import logging
+import argparse
 from pathlib import Path
 
 # Ensure project root is on sys.path
@@ -78,7 +87,140 @@ def create_splash(app: QApplication) -> QSplashScreen:
     return splash
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="nexustrader",
+        description="NexusTrader — Institutional AI Trading Platform",
+    )
+    parser.add_argument(
+        "--test-ui",
+        action="store_true",
+        default=False,
+        help=(
+            "Run headless UI validation: navigate all pages, capture screenshots, "
+            "validate displayed data, write report to artifacts/ui/. "
+            "Exit 0 = all checks passed, exit 1 = failures found."
+        ),
+    )
+    # Parse only known args so Qt's own args pass through untouched
+    args, _ = parser.parse_known_args()
+    return args
+
+
+def _run_ui_tests(app: QApplication) -> int:
+    """
+    Headless UI validation mode.
+
+    Initialises the minimum required subsystems (DB only), builds the
+    MainWindow in offscreen mode, runs the UITestController validation
+    suite, prints the report, and returns an exit code.
+    """
+    logger.info("=" * 60)
+    logger.info("  NEXUS TRADER — UI TEST MODE")
+    logger.info("=" * 60)
+
+    # Minimal init: database only (no exchange, no agents, no notifs)
+    try:
+        init_database()
+        logger.info("[test-ui] Database ready")
+    except Exception as exc:
+        logger.critical("[test-ui] Database init failed: %s", exc)
+        return 2
+
+    # Build main window (pages are loaded eagerly in __init__)
+    try:
+        from gui.main_window import MainWindow
+        window = MainWindow()
+        # Keep window off-screen — never call window.show() in test mode
+        logger.info("[test-ui] MainWindow built (%d pages registered)",
+                    len(window._pages))
+    except Exception as exc:
+        logger.critical("[test-ui] MainWindow build failed: %s", exc, exc_info=True)
+        return 2
+
+    # Run validation
+    try:
+        from gui.ui_test_controller import UITestController
+        ctrl = UITestController(window)
+        report = ctrl.run_all_checks(capture_screenshots=True)
+    except Exception as exc:
+        logger.critical("[test-ui] UITestController failed: %s", exc, exc_info=True)
+        return 2
+
+    # Print report to stdout
+    for line in report.summary_lines():
+        print(line)
+
+    return 0 if report.failed == 0 else 1
+
+
 def main():
+    args = _parse_args()
+
+    # ── Offscreen mode for --test-ui ──────────────────────────
+    if args.test_ui:
+        # Must be set BEFORE QApplication is created.
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        # Bootstrap EGL stub if libEGL is missing (Linux VM / CI).
+        # Self-re-exec with LD_LIBRARY_PATH pointing to the stub so the
+        # dynamic linker can resolve libEGL.so.1 before Qt is loaded.
+        if not os.environ.get("_NEXUS_EGL_READY"):
+            import ctypes.util, subprocess
+            if not ctypes.util.find_library("EGL"):
+                stub_dir  = ROOT / "scripts" / "lib"
+                stub_path = stub_dir / "libEGL.so.1"
+                if not stub_path.exists():
+                    stub_dir.mkdir(parents=True, exist_ok=True)
+                    # Stub source is embedded in scripts/run_ui_checks.py;
+                    # fall back to a copy here.
+                    src = stub_dir / "_egl_stub_main.c"
+                    src.write_text(
+                        "#include<stddef.h>\n"
+                        "typedef void* EGLDisplay;typedef void* EGLConfig;"
+                        "typedef void* EGLContext;typedef void* EGLSurface;"
+                        "typedef int EGLint;typedef unsigned int EGLBoolean;"
+                        "typedef unsigned int EGLenum;"
+                        "typedef void* EGLNativeDisplayType;"
+                        "typedef void* EGLNativeWindowType;"
+                        "typedef void (*__eglMustCastToProperFunctionPointerType)(void);\n"
+                        "EGLint eglGetError(void){return 0x3000;}\n"
+                        "EGLDisplay eglGetDisplay(EGLNativeDisplayType d){return(void*)1;}\n"
+                        "EGLBoolean eglInitialize(EGLDisplay d,EGLint*m,EGLint*n){if(m)*m=1;if(n)*n=5;return 1;}\n"
+                        "EGLBoolean eglBindAPI(EGLenum a){return 1;}\n"
+                        "EGLBoolean eglChooseConfig(EGLDisplay d,const EGLint*al,EGLConfig*c,EGLint cs,EGLint*nc){if(nc)*nc=0;return 1;}\n"
+                        "EGLBoolean eglGetConfigs(EGLDisplay d,EGLConfig*c,EGLint cs,EGLint*nc){if(nc)*nc=0;return 1;}\n"
+                        "EGLBoolean eglGetConfigAttrib(EGLDisplay d,EGLConfig c,EGLint a,EGLint*v){if(v)*v=0;return 1;}\n"
+                        "EGLContext eglCreateContext(EGLDisplay d,EGLConfig c,EGLContext sc,const EGLint*al){return NULL;}\n"
+                        "EGLSurface eglCreateWindowSurface(EGLDisplay d,EGLConfig c,EGLNativeWindowType w,const EGLint*al){return NULL;}\n"
+                        "EGLSurface eglCreatePbufferSurface(EGLDisplay d,EGLConfig c,const EGLint*al){return NULL;}\n"
+                        "EGLBoolean eglMakeCurrent(EGLDisplay d,EGLSurface dr,EGLSurface rd,EGLContext c){return 0;}\n"
+                        "EGLBoolean eglSwapBuffers(EGLDisplay d,EGLSurface s){return 0;}\n"
+                        "EGLBoolean eglDestroyContext(EGLDisplay d,EGLContext c){return 1;}\n"
+                        "EGLBoolean eglDestroySurface(EGLDisplay d,EGLSurface s){return 1;}\n"
+                        "EGLBoolean eglTerminate(EGLDisplay d){return 1;}\n"
+                        "EGLBoolean eglReleaseThread(void){return 1;}\n"
+                        "EGLBoolean eglSwapInterval(EGLDisplay d,EGLint i){return 1;}\n"
+                        "EGLDisplay eglGetCurrentDisplay(void){return NULL;}\n"
+                        "EGLContext eglGetCurrentContext(void){return NULL;}\n"
+                        "EGLSurface eglGetCurrentSurface(EGLenum w){return NULL;}\n"
+                        "EGLBoolean eglQueryContext(EGLDisplay d,EGLContext c,EGLint a,EGLint*v){if(v)*v=0;return 1;}\n"
+                        "const char* eglQueryString(EGLDisplay d,EGLint n){return \"\";}\n"
+                        "__eglMustCastToProperFunctionPointerType eglGetProcAddress(const char*n){return NULL;}\n"
+                    )
+                    subprocess.run(
+                        ["gcc", "-shared", "-fPIC", "-o", str(stub_path), str(src), "-lc"],
+                        check=False,
+                    )
+                    src.unlink(missing_ok=True)
+                if stub_path.exists():
+                    new_env = dict(os.environ)
+                    existing = new_env.get("LD_LIBRARY_PATH", "")
+                    new_env["LD_LIBRARY_PATH"] = (
+                        str(stub_dir) + (":" + existing if existing else "")
+                    )
+                    new_env["_NEXUS_EGL_READY"] = "1"
+                    os.execve(sys.executable, [sys.executable] + sys.argv, new_env)
+
     # ── Qt Application ────────────────────────────────────────
     app = QApplication(sys.argv)
     app.setApplicationName("Nexus Trader")
@@ -91,10 +233,14 @@ def main():
     except AttributeError:
         pass  # Qt6 handles this automatically
 
-    # Apply theme before splash
+    # Apply theme (needed in both modes)
     ThemeManager.apply_dark_theme(app)
 
-    # Splash screen
+    # ── UI test mode — skip splash / agents / exchange ────────
+    if args.test_ui:
+        return _run_ui_tests(app)
+
+    # ── Normal mode: Splash screen ────────────────────────────
     splash = create_splash(app)
     splash.show()
     app.processEvents()

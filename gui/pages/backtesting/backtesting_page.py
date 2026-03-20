@@ -935,7 +935,7 @@ class BacktestingPage(QWidget):
         row2.addWidget(self._end_date)
 
         row2.addSpacing(12)
-        self._data_range_lbl = QLabel("← Load data in Chart Workspace or fetch from Binance ↓")
+        self._data_range_lbl = QLabel("← Load data in Chart Workspace or fetch from exchange ↓")
         self._data_range_lbl.setStyleSheet("color:#4A6A8A; font-size:11px; font-style:italic;")
         row2.addWidget(self._data_range_lbl)
 
@@ -1146,7 +1146,7 @@ class BacktestingPage(QWidget):
                                 len(extra_df), extra_tf)
                 else:
                     logger.warning("_run_backtest: no DB data for TF '%s' — "
-                                   "fetch it from Binance first", extra_tf)
+                                   "fetch it from exchange first", extra_tf)
             except Exception as load_err:
                 logger.warning("_run_backtest: could not load TF '%s': %s", extra_tf, load_err)
 
@@ -1161,7 +1161,7 @@ class BacktestingPage(QWidget):
         if missing_tfs:
             self._status_lbl.setText(
                 f"⚠ Missing data for: {', '.join(missing_tfs)}.  "
-                "Click 'Fetch from Binance' to download all required timeframes."
+                "Click 'Fetch Data' to download all required timeframes."
             )
 
         self._worker = BacktestWorker(strategy, df_map, timeframe, config)
@@ -1593,12 +1593,12 @@ class BacktestingPage(QWidget):
         self._run_btn.setEnabled(False)
         self._progress.setRange(0, 0)
         self._progress.setVisible(True)
-        self._data_range_lbl.setText("Connecting to Binance…")
+        self._data_range_lbl.setText("Fetching historical data…")
 
         tf_label = (f"{', '.join(tfs_to_fetch)} timeframes"
                     if len(tfs_to_fetch) > 1 else timeframe)
         self._status_lbl.setText(
-            f"Fetching {symbol} [{tf_label}] from Binance "
+            f"Fetching {symbol} [{tf_label}] "
             f"({start_dt.strftime('%Y-%m-%d')} → {end_dt.strftime('%Y-%m-%d')})…"
         )
         self._fetch_worker.start()
@@ -1664,7 +1664,7 @@ class BacktestingPage(QWidget):
         self._fetch_btn.setEnabled(True)
         self._run_btn.setEnabled(True)
         self._data_range_lbl.setText("← Fetch failed — see status below")
-        self._status_lbl.setText(f"⚠ Binance fetch error: {err}")
+        self._status_lbl.setText(f"⚠ Data fetch error: {err}")
 
     # ── Clear results when strategy selection changes ─────────
     def _clear_results(self):

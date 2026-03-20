@@ -160,9 +160,9 @@ class TickerStrip(QFrame):
     ]
 
     # Placeholder prices shown before the live feed connects.
-    # These are intentionally set to 0 so it's obvious they're not live yet.
+    # Set to 0.0 as sentinel — the ticker renders "—" when price == 0.
     # The live feed (REST polling via exchange_manager) will overwrite these
-    # within a few seconds once KuCoin connects.
+    # within a few seconds once the active exchange connects.
     _BASE_PRICES = {
         "BTC/USDT": 0.0,
         "ETH/USDT": 0.0,
@@ -225,9 +225,10 @@ class TickerStrip(QFrame):
                 f"color:{_TEXT_MUT}; font-size:13px; font-weight:600;")
 
             p = self._prices[symbol]
-            price_lbl = _lbl(f"${p:,.2f}" if p > 10 else f"${p:.4f}",
+            price_lbl = _lbl(
+                "—" if p == 0.0 else (f"${p:,.2f}" if p > 10 else f"${p:.4f}"),
                 f"color:{_TEXT_PRI}; font-size:13px; font-weight:600;")
-            chg_lbl = _lbl("  0.00%",
+            chg_lbl = _lbl("  —",
                 f"color:{_TEXT_MUT}; font-size:13px;")
 
             self._price_lbls[symbol] = price_lbl
@@ -312,6 +313,12 @@ class TickerStrip(QFrame):
 
     def _update_chip(self, sym: str, price: float, chg_pct: float):
         if sym not in self._price_lbls:
+            return
+        if price == 0.0:
+            # No data yet — show placeholder dashes until live feed connects
+            self._price_lbls[sym].setText("—")
+            self._chg_lbls[sym].setText("  —")
+            self._chg_lbls[sym].setStyleSheet(f"color:{_TEXT_MUT}; font-size:13px;")
             return
         fmt = f"${price:,.2f}" if price > 10 else f"${price:.4f}"
         self._price_lbls[sym].setText(fmt)

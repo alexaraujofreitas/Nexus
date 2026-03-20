@@ -15,6 +15,24 @@
 # ============================================================
 from __future__ import annotations
 
+# Module-level import to avoid import lock contention at runtime.
+# The crash_detector module is imported ONCE at module load time,
+# not on every calculate() call.  This prevents the scanner thread
+# from blocking on Python's import lock when FinBERT/HuggingFace
+# is loading on another thread.
+_crash_detector_ref = None
+
+def _get_crash_detector_safe():
+    """Get crash detector singleton without holding import lock in hot path."""
+    global _crash_detector_ref
+    if _crash_detector_ref is None:
+        try:
+            from core.risk.crash_detector import get_crash_detector
+            _crash_detector_ref = get_crash_detector()
+        except Exception:
+            return None
+    return _crash_detector_ref
+
 
 class PositionSizer:
     """
@@ -168,11 +186,13 @@ class PositionSizer:
         loss_streak_scalar = self.loss_streak_scalar
 
         # 7. Defensive mode check (crash detector)
+        # NOTE: Import is at module level to avoid Python import lock contention.
+        # A lazy import here caused scanner hangs when FinBERT/HuggingFace was
+        # loading on another thread — the import lock blocked for 30+ seconds.
         defensive_scalar = 1.0
         try:
-            from core.risk.crash_detector import get_crash_detector
-            crash_det = get_crash_detector()
-            if crash_det.is_crash_mode and side.lower() in ("buy", "long"):
+            crash_det = _get_crash_detector_safe()
+            if crash_det is not None and crash_det.is_crash_mode and side.lower() in ("buy", "long"):
                 defensive_scalar = self.defensive_mode_multiplier
         except Exception:
             pass
