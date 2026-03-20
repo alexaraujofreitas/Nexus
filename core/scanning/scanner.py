@@ -53,10 +53,15 @@ class ScanWorker(QThread):
     Runs one full scan cycle in a background thread.
     Emits results when done.
     """
-    scan_complete    = Signal(list)  # list of OrderCandidate dicts
+    scan_complete    = Signal(list)  # list of OrderCandidate dicts (approved only)
     scan_error       = Signal(str)
     symbol_scanned   = Signal(str, str, float)  # symbol, regime, score (0 if no signal)
     df_cache_updated = Signal(object)            # dict[symbol, DataFrame] — for ATR filter next cycle
+    # Full per-symbol scan results — approved + rejected + no-signal + filtered.
+    # Each element is a dict with keys: symbol, regime, side, score, models_fired,
+    # entry_price, stop_loss_price, take_profit_price, risk_reward_ratio,
+    # position_size_usdt, generated_at, status, is_approved.
+    scan_all_results = Signal(list)
 
     def __init__(
         self,
@@ -130,12 +135,33 @@ class ScanWorker(QThread):
             min_risk_reward           = float(_s.get("risk.min_risk_reward", 1.3)),
         )
 
+    @staticmethod
+    def _empty_sym_result(symbol: str, status: str, regime: str = "") -> dict:
+        """Build a baseline per-symbol result dict for symbols that never produced a candidate."""
+        return {
+            "symbol":               symbol,
+            "regime":               regime,
+            "side":                 "",
+            "score":                0.0,
+            "models_fired":         [],
+            "entry_price":          None,
+            "stop_loss_price":      0.0,
+            "take_profit_price":    0.0,
+            "risk_reward_ratio":    0.0,
+            "position_size_usdt":   0.0,
+            "generated_at":         "",
+            "status":               status,
+            "is_approved":          False,
+        }
+
     def run(self):
         try:
             all_candidates: list[OrderCandidate] = []
             # Track regimes seen this cycle so we can broadcast the majority
             _regime_votes: dict[str, int] = {}
             _regime_confs: dict[str, float] = {}
+            # Per-symbol results for scan_all_results signal (all symbols, not just approved)
+            _all_sym_results: dict[str, dict] = {}
 
             # ── Fetch tickers for spread/volume filter ─────────
             # IMPORTANT: Do NOT use `with ThreadPoolExecutor` here.
@@ -159,8 +185,13 @@ class ScanWorker(QThread):
             qualifying = self._univ_filter.apply(
                 self._symbols, tickers, feature_dfs=self._prev_df_cache or None
             )
+            # Seed results for symbols that didn't pass the universe filter
+            for _sym in self._symbols:
+                if _sym not in qualifying:
+                    _all_sym_results[_sym] = self._empty_sym_result(_sym, "Filtered")
             if not qualifying:
                 self.scan_complete.emit([])
+                self.scan_all_results.emit(list(_all_sym_results.values()))
                 return
 
             # ── Concurrent OHLCV pre-fetch ─────────────────────
@@ -233,13 +264,13 @@ class ScanWorker(QThread):
                 logger.debug("Scanner: === BEGIN symbol %d/%d: %s ===", _sym_idx + 1, len(qualifying), symbol)
                 _sym_start = time.time()
                 try:
-                    candidate, regime, confidence, df = self._scan_symbol_with_regime(
+                    candidate, regime, confidence, df, pre_rejection = self._scan_symbol_with_regime(
                         symbol, tickers.get(symbol, {}),
                         prefetched_ohlcv=_ohlcv_cache.get(symbol),
                     )
-                    logger.debug("Scanner: === END symbol %d/%d: %s (%.1fs) candidate=%s ===",
+                    logger.debug("Scanner: === END symbol %d/%d: %s (%.1fs) candidate=%s pre_rejection=%r ===",
                                  _sym_idx + 1, len(qualifying), symbol,
-                                 time.time() - _sym_start, candidate is not None)
+                                 time.time() - _sym_start, candidate is not None, pre_rejection)
                     if df is not None:
                         df_cache[symbol] = df
                     if regime:
@@ -249,8 +280,19 @@ class ScanWorker(QThread):
                             _regime_confs[regime] = confidence
                     if candidate:
                         all_candidates.append(candidate)
+                        # Pre-populate result; status will be finalized after risk gate
+                        _all_sym_results[symbol] = {
+                            **candidate.to_dict(),
+                            "status":      "pending",
+                            "is_approved": False,
+                        }
+                    else:
+                        _all_sym_results[symbol] = self._empty_sym_result(
+                            symbol, pre_rejection or "No signal", regime
+                        )
                 except Exception as exc:
                     logger.error("Scanner: error scanning %s: %s", symbol, exc, exc_info=True)
+                    _all_sym_results[symbol] = self._empty_sym_result(symbol, "Scan error")
 
             # ── Risk gate (batch) ──────────────────────────────
             spread_map = {}
@@ -272,8 +314,26 @@ class ScanWorker(QThread):
                 logger.info(
                     "Scanner: rejected %s — %s", r.symbol, r.rejection_reason
                 )
+                if r.symbol in _all_sym_results:
+                    _all_sym_results[r.symbol]["status"]      = r.rejection_reason or "Rejected"
+                    _all_sym_results[r.symbol]["is_approved"] = False
+
+            _scan_ts = datetime.utcnow().isoformat()
+            for c in approved:
+                if c.symbol in _all_sym_results:
+                    _all_sym_results[c.symbol]["status"]      = "approved"
+                    _all_sym_results[c.symbol]["is_approved"] = True
+                    # Stamp generated_at so the Age column ticks for approved rows
+                    if not _all_sym_results[c.symbol].get("generated_at"):
+                        _all_sym_results[c.symbol]["generated_at"] = _scan_ts
+
+            # Stamp scan time for all remaining rows so Age column works everywhere
+            for _sym, _row in _all_sym_results.items():
+                if not _row.get("generated_at"):
+                    _row["generated_at"] = _scan_ts
 
             self.scan_complete.emit([c.to_dict() for c in approved])
+            self.scan_all_results.emit(list(_all_sym_results.values()))
 
             # ── Update CrashDetector with latest scan data ────────────────
             # Use df_cache built during the main scan loop — no duplicate OHLCV fetch.
@@ -337,17 +397,16 @@ class ScanWorker(QThread):
     def _scan_symbol_with_regime(
         self, symbol: str, ticker: dict,
         prefetched_ohlcv: Optional[list] = None,
-    ) -> tuple[Optional[OrderCandidate], str, float, Optional[pd.DataFrame]]:
+    ) -> tuple[Optional[OrderCandidate], str, float, Optional[pd.DataFrame], str]:
         """
         Run the full pipeline for one symbol.
-        Returns (candidate_or_None, regime_label, confidence, df_or_None).
-        The DataFrame is returned so the caller can cache it for CrashDetector,
-        eliminating the duplicate OHLCV fetch that previously occurred.
+        Returns (candidate_or_None, regime_label, confidence, df_or_None, pre_rejection).
 
-        If prefetched_ohlcv is provided (from the concurrent pre-fetch block in
-        ScanWorker.run()), the internal fetch_ohlcv call is skipped entirely.
-        If it is None or empty, we fall back to a live fetch so standalone usage
-        and edge-case symbols still work correctly.
+        pre_rejection is a human-readable string explaining why no candidate was produced:
+          ""               — candidate produced (may still be rejected by the risk gate)
+          "No data"        — insufficient or stale OHLCV bars
+          "No signal"      — no sub-model fired for this symbol
+          "Below threshold" — signals fired but confluence score < threshold
         """
         # Use pre-fetched OHLCV when available; fall back to live fetch otherwise.
         # The fallback is wrapped with a timeout so a hanging exchange call
@@ -373,7 +432,7 @@ class ScanWorker(QThread):
             finally:
                 _tp.shutdown(wait=False, cancel_futures=True)
         if not raw or len(raw) < 30:
-            return None, "", 0.0, None
+            return None, "", 0.0, None, "No data"
 
         df = pd.DataFrame(
             raw, columns=["timestamp", "open", "high", "low", "close", "volume"]
@@ -396,7 +455,7 @@ class ScanWorker(QThread):
                     "Scanner: %s OHLCV data is stale (age=%.0fs > max=%.0fs) — skipping",
                     symbol, _age_s, _max_age_s,
                 )
-                return None, "", 0.0, None
+                return None, "", 0.0, None, "Stale data"
         except Exception as _freshness_err:
             logger.debug("Scanner: freshness check failed for %s: %s", symbol, _freshness_err)
 
@@ -468,13 +527,13 @@ class ScanWorker(QThread):
         # Signal generation with regime probabilities
         signals = self._sig_gen.generate(symbol, df, regime, self._timeframe, regime_probs=regime_probs)
         if not signals:
-            return None, regime, confidence, df
+            return None, regime, confidence, df, "No signal"
 
         # Confluence scoring with regime probabilities
         candidate = self._scorer.score(signals, symbol, regime_probs=regime_probs)
         logger.debug("Scanner: %s — scorer returned candidate=%s", symbol, candidate is not None)
         if not candidate:
-            return None, regime, confidence, df
+            return None, regime, confidence, df, "Below threshold"
 
         logger.debug("Scanner: %s — candidate score=%.3f, about to enter MTF block", symbol, candidate.score)
 
@@ -540,7 +599,7 @@ class ScanWorker(QThread):
             self.symbol_scanned.emit(symbol, regime, candidate.score)
 
         logger.debug("Scanner: %s — _scan_symbol_with_regime RETURNING (candidate=%s)", symbol, candidate is not None)
-        return candidate, regime, confidence, df
+        return candidate, regime, confidence, df, ""
 
 
 class AssetScanner(QObject):
@@ -555,13 +614,14 @@ class AssetScanner(QObject):
     Emits confirmed_ready(list[dict]) when the 15m LTF scan confirms candidates
     (for execution pathway — this is the ONLY execution trigger).
     """
-    candidates_ready = Signal(list)    # list of OrderCandidate dicts (UI display only)
-    confirmed_ready  = Signal(list)    # list of CONFIRMED candidate dicts (execution trigger)
-    scan_started     = Signal()
-    scan_finished    = Signal(int)     # n candidates found (HTF)
+    candidates_ready  = Signal(list)   # list of approved OrderCandidate dicts (UI display only)
+    confirmed_ready   = Signal(list)   # list of CONFIRMED candidate dicts (execution trigger)
+    scan_all_results  = Signal(list)   # all per-symbol results with rejection reasons (UI only)
+    scan_started      = Signal()
+    scan_finished     = Signal(int)    # n candidates found (HTF)
     ltf_scan_finished = Signal(int)    # n confirmed (LTF)
-    scan_error       = Signal(str)
-    symbol_progress  = Signal(str, str, float)  # symbol, regime, score
+    scan_error        = Signal(str)
+    symbol_progress   = Signal(str, str, float)  # symbol, regime, score
 
     def __init__(self, timeframe: str = "1h", parent=None):
         super().__init__(parent)
@@ -914,6 +974,7 @@ class AssetScanner(QObject):
         self._worker.scan_error.connect(self._on_scan_error)
         self._worker.symbol_scanned.connect(self.symbol_progress)
         self._worker.df_cache_updated.connect(self._on_df_cache_updated)
+        self._worker.scan_all_results.connect(self.scan_all_results)
         self._worker_started_at = time.time()
         self._worker.start()
 

@@ -796,7 +796,7 @@ class WatchlistEditorWidget(QWidget):
 _IDSS_COLS = [
     "Symbol", "Side", "Regime", "Score",
     "Models", "Entry", "Stop", "Target", "R:R",
-    "Est. Size", "Age",  # "Est. Size" = proxy capital estimate; final size recalculated by executor
+    "Est. Size", "Status", "Age",
 ]
 
 
@@ -807,8 +807,9 @@ class IDSSCandidateTable(QTableWidget):
     """
     row_selected = Signal(dict)
 
-    # Column index of the Age cell (must stay in sync with _IDSS_COLS)
-    _AGE_COL = 10
+    # Column indices (must stay in sync with _IDSS_COLS)
+    _STATUS_COL = 10
+    _AGE_COL    = 11
 
     def __init__(self, parent=None):
         super().__init__(0, len(_IDSS_COLS), parent)
@@ -829,6 +830,7 @@ class IDSSCandidateTable(QTableWidget):
         hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents) # Regime
         hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents) # Score
         hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents) # Models
+        hdr.setSectionResizeMode(self._STATUS_COL, QHeaderView.ResizeToContents) # Status
         for c in range(5, len(_IDSS_COLS)):
             hdr.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         hdr.setMinimumSectionSize(60)
@@ -850,68 +852,93 @@ class IDSSCandidateTable(QTableWidget):
         self.setRowCount(len(candidates))
 
         for ri, c in enumerate(candidates):
-            no_signal  = c.get("_no_signal", False)
-            dim        = "#4A6A8A"   # dimmed color for no-signal rows
+            status     = c.get("status", "")
+            is_approved= c.get("is_approved", False)
+            no_data    = status in ("No data", "Stale data", "Filtered", "No signal",
+                                    "Below threshold", "Scan error")
+            has_prices = bool(c.get("entry_price"))  # risk-gate rejected still have prices
+            dim        = "#4A6A8A"   # dimmed colour for no-signal rows
 
-            side       = c.get("side", "—").upper()
-            if no_signal:
+            side       = (c.get("side") or "").upper()
+            if not side or side == "—":
                 side_color = dim
             else:
                 side_color = "#00CC77" if side == "BUY" else "#FF3355"
 
-            regime     = c.get("regime", "unknown")
-            reg_label  = REGIME_LABELS.get(regime, regime.replace("_", " ").title())
+            regime     = c.get("regime", "")
+            reg_label  = REGIME_LABELS.get(regime, regime.replace("_", " ").title()) if regime else "—"
             reg_color  = REGIME_COLORS.get(regime, "#8899AA") if regime else dim
 
-            score      = c.get("score", 0.0)
-            sc_color   = dim if no_signal else _score_color(score)
+            score      = c.get("score") or 0.0
+            sc_color   = dim if no_data else _score_color(score)
 
             models     = c.get("models_fired", [])
             model_text = _model_tag_text(models) if models else "—"
 
             entry      = c.get("entry_price") or 0.0
-            stop_p     = c.get("stop_loss_price", 0.0)
-            tp         = c.get("take_profit_price", 0.0)
-            rr         = c.get("risk_reward_ratio", 0.0)
-            size       = c.get("position_size_usdt", 0.0)
+            stop_p     = c.get("stop_loss_price") or 0.0
+            tp         = c.get("take_profit_price") or 0.0
+            rr         = c.get("risk_reward_ratio") or 0.0
+            size       = c.get("position_size_usdt") or 0.0
+            # Age: always shown for every row — uses generated_at (scan cycle timestamp)
             age        = _fmt_age(c.get("generated_at", ""))
 
-            sym_color  = "#8899AA" if no_signal else "#E8EBF0"
+            # ── Status cell ────────────────────────────────────
+            if is_approved:
+                status_text  = "✓ Approved"
+                status_color = "#00CC77"
+            elif status in ("No signal", "Below threshold", "No data",
+                            "Stale data", "Filtered", "Scan error"):
+                status_text  = f"✗ {status}"
+                status_color = dim
+            elif status and status not in ("pending", ""):
+                # Risk-gate rejection — shorten if verbose (e.g. "EV gate: EV=0.03 < 0.05" → "EV gate")
+                short = status.split(":")[0].strip() if ":" in status else status
+                status_text  = f"✗ {short}"
+                status_color = "#FFB300"  # amber — had a signal but gated
+            else:
+                status_text  = "—"
+                status_color = dim
+
+            sym_color  = "#8899AA" if no_data else "#E8EBF0"
             self.setItem(ri, 0, _colored_item(
                 c.get("symbol", ""), sym_color, Qt.AlignLeft | Qt.AlignVCenter
             ))
-            self.setItem(ri, 1, _colored_item(side, side_color))
+            self.setItem(ri, 1, _colored_item(side or "—", side_color))
             self.setItem(ri, 2, _colored_item(reg_label, reg_color))
-            self.setItem(ri, 3, _numeric_item(score, f"{score:.3f}" if score else "—", sc_color))
-            self.setItem(ri, 4, _colored_item(model_text, dim if no_signal else "#8899AA"))
+            self.setItem(ri, 3, _numeric_item(score, f"{score:.3f}" if (score and not no_data) else "—", sc_color))
+            self.setItem(ri, 4, _colored_item(model_text, dim if no_data else "#8899AA"))
             self.setItem(ri, 5, _colored_item(
-                "—" if no_signal else (_fmt_price(entry) if entry else "market"),
-                dim if no_signal else "#E8EBF0"
+                "—" if not has_prices else (_fmt_price(entry) if entry else "market"),
+                dim if not has_prices else "#E8EBF0"
             ))
             self.setItem(ri, 6, _colored_item(
-                "—" if no_signal else _fmt_price(stop_p), dim if no_signal else "#FF3355"
+                "—" if not has_prices else _fmt_price(stop_p),
+                dim if not has_prices else "#FF3355"
             ))
             self.setItem(ri, 7, _colored_item(
-                "—" if no_signal else _fmt_price(tp), dim if no_signal else "#00CC77"
+                "—" if not has_prices else _fmt_price(tp),
+                dim if not has_prices else "#00CC77"
             ))
             self.setItem(ri, 8, _colored_item(
-                "—" if no_signal else (f"{rr:.2f}×" if rr else "—"),
-                dim if no_signal else "#FFB300"
+                "—" if not has_prices else (f"{rr:.2f}×" if rr else "—"),
+                dim if not has_prices else "#FFB300"
             ))
             self.setItem(ri, 9, _colored_item(
-                "—" if no_signal else (f"${size:.0f}" if size else "—"),
+                "—" if not has_prices else (f"${size:.0f}" if size else "—"),
                 dim
             ))
-            self.setItem(ri, 10, _colored_item(
-                "—" if no_signal else age, dim
-            ))
+            self.setItem(ri, self._STATUS_COL, _colored_item(status_text, status_color))
+            self.setItem(ri, self._AGE_COL,    _colored_item(age, dim))
 
         self.setSortingEnabled(True)
 
     def _refresh_ages(self) -> None:
         """
         Tick handler — updates the Age column in-place every 60 seconds so
-        candidates show '1m ago', '2m ago', … instead of frozen 'just now'.
+        ALL rows show '1m ago', '2m ago', … instead of frozen 'just now'.
+        This includes no-signal and filtered rows, confirming to the user
+        that the scan data is recent.
 
         Works correctly even when the table is sorted (visual order ≠ _rows
         order): we read the symbol from column 0 of each visible row and do
@@ -919,11 +946,11 @@ class IDSSCandidateTable(QTableWidget):
         """
         if not self._rows:
             return
-        # Build symbol → generated_at map for signal rows only
+        # Build symbol → generated_at map for ALL rows (including no-signal)
         sym_to_ts: dict[str, str] = {
             r.get("symbol", ""): r.get("generated_at", "")
             for r in self._rows
-            if not r.get("_no_signal") and r.get("generated_at")
+            if r.get("generated_at")
         }
         if not sym_to_ts:
             return
@@ -948,8 +975,8 @@ class IDSSCandidateTable(QTableWidget):
         symbol_progress: dict[str, tuple[str, float]],
     ) -> None:
         """
-        Load full scan results: approved candidates first (highlighted),
-        followed by any scanned symbols that produced no signal.
+        Fallback loader used when scan_all_results is not available.
+        Approved candidates first, then no-signal symbols from symbol_progress.
         """
         candidate_syms = {c.get("symbol") for c in candidates}
         all_rows = list(candidates)
@@ -959,7 +986,7 @@ class IDSSCandidateTable(QTableWidget):
             if sym not in candidate_syms:
                 all_rows.append({
                     "symbol":              sym,
-                    "side":                "—",
+                    "side":                "",
                     "regime":              regime,
                     "score":               score,
                     "models_fired":        [],
@@ -969,7 +996,8 @@ class IDSSCandidateTable(QTableWidget):
                     "risk_reward_ratio":   0.0,
                     "position_size_usdt":  0.0,
                     "generated_at":        "",
-                    "_no_signal":          True,
+                    "status":              "No signal",
+                    "is_approved":         False,
                 })
 
         self.load_candidates(all_rows)
@@ -1027,6 +1055,9 @@ class IDSSScannerTab(QWidget):
         self._selected_candidate: dict | None = None   # currently highlighted row
         # Tracks (regime, best_score) for every symbol seen in the current scan
         self._sym_progress: dict[str, tuple[str, float]] = {}
+        # Set to True once scan_all_results fires so the n==0 fallback in
+        # _on_scan_finished doesn't also reload the table.
+        self._scan_all_results_received: bool = False
 
         # ── Auto-execute state ──────────────────────────────
         # MANDATORY: Auto-execute is ALWAYS enabled on startup.
@@ -1359,6 +1390,7 @@ class IDSSScannerTab(QWidget):
             self._idss = _idss
             _idss.candidates_ready.connect(self._on_candidates_ready)
             _idss.confirmed_ready.connect(self._on_confirmed_ready)
+            _idss.scan_all_results.connect(self._on_scan_all_results)
             _idss.scan_started.connect(self._on_scan_started)
             _idss.scan_finished.connect(self._on_scan_finished)
             _idss.scan_error.connect(self._on_scan_error)
@@ -1377,6 +1409,7 @@ class IDSSScannerTab(QWidget):
     @Slot()
     def _on_scan_started(self):
         self._sym_progress.clear()
+        self._scan_all_results_received = False
         self._progress.setVisible(True)
         self._status_lbl.setText(
             "Status: <b style='color:#1E90FF'>Scanning…</b>"
@@ -1399,20 +1432,37 @@ class IDSSScannerTab(QWidget):
         self._cands_lbl.setText(
             f"Candidates: <b style='color:#E8EBF0'>{n}</b>"
         )
-        # When n==0 (no approved candidates) candidates_ready won't fire,
-        # so load the table here so all scanned symbols still appear.
-        if n == 0:
+        # scan_all_results fires after scan_complete so the table is populated
+        # there.  The fallback below covers the case where the scanner is too
+        # old to emit scan_all_results (e.g. tests that stub AssetScanner).
+        if n == 0 and not getattr(self, "_scan_all_results_received", False):
             self._table.load_scan_results([], self._sym_progress)
 
     @Slot(list)
-    def _on_candidates_ready(self, candidates: list):
-        """Handle HTF scan results — UI display ONLY, no execution.
+    def _on_scan_all_results(self, results: list):
+        """Handle full per-symbol scan results (all symbols, all statuses).
 
-        Execution now happens exclusively through _on_confirmed_ready
-        (triggered by the LTF confirmation scan via confirmed_ready signal).
+        This supersedes the old load_scan_results(candidates, sym_progress)
+        approach.  We receive one dict per symbol including the rejection
+        reason, so the table always shows all 5 symbols with meaningful data.
+        """
+        self._scan_all_results_received = True
+        # Sort: approved first, then by symbol name
+        sorted_results = sorted(
+            results,
+            key=lambda r: (0 if r.get("is_approved") else 1, r.get("symbol", ""))
+        )
+        self._table.load_candidates(sorted_results)
+
+    @Slot(list)
+    def _on_candidates_ready(self, candidates: list):
+        """Handle HTF approved candidates — store for auto-execute check only.
+
+        UI display is now handled exclusively by _on_scan_all_results.
+        This handler keeps _candidate_history up to date for the
+        toggle-auto-execute immediate-fire logic.
         """
         self._candidate_history = list(candidates)
-        self._table.load_scan_results(candidates, self._sym_progress)
         # NOTE: Auto-execute is deliberately NOT called here.
         # candidates_ready = HTF (1H) approved candidates → display only.
         # confirmed_ready = LTF (15m) confirmed candidates → execution.
