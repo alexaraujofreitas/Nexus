@@ -158,13 +158,40 @@ def _colored_item(text: str, color: str = "#E8EBF0",
     return item
 
 
-def _numeric_item(value: float, text: str, color: str = "#E8EBF0") -> QTableWidgetItem:
-    item = QTableWidgetItem(text)
-    item.setData(Qt.UserRole, value)
+class _NumericItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts numerically via UserRole data."""
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        try:
+            my_val    = self.data(Qt.UserRole)
+            other_val = other.data(Qt.UserRole)
+            # None values sort to the bottom (ascending) — they have no data
+            if my_val is None:
+                return False
+            if other_val is None:
+                return True
+            return float(my_val) < float(other_val)
+        except (TypeError, ValueError):
+            return super().__lt__(other)
+
+
+def _numeric_item(value, text: str, color: str = "#E8EBF0") -> _NumericItem:
+    """Create a table item that displays *text* but sorts by numeric *value*."""
+    item = _NumericItem(text)
+    item.setData(Qt.UserRole, float(value) if value is not None else None)
     item.setForeground(QColor(color))
     item.setTextAlignment(Qt.AlignCenter)
     item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
     return item
+
+
+def _pct_cell(val) -> tuple:
+    """Return (text, color) for a percentage value.
+    *val* == None means the data is unavailable → show "—".
+    *val* == 0.0 is a genuine flat reading → show "+0.00%".
+    """
+    if val is None:
+        return ("—", "#3A4A5A")
+    return (f"{val:+.2f}%", _pct_color(val))
 
 
 SIGNAL_COLORS = {
@@ -396,7 +423,8 @@ class ScannerWorker(QThread):
                     base = sym.split("/")[0].upper()
                     cg   = self._cg.get(base, {})
 
-                    change_24h = cg.get("change_24h", 0.0)
+                    # 24H % — prefer live ticker, fall back to CoinGecko
+                    change_24h: float | None = None
                     try:
                         ticker = exchange_manager.fetch_ticker(sym)
                         if ticker:
@@ -405,9 +433,12 @@ class ScannerWorker(QThread):
                                 change_24h = float(ex_ch)
                     except Exception:
                         pass
+                    if change_24h is None:
+                        raw = cg.get("change_24h")
+                        change_24h = float(raw) if raw is not None else None
 
-                    # 15m % change — last two 15m bars
-                    change_15m = 0.0
+                    # 15m % — last two 15m bars
+                    change_15m: float | None = None
                     try:
                         c15 = ex.fetch_ohlcv(sym, "15m", limit=2)
                         if c15 and len(c15) >= 2:
@@ -417,14 +448,49 @@ class ScannerWorker(QThread):
                     except Exception:
                         pass
 
-                    # 4h % change — last two 4h bars
-                    change_4h = 0.0
+                    # 1H % — reuse main scan bars when TF=1h; else fetch 2 bars
+                    change_1h: float | None = None
+                    try:
+                        if self._timeframe == "1h" and len(df) >= 2:
+                            p0 = float(df.iloc[-2]["close"])
+                            p1 = float(df.iloc[-1]["close"])
+                            if p0 > 0:
+                                change_1h = (p1 - p0) / p0 * 100.0
+                        else:
+                            c1h = ex.fetch_ohlcv(sym, "1h", limit=2)
+                            if c1h and len(c1h) >= 2:
+                                p0, p1 = float(c1h[-2][4]), float(c1h[-1][4])
+                                if p0 > 0:
+                                    change_1h = (p1 - p0) / p0 * 100.0
+                    except Exception:
+                        pass
+
+                    # 4H % — last two 4h bars
+                    change_4h: float | None = None
                     try:
                         c4h = ex.fetch_ohlcv(sym, "4h", limit=2)
                         if c4h and len(c4h) >= 2:
                             p0, p1 = float(c4h[-2][4]), float(c4h[-1][4])
                             if p0 > 0:
                                 change_4h = (p1 - p0) / p0 * 100.0
+                    except Exception:
+                        pass
+
+                    # 7D % and 30D % — single daily fetch (32 bars covers both)
+                    change_7d: float | None  = None
+                    change_30d: float | None = None
+                    try:
+                        c1d = ex.fetch_ohlcv(sym, "1d", limit=32)
+                        if c1d:
+                            last_close = float(c1d[-1][4])
+                            if len(c1d) >= 8:
+                                p7 = float(c1d[-8][4])
+                                if p7 > 0:
+                                    change_7d = (last_close - p7) / p7 * 100.0
+                            if len(c1d) >= 31:
+                                p30 = float(c1d[-31][4])
+                                if p30 > 0:
+                                    change_30d = (last_close - p30) / p30 * 100.0
                     except Exception:
                         pass
 
@@ -436,11 +502,11 @@ class ScannerWorker(QThread):
                         "market_cap":  cg.get("market_cap", 0),
                         "price":       close,
                         "change_15m":  change_15m,
-                        "change_1h":   cg.get("change_1h",  0.0),
+                        "change_1h":   change_1h,
                         "change_4h":   change_4h,
                         "change_24h":  change_24h,
-                        "change_7d":   cg.get("change_7d",  0.0),
-                        "change_30d":  cg.get("change_30d", 0.0),
+                        "change_7d":   change_7d,
+                        "change_30d":  change_30d,
                         "volume_24h":  vol_24h,
                         "rsi":         rsi,
                         "signal":      sig["signal"],
@@ -2262,23 +2328,21 @@ class MarketScannerPage(QWidget):
             sig    = d["signal"]
             sig_c  = SIGNAL_COLORS.get(sig, "#8899AA")
             mcap   = d.get("market_cap", 0)
-            ch_15m = d.get("change_15m", 0.0)
-            ch_1h  = d.get("change_1h",  0.0)
-            ch_4h  = d.get("change_4h",  0.0)
-            ch_24h = d.get("change_24h", 0.0)
-            ch_7d  = d.get("change_7d",  0.0)
-            ch_30d = d.get("change_30d", 0.0)
+            price  = d.get("price", 0.0)
+            ch_15m = d.get("change_15m")   # None = unavailable
+            ch_1h  = d.get("change_1h")
+            ch_4h  = d.get("change_4h")
+            ch_24h = d.get("change_24h")
+            ch_7d  = d.get("change_7d")
+            ch_30d = d.get("change_30d")
             vol    = d.get("volume_24h", 0)
             rsi    = d.get("rsi")
-            rsi_s  = f"{rsi:.1f}" if rsi else "—"
+            rsi_s  = f"{rsi:.1f}" if rsi is not None else "—"
             rsi_c  = (
-                "#00CC77" if rsi and rsi < 35 else
-                "#FF3355" if rsi and rsi > 65 else
+                "#00CC77" if rsi is not None and rsi < 35 else
+                "#FF3355" if rsi is not None and rsi > 65 else
                 "#E8EBF0"
             )
-
-            def _pct_cell(val):
-                return (f"{val:+.2f}%", _pct_color(val)) if val else ("—", "#3A4A5A")
 
             self._table.setItem(ri, 0, _colored_item(
                 d["symbol"], "#E8EBF0", Qt.AlignLeft | Qt.AlignVCenter
@@ -2286,7 +2350,8 @@ class MarketScannerPage(QWidget):
             self._table.setItem(ri, 1, _numeric_item(
                 mcap, _fmt_mcap(mcap), "#4499DD" if mcap > 0 else "#3A4A5A"
             ))
-            self._table.setItem(ri, 2, _colored_item(_fmt_price(d["price"]), "#E8EBF0"))
+            # Price — numeric item so it sorts as a number, not a string
+            self._table.setItem(ri, 2, _numeric_item(price, _fmt_price(price), "#E8EBF0"))
 
             t, c = _pct_cell(ch_15m)
             self._table.setItem(ri, 3, _numeric_item(ch_15m, t, c))
@@ -2302,7 +2367,7 @@ class MarketScannerPage(QWidget):
             self._table.setItem(ri, 8, _numeric_item(ch_30d, t, c))
 
             self._table.setItem(ri, 9,  _numeric_item(vol, _fmt_vol(vol), "#8899AA"))
-            self._table.setItem(ri, 10, _colored_item(rsi_s, rsi_c))
+            self._table.setItem(ri, 10, _numeric_item(rsi, rsi_s, rsi_c))
             self._table.setItem(ri, 11, _colored_item(sig.upper(), sig_c))
             self._table.setItem(ri, 12, _numeric_item(
                 d["strength"], f"{d['strength']}%", sig_c
