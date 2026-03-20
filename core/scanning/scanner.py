@@ -596,6 +596,13 @@ class AssetScanner(QObject):
         # Used by the watchdog to detect stuck workers.
         self._worker_started_at: Optional[float] = None
 
+        # Wall-clock time (time.time()) of the last watchdog fire.
+        # Used to detect system sleep/wake: if the gap between two consecutive
+        # watchdog fires exceeds 3× the watchdog interval (90s for a 30s timer),
+        # the system almost certainly went to sleep.  On wake we trigger an
+        # immediate recovery scan without waiting for the staleness timeout.
+        self._watchdog_last_fired_at: Optional[float] = None
+
         # Maximum allowed scan duration in seconds before the watchdog
         # force-releases the worker reference.  Default: 120s (2 minutes).
         self._max_scan_duration_s: float = 120.0
@@ -739,7 +746,25 @@ class AssetScanner(QObject):
         import threading as _threading
         now = time.time()
 
-        # ── 0. Thread count monitoring ─────────────────────────────
+        # ── 0a. Sleep/wake detection via wall-clock gap ──────────────
+        # If the gap between consecutive watchdog fires exceeds 3× the 30s
+        # interval, the system almost certainly slept.  Trigger a recovery
+        # scan immediately (bypassing the 1.5× staleness wait) so trading
+        # resumes within seconds of wake rather than up to 90s later.
+        _WATCHDOG_INTERVAL_S = 30.0
+        if self._watchdog_last_fired_at is not None:
+            _gap = now - self._watchdog_last_fired_at
+            if _gap > _WATCHDOG_INTERVAL_S * 3:
+                logger.warning(
+                    "Scanner WATCHDOG: %.0fs gap between health checks — "
+                    "system likely woke from sleep/hibernate; triggering recovery scan",
+                    _gap,
+                )
+                if self._running and not self._any_scan_active:
+                    self._trigger_scan()
+        self._watchdog_last_fired_at = now
+
+        # ── 0b. Thread count monitoring ──────────────────────────────
         thread_count = _threading.active_count()
         if thread_count > 50:
             logger.warning(
