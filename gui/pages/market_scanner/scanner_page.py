@@ -275,7 +275,7 @@ class CoinGeckoFetcher:
                 "order":                   "market_cap_desc",
                 "per_page":                250,
                 "page":                    page,
-                "price_change_percentage": "1h,7d",
+                "price_change_percentage": "1h,7d,30d",
                 "sparkline":               "false",
             })
             url = f"{CoinGeckoFetcher.BASE}/coins/markets?{params}"
@@ -298,10 +298,11 @@ class CoinGeckoFetcher:
                     if sym and sym not in result:
                         result[sym] = {
                             "market_cap":  mcap,
-                            "change_1h":   coin.get("price_change_percentage_1h_in_currency") or 0.0,
-                            "change_24h":  coin.get("price_change_percentage_24h")            or 0.0,
-                            "change_7d":   coin.get("price_change_percentage_7d_in_currency") or 0.0,
-                            "volume_24h":  coin.get("total_volume")                           or 0,
+                            "change_1h":   coin.get("price_change_percentage_1h_in_currency")  or 0.0,
+                            "change_24h":  coin.get("price_change_percentage_24h")             or 0.0,
+                            "change_7d":   coin.get("price_change_percentage_7d_in_currency")  or 0.0,
+                            "change_30d":  coin.get("price_change_percentage_30d_in_currency") or 0.0,
+                            "volume_24h":  coin.get("total_volume")                            or 0,
                         }
                 if page_exhausted:
                     break
@@ -405,22 +406,47 @@ class ScannerWorker(QThread):
                     except Exception:
                         pass
 
+                    # 15m % change — last two 15m bars
+                    change_15m = 0.0
+                    try:
+                        c15 = ex.fetch_ohlcv(sym, "15m", limit=2)
+                        if c15 and len(c15) >= 2:
+                            p0, p1 = float(c15[-2][4]), float(c15[-1][4])
+                            if p0 > 0:
+                                change_15m = (p1 - p0) / p0 * 100.0
+                    except Exception:
+                        pass
+
+                    # 4h % change — last two 4h bars
+                    change_4h = 0.0
+                    try:
+                        c4h = ex.fetch_ohlcv(sym, "4h", limit=2)
+                        if c4h and len(c4h) >= 2:
+                            p0, p1 = float(c4h[-2][4]), float(c4h[-1][4])
+                            if p0 > 0:
+                                change_4h = (p1 - p0) / p0 * 100.0
+                    except Exception:
+                        pass
+
                     vol_24h = cg.get("volume_24h") or vol
 
                     self.row_ready.emit({
-                        "symbol":     sym,
-                        "base":       base,
-                        "market_cap": cg.get("market_cap", 0),
-                        "price":      close,
-                        "change_1h":  cg.get("change_1h",  0.0),
-                        "change_24h": change_24h,
-                        "change_7d":  cg.get("change_7d",  0.0),
-                        "volume_24h": vol_24h,
-                        "rsi":        rsi,
-                        "signal":     sig["signal"],
-                        "strength":   sig["strength"],
-                        "bullish":    sig.get("bullish", 0),
-                        "bearish":    sig.get("bearish", 0),
+                        "symbol":      sym,
+                        "base":        base,
+                        "market_cap":  cg.get("market_cap", 0),
+                        "price":       close,
+                        "change_15m":  change_15m,
+                        "change_1h":   cg.get("change_1h",  0.0),
+                        "change_4h":   change_4h,
+                        "change_24h":  change_24h,
+                        "change_7d":   cg.get("change_7d",  0.0),
+                        "change_30d":  cg.get("change_30d", 0.0),
+                        "volume_24h":  vol_24h,
+                        "rsi":         rsi,
+                        "signal":      sig["signal"],
+                        "strength":    sig["strength"],
+                        "bullish":     sig.get("bullish", 0),
+                        "bearish":     sig.get("bearish", 0),
                     })
 
                 except Exception as exc:
@@ -1797,7 +1823,7 @@ class MarketScannerPage(QWidget):
     # Tab-1 columns (unchanged from v2)
     COLUMNS = [
         "Symbol", "Mkt Cap", "Price",
-        "1H %", "24H %", "7D %",
+        "15M %", "1H %", "4H %", "24H %", "7D %", "30D %",
         "24H Volume", "RSI",
         "Signal", "Strength", "Bull", "Bear",
     ]
@@ -2236,9 +2262,12 @@ class MarketScannerPage(QWidget):
             sig    = d["signal"]
             sig_c  = SIGNAL_COLORS.get(sig, "#8899AA")
             mcap   = d.get("market_cap", 0)
+            ch_15m = d.get("change_15m", 0.0)
             ch_1h  = d.get("change_1h",  0.0)
+            ch_4h  = d.get("change_4h",  0.0)
             ch_24h = d.get("change_24h", 0.0)
             ch_7d  = d.get("change_7d",  0.0)
+            ch_30d = d.get("change_30d", 0.0)
             vol    = d.get("volume_24h", 0)
             rsi    = d.get("rsi")
             rsi_s  = f"{rsi:.1f}" if rsi else "—"
@@ -2248,6 +2277,9 @@ class MarketScannerPage(QWidget):
                 "#E8EBF0"
             )
 
+            def _pct_cell(val):
+                return (f"{val:+.2f}%", _pct_color(val)) if val else ("—", "#3A4A5A")
+
             self._table.setItem(ri, 0, _colored_item(
                 d["symbol"], "#E8EBF0", Qt.AlignLeft | Qt.AlignVCenter
             ))
@@ -2255,25 +2287,30 @@ class MarketScannerPage(QWidget):
                 mcap, _fmt_mcap(mcap), "#4499DD" if mcap > 0 else "#3A4A5A"
             ))
             self._table.setItem(ri, 2, _colored_item(_fmt_price(d["price"]), "#E8EBF0"))
-            self._table.setItem(ri, 3, _numeric_item(
-                ch_1h, f"{ch_1h:+.2f}%" if ch_1h else "—", _pct_color(ch_1h)
-            ))
-            self._table.setItem(ri, 4, _numeric_item(
-                ch_24h, f"{ch_24h:+.2f}%" if ch_24h else "—", _pct_color(ch_24h)
-            ))
-            self._table.setItem(ri, 5, _numeric_item(
-                ch_7d, f"{ch_7d:+.2f}%" if ch_7d else "—", _pct_color(ch_7d)
-            ))
-            self._table.setItem(ri, 6, _numeric_item(vol, _fmt_vol(vol), "#8899AA"))
-            self._table.setItem(ri, 7, _colored_item(rsi_s, rsi_c))
-            self._table.setItem(ri, 8, _colored_item(sig.upper(), sig_c))
-            self._table.setItem(ri, 9, _numeric_item(
+
+            t, c = _pct_cell(ch_15m)
+            self._table.setItem(ri, 3, _numeric_item(ch_15m, t, c))
+            t, c = _pct_cell(ch_1h)
+            self._table.setItem(ri, 4, _numeric_item(ch_1h, t, c))
+            t, c = _pct_cell(ch_4h)
+            self._table.setItem(ri, 5, _numeric_item(ch_4h, t, c))
+            t, c = _pct_cell(ch_24h)
+            self._table.setItem(ri, 6, _numeric_item(ch_24h, t, c))
+            t, c = _pct_cell(ch_7d)
+            self._table.setItem(ri, 7, _numeric_item(ch_7d, t, c))
+            t, c = _pct_cell(ch_30d)
+            self._table.setItem(ri, 8, _numeric_item(ch_30d, t, c))
+
+            self._table.setItem(ri, 9,  _numeric_item(vol, _fmt_vol(vol), "#8899AA"))
+            self._table.setItem(ri, 10, _colored_item(rsi_s, rsi_c))
+            self._table.setItem(ri, 11, _colored_item(sig.upper(), sig_c))
+            self._table.setItem(ri, 12, _numeric_item(
                 d["strength"], f"{d['strength']}%", sig_c
             ))
-            self._table.setItem(ri, 10, _numeric_item(
+            self._table.setItem(ri, 13, _numeric_item(
                 d["bullish"], str(d["bullish"]), "#00CC77"
             ))
-            self._table.setItem(ri, 11, _numeric_item(
+            self._table.setItem(ri, 14, _numeric_item(
                 d["bearish"], str(d["bearish"]), "#FF3355"
             ))
 
