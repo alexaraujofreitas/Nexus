@@ -47,6 +47,43 @@ TF_POLL_SECONDS: dict[str, int] = {
     "12h": 43200, "1d": 86400,
 }
 
+# Default buffer (seconds) added after candle close before scanning.
+# 30s gives the exchange time to finalize and serve the closed bar.
+_CANDLE_CLOSE_BUFFER_S: int = 30
+
+
+def _seconds_to_next_candle(timeframe: str, buffer_s: int = _CANDLE_CLOSE_BUFFER_S) -> int:
+    """
+    Return the number of seconds until the next candle of *timeframe* closes,
+    plus *buffer_s* seconds so the exchange has time to finalize the bar.
+
+    For example, if timeframe="1h" and the current UTC time is 13:22:47:
+      - Next 1h candle closes at 14:00:00 UTC
+      - Scan should fire at 14:00:30 UTC  (+ buffer_s)
+      - Seconds to wait = (14*3600 + 30) - (13*3600 + 22*60 + 47)
+                        = 50400 + 30 - 48167  = 2263s  (~37.7 min)
+
+    This guarantees the scanner always fires on a candle-close boundary
+    regardless of when NexusTrader was started.
+    """
+    import calendar
+
+    interval_s = TF_POLL_SECONDS.get(timeframe, 3600)
+    now_utc = datetime.utcnow()
+    epoch_s = calendar.timegm(now_utc.timetuple()) + now_utc.microsecond / 1e6
+
+    # Seconds elapsed since the last candle boundary
+    elapsed_in_period = epoch_s % interval_s
+    # Seconds remaining until the next candle close
+    until_close = interval_s - elapsed_in_period
+    # Add buffer (so we scan the closed bar, not the still-open one)
+    delay = until_close + buffer_s
+    # If we're extremely close to the boundary (within buffer), skip to the
+    # next period so we never scan with a 0-second or negative delay.
+    if delay <= buffer_s:
+        delay += interval_s
+    return int(delay)
+
 
 class ScanWorker(QThread):
     """
@@ -712,6 +749,14 @@ class AssetScanner(QObject):
         except Exception:
             self._staged_enabled = True
 
+        # ── Candle-alignment pending flags ────────────────────────────────────
+        # Set to True between start() and the singleShot firing.
+        # The watchdog's timer-heartbeat must NOT restart _timer/_ltf_timer
+        # during this window — they are intentionally inactive while waiting
+        # for the first aligned candle-close boundary.
+        self._htf_alignment_pending: bool = False
+        self._ltf_alignment_pending: bool = False
+
         # ── Watchdog timer ────────────────────────────────────
         # Runs every 30 seconds to detect and recover from stuck ScanWorker
         # threads.  If a worker has been running longer than _max_scan_duration_s,
@@ -755,15 +800,47 @@ class AssetScanner(QObject):
             return
         self._running = True
         logger.info("AssetScanner started (TF=%s, staged=%s)", self._timeframe, self._staged_enabled)
-        self._trigger_scan()   # immediate first scan
-        self._timer.start()
-        # Start LTF timer if staged candidates are enabled
+
+        # Immediate first scan on startup (gives fast initial data regardless of candle timing)
+        self._trigger_scan()
+
+        # ── Candle-boundary alignment ─────────────────────────────────────────
+        # After the startup scan, align the HTF repeating timer to fire ~30s
+        # after each candle close boundary (e.g. 13:00:30, 14:00:30 for 1h TF)
+        # rather than repeating every N seconds from startup time.
+        # This ensures every scan always sees the freshest fully-closed candle.
+        htf_delay_s = _seconds_to_next_candle(self._timeframe)
+        _fire_at = (datetime.utcnow().replace(microsecond=0) +
+                    __import__("datetime").timedelta(seconds=htf_delay_s))
+        logger.info(
+            "AssetScanner: HTF timer aligned — first repeating scan in %ds "
+            "(at %s UTC, %.1fmin from now)",
+            htf_delay_s,
+            _fire_at.strftime("%H:%M:%S"),
+            htf_delay_s / 60.0,
+        )
+        self._htf_alignment_pending = True
+        QTimer.singleShot(htf_delay_s * 1000, self._fire_aligned_htf_scan)
+
+        # LTF confirmation timer — align to 15m candle boundaries
         if self._staged_enabled:
-            self._ltf_timer.start()
-            logger.info("AssetScanner: LTF confirmation timer started (15m interval)")
+            ltf_delay_s = _seconds_to_next_candle("15m")
+            _ltf_fire_at = (datetime.utcnow().replace(microsecond=0) +
+                            __import__("datetime").timedelta(seconds=ltf_delay_s))
+            logger.info(
+                "AssetScanner: LTF timer aligned — first repeating scan in %ds "
+                "(at %s UTC, %.1fmin from now)",
+                ltf_delay_s,
+                _ltf_fire_at.strftime("%H:%M:%S"),
+                ltf_delay_s / 60.0,
+            )
+            self._ltf_alignment_pending = True
+            QTimer.singleShot(ltf_delay_s * 1000, self._fire_aligned_ltf_scan)
 
     def stop(self) -> None:
         self._running = False
+        self._htf_alignment_pending = False
+        self._ltf_alignment_pending = False
         self._timer.stop()
         self._ltf_timer.stop()
         self._watchdog.stop()
@@ -774,6 +851,34 @@ class AssetScanner(QObject):
             self._ltf_worker.quit()
             self._ltf_worker.wait(3000)
         logger.info("AssetScanner stopped")
+
+    # ── Candle-boundary aligned timer fires ──────────────────────────────────
+
+    def _fire_aligned_htf_scan(self) -> None:
+        """
+        Called once by QTimer.singleShot at the first candle-close boundary.
+        Triggers the HTF scan and then starts the repeating interval timer
+        so all subsequent scans are also on-boundary.
+        """
+        self._htf_alignment_pending = False
+        if not self._running:
+            return
+        logger.info("AssetScanner: HTF aligned tick — starting repeating %s timer",
+                    self._timeframe)
+        self._trigger_scan()
+        self._timer.start()   # starts the repeating interval (already set in __init__)
+
+    def _fire_aligned_ltf_scan(self) -> None:
+        """
+        Called once by QTimer.singleShot at the first 15m candle-close boundary.
+        Triggers the LTF scan and then starts the repeating 15m interval timer.
+        """
+        self._ltf_alignment_pending = False
+        if not self._running:
+            return
+        logger.info("AssetScanner: LTF aligned tick — starting repeating 15m timer")
+        self._trigger_ltf_scan()
+        self._ltf_timer.start()   # starts the repeating 15m interval (already set in __init__)
 
     def scan_now(self) -> None:
         """Trigger an immediate scan outside the timer schedule."""
@@ -908,12 +1013,16 @@ class AssetScanner(QObject):
                         self._trigger_scan()
 
         # ── 4. Timer heartbeat ───────────────────────────────────
-        if self._running and not self._timer.isActive():
+        # Heartbeat: restart timers if they went inactive unexpectedly.
+        # Skip if alignment is still pending (timer is intentionally inactive
+        # while waiting for the first candle-boundary singleShot to fire).
+        if self._running and not self._htf_alignment_pending and not self._timer.isActive():
             logger.warning(
                 "Scanner WATCHDOG: HTF timer found inactive while scanner is running — restarting timer"
             )
             self._timer.start()
-        if self._running and self._staged_enabled and not self._ltf_timer.isActive():
+        if (self._running and self._staged_enabled
+                and not self._ltf_alignment_pending and not self._ltf_timer.isActive()):
             logger.warning(
                 "Scanner WATCHDOG: LTF timer found inactive while scanner is running — restarting timer"
             )
