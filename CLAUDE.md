@@ -1110,6 +1110,17 @@ Three bugs identified during the post-restart audit (2026-03-20 10:00:35 log) we
 ### Bug 1 — CryptoPanic API 404 (Issue 1)
 - **Root cause**: CryptoPanic migrated to `/api/developer/v2/posts/` as the base endpoint. The old `/api/v1/posts/` path 404s for all plan tiers. Additionally, `filter=` in v2 means SENTIMENT filter (rising/hot/bullish/bearish), not content-type; content-type filter is now `kind=` parameter. Session 13 incorrectly concluded `/api/v1/posts/` was correct — that was wrong.
 - **Compounding issue**: User's Japan VPN caused Cloudflare to block all API calls. VPN must be disabled or split-tunneled for cryptopanic.com.
+
+## VPN / Network Behaviour (PERSISTENT MEMORY)
+
+**Japan VPN causes Bybit Demo 403 errors.**
+
+Whenever `fetch_tickers` or any Bybit Demo API call returns 403 Forbidden (`api-demo.bybit.com`), the FIRST diagnostic check is: **is the Japan VPN on?**
+
+- Japan IP → Cloudflare/Bybit geo-blocks or rate-limits the demo API → transient or sustained 403 stream
+- Turning off the VPN (or switching to a non-Japan exit node) resolves it immediately
+- This has also caused CryptoPanic API 404s (separate Cloudflare block on cryptopanic.com)
+- **Rule**: Before diagnosing any 403/429/Cloudflare error as a code bug, ask the user to confirm VPN status. If Japan VPN is on, request they disable it or split-tunnel the affected domain first.
 - **Fix**: Updated base URL to `/api/developer/v2/posts/` and changed `filter=news` → `kind=news` in:
   - `core/nlp/news_feed.py` — also added `public=true` and `size=50` params
   - `core/agents/twitter_agent.py` — kept `filter=hot` (valid v2 sentiment filter) and added `public=true`
