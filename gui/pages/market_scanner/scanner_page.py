@@ -131,11 +131,13 @@ def _fmt_price(v: float) -> str:
     return f"{v:.6f}"
 
 
-def _fmt_vol(v: float) -> str:
+def _fmt_vol(v) -> str:
+    if v is None or v <= 0:
+        return "—"
     if v >= 1e9:
         return f"${v / 1e9:.2f}B"
     if v >= 1e6:
-        return f"${v / 1e6:.0f}M"
+        return f"${v / 1e6:.1f}M"
     if v >= 1e3:
         return f"${v / 1e3:.0f}K"
     return f"${v:.0f}"
@@ -423,14 +425,20 @@ class ScannerWorker(QThread):
                     base = sym.split("/")[0].upper()
                     cg   = self._cg.get(base, {})
 
-                    # 24H % — prefer live ticker, fall back to CoinGecko
+                    # 24H % and 24H Volume — single ticker call covers both
                     change_24h: float | None = None
+                    vol_24h_ticker: float | None = None
                     try:
                         ticker = exchange_manager.fetch_ticker(sym)
                         if ticker:
+                            # 24H price change
                             ex_ch = ticker.get("change") or ticker.get("percentage")
                             if ex_ch is not None:
                                 change_24h = float(ex_ch)
+                            # 24H volume in USDT (quoteVolume) — the correct field
+                            qv = ticker.get("quoteVolume")
+                            if qv is not None and float(qv) > 0:
+                                vol_24h_ticker = float(qv)
                     except Exception:
                         pass
                     if change_24h is None:
@@ -494,7 +502,21 @@ class ScannerWorker(QThread):
                     except Exception:
                         pass
 
-                    vol_24h = cg.get("volume_24h") or vol
+                    # 24H Volume resolution (priority order):
+                    #   1. quoteVolume from live ticker (rolling 24h in USDT)
+                    #   2. CoinGecko total_volume (USDT)
+                    #   3. Sum of last 24 × 1h OHLCV bars converted to USDT
+                    vol_24h: float | None = vol_24h_ticker
+                    if vol_24h is None:
+                        cg_vol = cg.get("volume_24h")
+                        vol_24h = float(cg_vol) if cg_vol else None
+                    if vol_24h is None:
+                        # Fallback: sum base-currency volume for last 24 1h bars × close
+                        try:
+                            bars_24 = candles[-24:] if len(candles) >= 24 else candles
+                            vol_24h = sum(float(b[5]) for b in bars_24) * close
+                        except Exception:
+                            vol_24h = None
 
                     self.row_ready.emit({
                         "symbol":      sym,
@@ -2366,7 +2388,7 @@ class MarketScannerPage(QWidget):
             t, c = _pct_cell(ch_30d)
             self._table.setItem(ri, 8, _numeric_item(ch_30d, t, c))
 
-            self._table.setItem(ri, 9,  _numeric_item(vol, _fmt_vol(vol), "#8899AA"))
+            self._table.setItem(ri, 9,  _numeric_item(vol, _fmt_vol(vol), "#8899AA" if vol else "#3A4A5A"))
             self._table.setItem(ri, 10, _numeric_item(rsi, rsi_s, rsi_c))
             self._table.setItem(ri, 11, _colored_item(sig.upper(), sig_c))
             self._table.setItem(ri, 12, _numeric_item(
