@@ -696,6 +696,41 @@ class SystemHealthPage(QWidget):
             except Exception:
                 self._card_feeds.set_unknown()
 
+    def _refresh_scanner_health(self) -> None:
+        """Check scanner, feed, signal freshness, and circuit breaker — log issues."""
+        import time as _time
+        try:
+            from core.scanning.scanner import scanner as _sc
+            if not getattr(_sc, "_running", False):
+                self._log_event("WARN", "SCANNER", "Scanner not running — check IDSS page")
+                return
+
+            last_scan = getattr(_sc, "_last_scan_completed_at", None)
+            if last_scan:
+                age_s = _time.time() - last_scan
+                tf_s = {"1h": 3600, "4h": 14400, "15m": 900}.get(
+                    getattr(_sc, "_timeframe", "1h"), 3600)
+                if age_s > tf_s * 1.8:
+                    self._log_event("WARN", "SCANNER",
+                        f"Stale: last scan {age_s/3600:.1f}h ago (expected <{tf_s*1.2/3600:.1f}h)")
+        except Exception:
+            pass
+
+        try:
+            from core.execution.paper_executor import get_paper_executor
+            _pe = get_paper_executor()
+            if hasattr(_pe, "get_production_status"):
+                ps = _pe.get_production_status()
+                if ps.get("circuit_breaker_on", False):
+                    self._log_event("WARN", "CIRCUIT_BRK",
+                        f"ACTIVE: drawdown {ps['drawdown_pct']:.2f}% >= 10% — no new entries")
+                streak = ps.get("current_losing_streak", 0)
+                if streak >= 5:
+                    self._log_event("WARN", "TRADE_HEALTH",
+                        f"Losing streak: {streak} consecutive losses — review signal quality")
+        except Exception:
+            pass
+
     def _refresh_all(self) -> None:
         """Refresh all sections — called periodically (every 5s) and on initial load."""
         try:
@@ -720,6 +755,10 @@ class SystemHealthPage(QWidget):
             pass
         try:
             self._refresh_uptime()
+        except Exception:
+            pass
+        try:
+            self._refresh_scanner_health()
         except Exception:
             pass
 

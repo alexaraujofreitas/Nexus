@@ -125,6 +125,18 @@ class SignalGenerator:
             if model.name in _disabled:
                 continue
 
+            # Check model_performance_tracker auto-disable
+            try:
+                from core.analytics.model_performance_tracker import get_model_performance_tracker
+                _mpt = get_model_performance_tracker()
+                _should_disable, _disable_reason = _mpt.should_auto_disable(model.name)
+                if _should_disable:
+                    logger.warning("SignalGenerator: auto-disabling %s (%s)", model.name, _disable_reason)
+                    _disabled.add(model.name)
+                    continue
+            except Exception:
+                pass
+
             # Use probabilistic activation when regime_probs available
             min_activation = float(_sc.get("adaptive_activation.min_activation_weight", 0.10))
             if regime_probs and _sc.get("adaptive_activation.enabled", True):
@@ -157,10 +169,12 @@ class SignalGenerator:
             if self._rl_model is not None:
                 rl_sig = self._rl_model.evaluate(symbol, df, regime, timeframe)
                 if rl_sig is not None:
-                    signals.append(rl_sig)
+                    rl_shadow_only = _sc.get("rl.shadow_only", True)
+                    if not rl_shadow_only:
+                        signals.append(rl_sig)
                     logger.info(
-                        "RL Signal fired: %s | %s | strength=%.2f",
-                        symbol, rl_sig.direction, rl_sig.strength,
+                        "RL shadow: %s | %s | strength=%.2f (shadow_only=%s)",
+                        symbol, rl_sig.direction, rl_sig.strength, rl_shadow_only,
                     )
         except Exception as exc:
             logger.debug("SignalGenerator: RL model error on %s: %s", symbol, exc)

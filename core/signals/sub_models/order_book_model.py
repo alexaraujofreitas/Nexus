@@ -3,7 +3,14 @@
 #
 # Reads cached order book imbalance from the OrderBookAgent.
 # Fires only when imbalance signal is strong and confidence is high.
-# Active in ALL regimes but confidence is weighted toward short TFs.
+#
+# TIMEFRAME RESTRICTION (Session 21 audit):
+#   At 1h+, tf_weight=0.55 makes the effective required confidence
+#   = min_confidence / tf_weight = 0.60 / 0.55 = 1.09 — impossible
+#   to satisfy. Rather than allow silent non-fires, this model is
+#   HARD-GATED at max_timeframe (default "30m"). This is a REMOVAL
+#   of a misaligned component at 1h+, not the activation of a new
+#   signal. The model remains fully operational at ≤30m.
 # ============================================================
 from __future__ import annotations
 
@@ -28,10 +35,15 @@ _TF_WEIGHT = {
 
 class OrderBookModel(BaseSubModel):
     """
-    Order book microstructure signal — best on short timeframes.
-    Signals from this model have their confidence discounted
-    on higher timeframes where the short-lived imbalance data
-    becomes less meaningful.
+    Order book microstructure signal.
+
+    ACTIVE TIMEFRAMES: ≤ 30m only (configurable via models.order_book.max_timeframe).
+    At 1h and above the TF discount makes the confidence threshold unreachable
+    (effective threshold > 1.0), so those TFs are hard-gated off — this is
+    deliberate removal of a structurally broken signal path, not a new restriction.
+
+    The _TF_WEIGHT table is retained for backward-compatibility with sub-30m
+    timeframes where the discount is meaningful (e.g. 5m weight=0.9, 15m=0.8).
     """
 
     ACTIVE_REGIMES: list[str] = []   # active in all regimes
@@ -47,6 +59,18 @@ class OrderBookModel(BaseSubModel):
         regime: str,
         timeframe: str,
     ) -> Optional[ModelSignal]:
+        # Hard TF gate — OrderBook signal structurally cannot fire at 1h+
+        # because min_confidence / TF_WEIGHT > 1.0.  Gating here makes the
+        # non-fire explicit rather than silent.
+        # Indirect paths checked: no other code calls evaluate() with
+        # timeframe > max_timeframe — the scanner always passes the active
+        # scan timeframe which is "1h" for the main scan, so this gate
+        # ensures the model contributes ZERO at 1h.
+        _max_tf = _s.get('models.order_book.max_timeframe', '30m')
+        _tf_order = ['1m','3m','5m','15m','30m','1h','2h','4h','6h','12h','1d']
+        if _tf_order.index(timeframe) >= _tf_order.index(_max_tf):
+            return None  # removed from 1h scan — not a conditional skip
+
         # Read tunable parameters from settings with fallback defaults
         _min_signal = float(_s.get('models.order_book.min_signal', 0.35))
         _min_confidence = float(_s.get('models.order_book.min_confidence', 0.60))

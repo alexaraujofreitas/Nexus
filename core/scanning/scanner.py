@@ -301,7 +301,7 @@ class ScanWorker(QThread):
                 logger.debug("Scanner: === BEGIN symbol %d/%d: %s ===", _sym_idx + 1, len(qualifying), symbol)
                 _sym_start = time.time()
                 try:
-                    candidate, regime, confidence, df, pre_rejection = self._scan_symbol_with_regime(
+                    candidate, regime, confidence, df, pre_rejection, sym_diag = self._scan_symbol_with_regime(
                         symbol, tickers.get(symbol, {}),
                         prefetched_ohlcv=_ohlcv_cache.get(symbol),
                     )
@@ -322,14 +322,17 @@ class ScanWorker(QThread):
                             **candidate.to_dict(),
                             "status":      "pending",
                             "is_approved": False,
+                            "diagnostics": sym_diag,
                         }
                     else:
-                        _all_sym_results[symbol] = self._empty_sym_result(
-                            symbol, pre_rejection or "No signal", regime
-                        )
+                        _r = self._empty_sym_result(symbol, pre_rejection or "No signal", regime)
+                        _r["diagnostics"] = sym_diag
+                        _all_sym_results[symbol] = _r
                 except Exception as exc:
                     logger.error("Scanner: error scanning %s: %s", symbol, exc, exc_info=True)
-                    _all_sym_results[symbol] = self._empty_sym_result(symbol, "Scan error")
+                    _r = self._empty_sym_result(symbol, "Scan error")
+                    _r["diagnostics"] = {}
+                    _all_sym_results[symbol] = _r
 
             # ── Risk gate (batch) ──────────────────────────────
             spread_map = {}
@@ -352,8 +355,9 @@ class ScanWorker(QThread):
                     "Scanner: rejected %s — %s", r.symbol, r.rejection_reason
                 )
                 if r.symbol in _all_sym_results:
-                    _all_sym_results[r.symbol]["status"]      = r.rejection_reason or "Rejected"
-                    _all_sym_results[r.symbol]["is_approved"] = False
+                    _all_sym_results[r.symbol]["status"]           = r.rejection_reason or "Rejected"
+                    _all_sym_results[r.symbol]["is_approved"]      = False
+                    _all_sym_results[r.symbol]["rejection_reason"] = r.rejection_reason or "Rejected"
 
             _scan_ts = datetime.utcnow().isoformat()
             for c in approved:
@@ -434,17 +438,26 @@ class ScanWorker(QThread):
     def _scan_symbol_with_regime(
         self, symbol: str, ticker: dict,
         prefetched_ohlcv: Optional[list] = None,
-    ) -> tuple[Optional[OrderCandidate], str, float, Optional[pd.DataFrame], str]:
+    ) -> tuple[Optional[OrderCandidate], str, float, Optional[pd.DataFrame], str, dict]:
         """
         Run the full pipeline for one symbol.
-        Returns (candidate_or_None, regime_label, confidence, df_or_None, pre_rejection).
+        Returns (candidate_or_None, regime_label, confidence, df_or_None, pre_rejection, diagnostics).
 
         pre_rejection is a human-readable string explaining why no candidate was produced:
-          ""               — candidate produced (may still be rejected by the risk gate)
-          "No data"        — insufficient or stale OHLCV bars
-          "No signal"      — no sub-model fired for this symbol
+          ""                — candidate produced (may still be rejected by the risk gate)
+          "No data"         — insufficient or stale OHLCV bars
+          "No signal"       — no sub-model fired for this symbol
           "Below threshold" — signals fired but confluence score < threshold
+
+        diagnostics is a dict with pipeline transparency data for the rationale panel:
+          regime_confidence, regime_probs, candle_age_s, candle_count, candle_ts_str,
+          models_fired, models_disabled, models_no_signal, all_model_names,
+          raw_score, effective_threshold, per_model, direction_split, dominant_side, etc.
         """
+        # Accumulated diagnostics for the rationale panel — populated progressively
+        # as the pipeline runs and returned at every exit point.
+        _sym_diag: dict = {}
+
         # Use pre-fetched OHLCV when available; fall back to live fetch otherwise.
         # The fallback is wrapped with a timeout so a hanging exchange call
         # cannot permanently stall the ScanWorker thread.
@@ -469,7 +482,7 @@ class ScanWorker(QThread):
             finally:
                 _tp.shutdown(wait=False, cancel_futures=True)
         if not raw or len(raw) < 30:
-            return None, "", 0.0, None, "No data"
+            return None, "", 0.0, None, "No data", _sym_diag
 
         df = pd.DataFrame(
             raw, columns=["timestamp", "open", "high", "low", "close", "volume"]
@@ -492,12 +505,33 @@ class ScanWorker(QThread):
                     "Scanner: %s OHLCV data is stale (age=%.0fs > max=%.0fs) — skipping",
                     symbol, _age_s, _max_age_s,
                 )
-                return None, "", 0.0, None, "Stale data"
+                return None, "", 0.0, None, "Stale data", _sym_diag
         except Exception as _freshness_err:
             logger.debug("Scanner: freshness check failed for %s: %s", symbol, _freshness_err)
 
         # Calculate indicators
         df = calculate_all(df)
+
+        # ── Phase 1 pre-scan filters (time-of-day, volatility) ─────────
+        try:
+            from core.filters.trade_filters import apply_pre_scan_filters
+            _pf_ok, _pf_reason = apply_pre_scan_filters(symbol, df, self._timeframe)
+            if not _pf_ok:
+                logger.debug("Scanner: %s pre-filter REJECTED — %s", symbol, _pf_reason)
+                return symbol, None, None, None, _pf_reason, {}
+        except Exception as _pf_exc:
+            logger.debug("Scanner: pre-filter error for %s: %s", symbol, _pf_exc)
+
+        # ── Candle metadata for rationale panel ───────────────────────
+        _sym_diag["candle_count"] = len(df)
+        try:
+            _latest_ts = df.index[-1]
+            _now_ts_d  = pd.Timestamp.now(tz="UTC")
+            _sym_diag["candle_age_s"]  = round((_now_ts_d - _latest_ts).total_seconds(), 1)
+            _sym_diag["candle_ts_str"] = _latest_ts.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            _sym_diag["candle_age_s"]  = None
+            _sym_diag["candle_ts_str"] = "Unknown"
 
         # Regime classification
         regime, confidence, features = self._regime_clf.classify(df)
@@ -561,16 +595,53 @@ class ScanWorker(QThread):
         # Emit symbol progress
         self.symbol_scanned.emit(symbol, regime, 0.0)
 
+        # ── Regime diagnostics for rationale panel ────────────────────
+        _sym_diag["regime_confidence"] = round(confidence, 3)
+        _sym_diag["regime_probs"]      = regime_probs
+
         # Signal generation with regime probabilities
         signals = self._sig_gen.generate(symbol, df, regime, self._timeframe, regime_probs=regime_probs)
+
+        # ── Model-level diagnostics for rationale panel ───────────────
+        try:
+            from config.settings import settings as _sc_d
+            _disabled_names = list(_sc_d.get("disabled_models", []))
+        except Exception:
+            _disabled_names = []
+        _all_m_names = [m.name for m in self._sig_gen._models]
+        # Include RL model name if it exists
+        if self._sig_gen._rl_model is not None:
+            _rl_name = getattr(self._sig_gen._rl_model, "name", "rl_ensemble")
+            if _rl_name not in _all_m_names:
+                _all_m_names = list(_all_m_names) + [_rl_name]
+        _fired_names = [s.model_name for s in signals]
+        _no_sig_names = [m for m in _all_m_names if m not in _fired_names and m not in _disabled_names]
+        _sym_diag["all_model_names"]   = _all_m_names
+        _sym_diag["models_disabled"]   = _disabled_names
+        _sym_diag["models_fired"]      = _fired_names
+        _sym_diag["models_no_signal"]  = _no_sig_names
+        # Capture raw signal strengths / directions for context
+        _sym_diag["signal_details"]    = {
+            s.model_name: {"direction": s.direction, "strength": round(s.strength, 3)}
+            for s in signals
+        }
+
         if not signals:
-            return None, regime, confidence, df, "No signal"
+            return None, regime, confidence, df, "No signal", _sym_diag
 
         # Confluence scoring with regime probabilities
         candidate = self._scorer.score(signals, symbol, regime_probs=regime_probs)
         logger.debug("Scanner: %s — scorer returned candidate=%s", symbol, candidate is not None)
+
+        # ── Merge scorer diagnostics into sym_diag ────────────────────
+        try:
+            _scorer_d = dict(getattr(self._scorer, "_last_diagnostics", {}))
+            _sym_diag.update(_scorer_d)
+        except Exception:
+            pass
+
         if not candidate:
-            return None, regime, confidence, df, "Below threshold"
+            return None, regime, confidence, df, "Below threshold", _sym_diag
 
         logger.debug("Scanner: %s — candidate score=%.3f, about to enter MTF block", symbol, candidate.score)
 
@@ -636,7 +707,7 @@ class ScanWorker(QThread):
             self.symbol_scanned.emit(symbol, regime, candidate.score)
 
         logger.debug("Scanner: %s — _scan_symbol_with_regime RETURNING (candidate=%s)", symbol, candidate is not None)
-        return candidate, regime, confidence, df, ""
+        return candidate, regime, confidence, df, "", _sym_diag
 
 
 class AssetScanner(QObject):
@@ -799,6 +870,7 @@ class AssetScanner(QObject):
         if self._running:
             return
         self._running = True
+        self._log_production_config()
         logger.info("AssetScanner started (TF=%s, staged=%s)", self._timeframe, self._staged_enabled)
 
         # Immediate first scan on startup (gives fast initial data regardless of candle timing)
@@ -836,6 +908,35 @@ class AssetScanner(QObject):
             )
             self._ltf_alignment_pending = True
             QTimer.singleShot(ltf_delay_s * 1000, self._fire_aligned_ltf_scan)
+
+    def _log_production_config(self) -> None:
+        """Log the frozen production configuration at startup for auditability."""
+        from config.settings import settings as _s
+        disabled  = _s.get("disabled_models", [])
+        threshold = _s.get("idss.min_confluence_score", 0.20)
+        dyn_on    = _s.get("dynamic_confluence.enabled", False)
+        time_f    = _s.get("filters.time_of_day.enabled", False)
+        heat      = _s.get("risk_engine.portfolio_heat_max_pct", 0.04) * 100
+        sz_mode   = _s.get("risk_engine.sizing_mode", "risk_based")
+        risk_pct  = _s.get("risk_engine.risk_pct_per_trade", 0.75)
+        mtf_on    = _s.get("multi_tf.confirmation_required", True)
+        ae_on     = _s.get("scanner.auto_execute", True)
+        logger.info(
+            "═══════════════════════════════════════════════════════════\n"
+            "  NEXUS TRADER — PRODUCTION CONFIGURATION (FROZEN)\n"
+            "  Strategy        : MomentumBreakout (TrendModel gate)\n"
+            "  Disabled models : %s\n"
+            "  Confluence      : %.2f (dynamic=%s)\n"
+            "  Time filter     : %s\n"
+            "  Portfolio heat  : %.0f%% max\n"
+            "  Sizing mode     : %s (%.2f%% risk/trade)\n"
+            "  MTF confirm     : %s\n"
+            "  Auto-execute    : %s\n"
+            "  Circuit breaker : 10%% drawdown hard stop\n"
+            "═══════════════════════════════════════════════════════════",
+            disabled, threshold, dyn_on, time_f, heat,
+            sz_mode, risk_pct, mtf_on, ae_on,
+        )
 
     def stop(self) -> None:
         self._running = False

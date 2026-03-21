@@ -252,11 +252,8 @@ class PaperTradingPage(QWidget):
         hdr.addWidget(self._pos_hdr_lbl)
         hdr.addStretch()
 
-        self._test_pos_btn = QPushButton("🧪  Test Position")
-        self._test_pos_btn.setFixedHeight(28)
-        self._test_pos_btn.setStyleSheet(_BTN_NEUTRAL)
-        self._test_pos_btn.clicked.connect(self._on_open_test_position)
-        hdr.addWidget(self._test_pos_btn)
+        # 🧪 Test Position button removed for production demo.
+        # Handler _on_open_test_position() is kept in code for future testing.
 
         self._close_all_btn = QPushButton("✕  Close All")
         self._close_all_btn.setFixedHeight(28)

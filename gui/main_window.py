@@ -22,31 +22,33 @@ NAV_ITEMS = [
     # (page_key, label, icon_char, section)
     # ── DASHBOARDS — overview & monitoring ────────────────────
     ("dashboard",            "Dashboard",             "◈", "DASHBOARDS"),
+    ("demo_monitor",         "Demo Live Monitor",     "⊛", None),
+    ("system_health",        "System Health",         "◎", None),
     ("risk_management",      "Risk Management",       "⊘", None),
     ("intelligence",         "AI Intelligence",       "◉", None),
     ("intelligence_agents",  "Intelligence Agents",   "◈", None),
     ("regime",               "Market Regime",         "⊘", None),
-    # ── TRADING — active execution & setup ────────────────────
-    ("market_scanner",       "Market Scanner",        "⊡", "TRADING"),
+    # ── TRADING — active execution ────────────────────────────
+    ("market_scanner",       "IDSS AI Scanner",       "⊡", "TRADING"),
     ("chart_workspace",      "Chart Workspace",       "⋈", None),
-    ("strategies",           "Strategies",            "◉", None),
     ("paper_trading",        "Paper Trading",         "◎", None),
-    # ── RESEARCH & SIGNALS — pre-trade analysis ───────────────
-    ("backtesting",          "Backtesting",           "⊟", "RESEARCH & SIGNALS"),
-    ("signal_explorer",      "Signal Explorer",       "⊠", None),
+    # ── RESEARCH — pre/post trade analysis ────────────────────
+    ("backtesting",          "Backtesting",           "⊟", "RESEARCH"),
     ("news_sentiment",       "News & Sentiment",      "⊠", None),
-    # ── TRADING ANALYSIS — post-trade review ──────────────────
-    ("orders_positions",     "Orders & Positions",    "⊕", "TRADING ANALYSIS"),
+    # ── ANALYSIS — post-trade review ──────────────────────────
+    ("orders_positions",     "Orders & Positions",    "⊕", "ANALYSIS"),
     ("performance_analytics","Performance Analytics", "◈", None),
     # ── SYSTEM — infrastructure & configuration ───────────────
     ("notifications",        "Notifications",         "⊕", "SYSTEM"),
-    ("system_health",        "System Health",         "◎", None),
     ("exchange_management",  "Exchange Management",   "⊞", None),
     ("settings",             "Settings",              "⊙", None),
     # ── always last ───────────────────────────────────────────
     ("logs",                 "Logs",                  "≡", None),
     ("help_center",          "Help Center",           "?", None),
 ]
+
+# Pages not shown in sidebar but still navigable via go_to_page() for internal use
+_HIDDEN_PAGES = {"strategies", "signal_explorer", "quant_dashboard"}
 
 
 class SidebarButton(QPushButton):
@@ -364,8 +366,10 @@ class MainWindow(QMainWindow):
         from gui.pages.system_health.system_health_page   import SystemHealthPage
         from gui.pages.help.help_center_page              import HelpCenterPage
         from gui.pages.notifications.notifications_page   import NotificationsPage
+        from gui.pages.demo_monitor.demo_monitor_page     import DemoMonitorPage
         page_map = {
             "dashboard":             DashboardPage,
+            "demo_monitor":          DemoMonitorPage,
             "market_scanner":        MarketScannerPage,
             "chart_workspace":       ChartWorkspacePage,
             "strategies":            StrategiesPage,

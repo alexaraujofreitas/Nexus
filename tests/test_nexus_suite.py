@@ -106,20 +106,12 @@ class TestBTCPriorityFilter(unittest.TestCase):
         self.assertLess(alt_prio, 1.0)
         self.assertGreater(alt_prio, 0.0)
 
-    def test_btc_size_multiplier(self):
-        self.assertEqual(self.filt.get_size_multiplier("BTC/USDT"), 1.5)
+    def test_btc_size_multiplier_returns_one_for_all_symbols(self):
+        # BTC_SIZE_MULTIPLIER removed in Session 25 — get_size_multiplier is now
+        # a no-op stub returning 1.0 for every symbol.  SymbolAllocator is the
+        # single allocation mechanism.
+        self.assertEqual(self.filt.get_size_multiplier("BTC/USDT"), 1.0)
         self.assertEqual(self.filt.get_size_multiplier("ETH/USDT"), 1.0)
-
-    def test_btc_confidence_boost(self):
-        original = 0.7
-        boosted = self.filt.adjust_confidence("BTC/USDT", original)
-        self.assertGreater(boosted, original)
-        self.assertLessEqual(boosted, 1.0)
-
-    def test_eth_no_confidence_boost(self):
-        original = 0.7
-        adjusted = self.filt.adjust_confidence("ETH/USDT", original)
-        self.assertEqual(adjusted, original)
 
     def test_alt_gate_hard_blocks_in_bear_regime(self):
         from core.scanning.btc_priority import ALT_GATE_HARD

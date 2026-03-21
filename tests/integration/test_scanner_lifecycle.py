@@ -300,7 +300,7 @@ class TestScannerLifecycle(unittest.TestCase):
                 try:
                     raw = exchange.fetch_ohlcv(sym, "1h", limit=300)
                     ticker = exchange.fetch_ticker(sym)
-                    candidate, regime, conf, df = worker._scan_symbol_with_regime(
+                    candidate, regime, conf, df, _pre_rej, _diag = worker._scan_symbol_with_regime(
                         sym, ticker, prefetched_ohlcv=raw
                     )
                     candidates_out.append((sym, candidate, regime))

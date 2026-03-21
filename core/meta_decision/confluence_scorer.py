@@ -249,6 +249,12 @@ class ConfluenceScorer:
         except Exception:
             pass
 
+        # Diagnostics from the most recent score() call.
+        # Read by the scanner after calling score() to populate the rationale panel.
+        # Keys: raw_score, effective_threshold, direction_split, per_model,
+        #       dominant_side, below_threshold, failed_at.
+        self._last_diagnostics: dict = {}
+
     def score(
         self,
         signals: list[ModelSignal],
@@ -274,6 +280,17 @@ class ConfluenceScorer:
         """
         if not signals:
             return None
+
+        # Reset diagnostics for this invocation
+        self._last_diagnostics = {
+            "raw_score":          0.0,
+            "effective_threshold": 0.0,
+            "direction_split":    {},
+            "per_model":          {},
+            "dominant_side":      None,
+            "below_threshold":    True,
+            "failed_at":          None,
+        }
 
         # ── Orchestrator macro veto check ─────────────────────
         # If macro conditions are hostile, block new trades entirely
@@ -400,6 +417,14 @@ class ConfluenceScorer:
                 )
                 return None
 
+        _total_dir_w = long_weight_sum + short_weight_sum
+        _dom_val = abs(long_weight_sum - short_weight_sum) / _total_dir_w if _total_dir_w > 0 else 0.0
+        self._last_diagnostics["direction_split"] = {
+            "long":      round(long_weight_sum, 4),
+            "short":     round(short_weight_sum, 4),
+            "dominance": round(_dom_val, 4),
+        }
+
         if long_weight_sum >= short_weight_sum:
             active_signals = long_signals
             side = "buy"
@@ -407,10 +432,27 @@ class ConfluenceScorer:
             active_signals = short_signals
             side = "sell"
 
+        self._last_diagnostics["dominant_side"] = side
+
+        # ── Correlation dampening ─────────────────────────────
+        # Reduce effective weight of models that belong to the same
+        # correlation cluster (e.g. trend + momentum_breakout both use
+        # price-momentum indicators — double-counting inflates confidence).
+        # Factor: 1/sqrt(N) where N = cluster members that fired.
+        # Non-fatal; falls back to factor=1.0 on any error.
+        _damp_factors: dict[str, float] = {}
+        try:
+            from core.analytics.correlation_dampener import get_dampening_factors
+            _fired_names = [s.model_name for s in active_signals]
+            _damp_factors = get_dampening_factors(_fired_names)
+        except Exception as _damp_exc:
+            logger.debug("ConfluenceScorer: correlation dampener error (non-fatal): %s", _damp_exc)
+
         # ── Weighted score ────────────────────────────────────
         total_weight = 0.0
         for s in active_signals:
             w = _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name))
+            w *= _damp_factors.get(s.model_name, 1.0)          # apply dampening
             if w == 0.0 and s.model_name not in MODEL_WEIGHTS:
                 logger.debug("ConfluenceScorer: unknown model '%s' excluded from scoring", s.model_name)
             total_weight += w
@@ -418,10 +460,33 @@ class ConfluenceScorer:
             return None
 
         weighted_score = sum(
-            (_get_adaptive_weight(s.model_name, _get_model_weight(s.model_name)) / total_weight) * s.strength
+            (
+                _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name))
+                * _damp_factors.get(s.model_name, 1.0)
+                / total_weight
+            ) * s.strength
             for s in active_signals
             if _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name)) > 0.0
         ) if total_weight > 0 else 0.0
+
+        # ── Populate per-model diagnostics ────────────────────────────
+        _pm_diag: dict = {}
+        for _ds in active_signals:
+            _dw = (
+                _get_adaptive_weight(_ds.model_name, _get_model_weight(_ds.model_name))
+                * _damp_factors.get(_ds.model_name, 1.0)
+            )
+            _dc = (_dw / total_weight * _ds.strength) if total_weight > 0 else 0.0
+            _pm_diag[_ds.model_name] = {
+                "weight":         round(_dw, 4),
+                "strength":       round(_ds.strength, 3),
+                "direction":      _ds.direction,
+                "contribution":   round(_dc, 4),
+                "damp_factor":    round(_damp_factors.get(_ds.model_name, 1.0), 3),
+            }
+        self._last_diagnostics["per_model"]         = _pm_diag
+        self._last_diagnostics["raw_score"]         = round(weighted_score, 4)
+        self._last_diagnostics["damp_factors"]      = {m: round(f, 3) for m, f in _damp_factors.items()}
 
         # ── Dynamic threshold adjustment ───────────────────────────────
         dynamic_enabled = _s.get("dynamic_confluence.enabled", True)
@@ -468,11 +533,45 @@ class ConfluenceScorer:
             weighted_score,
         )
 
+        # ── Phase 4: OI + Liquidation score modifiers (non-fatal) ─────────
+        # Independent ablation: set oi_signal.oi_modifier_enabled / liq_modifier_enabled
+        # to false in config to disable each component individually.
+        # Per-fire INFO logs emitted inside get_oi_modifier / get_liquidation_modifier.
+        _pre_modifier_score = weighted_score
+        try:
+            if _s.get("oi_signal.enabled", True):
+                from core.signals.oi_signal import get_oi_modifier, get_liquidation_modifier
+                _oi_mod, _oi_reason = get_oi_modifier(symbol=symbol, direction=side)
+                _liq_mod, _liq_reason = get_liquidation_modifier(symbol=symbol, direction=side)
+                _total_mod = _oi_mod + _liq_mod
+                if abs(_total_mod) > 0.001:
+                    _score_before = weighted_score
+                    weighted_score = max(0.0, min(1.0, weighted_score + _total_mod))
+                    logger.info(
+                        "ConfluenceScorer %s: OI/Liq modifier %+.3f "
+                        "(oi=%+.3f '%s' | liq=%+.3f '%s') "
+                        "score %.3f → %.3f",
+                        symbol, _total_mod,
+                        _oi_mod, _oi_reason,
+                        _liq_mod, _liq_reason,
+                        _score_before, weighted_score,
+                    )
+                    # Record in diagnostics for rationale panel
+                    self._last_diagnostics["oi_modifier"] = round(_total_mod, 4)
+                    self._last_diagnostics["oi_reason"] = _oi_reason
+                    self._last_diagnostics["liq_reason"] = _liq_reason
+        except Exception as _oi_exc:
+            logger.debug("ConfluenceScorer: OI modifier error (non-fatal): %s", _oi_exc)
+
+        self._last_diagnostics["effective_threshold"] = round(effective_threshold, 4)
+        self._last_diagnostics["below_threshold"] = weighted_score < effective_threshold
+
         if weighted_score < effective_threshold:
             logger.debug(
                 "Score %.3f below threshold %.3f — no candidate",
                 weighted_score, effective_threshold,
             )
+            self._last_diagnostics["failed_at"] = "below_threshold"
             return None
 
         # ── Synthesize entry/stop/target from signals ─────────
@@ -496,21 +595,49 @@ class ConfluenceScorer:
         stop_loss_price   = primary.stop_loss
         take_profit_price = primary.take_profit
 
-        # ── Position sizing by confidence (Kelly-based) ──────────
-        # Dynamic ATR/Kelly-based position sizing
-        atr_for_sizing = atr if atr and atr > 0 else (entry_price * 0.008 if entry_price else 1.0)
+        # ── Position sizing — Risk-based (Study 4 production config) ──
+        # Uses exact stop price from primary model for precision.
+        # Capital is read from paper_executor if available, else uses base proxy.
         entry_for_sizing = entry_price if entry_price and entry_price > 0 else 1.0
-        base_size = float(_s.get('execution.base_size_usdt', BASE_SIZE_USDT))
-        logger.debug("ConfluenceScorer: %s — calling PositionSizer.calculate()", symbol)
-        position_size = self._sizer.calculate(
-            available_capital_usdt=base_size * 100,  # treat base_size*100 as proxy capital
-            atr_value=atr_for_sizing,
-            entry_price=entry_for_sizing,
-            score=weighted_score,
-            regime=regime,
-            drawdown_pct=0.0,
-        )
-        logger.debug("ConfluenceScorer: %s — PositionSizer returned size=%.2f", symbol, position_size)
+        try:
+            from core.execution.paper_executor import get_paper_executor
+            _pe = get_paper_executor()
+            _capital = _pe._capital  # current compounding capital
+        except Exception:
+            _capital = float(_s.get("scanner.capital_usdt", 100_000.0))
+
+        risk_pct = float(_s.get("risk_engine.risk_pct_per_trade", 0.75))
+
+        try:
+            from config.settings import settings as _s2
+            sizing_mode = _s2.get("risk_engine.sizing_mode", "risk_based")
+        except Exception:
+            sizing_mode = "risk_based"
+
+        if sizing_mode == "risk_based" and stop_loss_price and stop_loss_price > 0 and entry_for_sizing > 0:
+            position_size = self._sizer.calculate_risk_based(
+                capital_usdt = _capital,
+                entry_price  = entry_for_sizing,
+                stop_price   = stop_loss_price,
+                risk_pct     = risk_pct,
+                regime       = regime,
+            )
+            logger.info(
+                "ConfluenceScorer: %s risk-based size=%.2f USDT (capital=%.0f, risk=%.2f%%, stop_dist=%.6f)",
+                symbol, position_size, _capital, risk_pct, abs(entry_for_sizing - stop_loss_price),
+            )
+        else:
+            # Fallback to Kelly when stop price unavailable
+            atr_for_sizing = atr if atr and atr > 0 else (entry_for_sizing * 0.008)
+            position_size = self._sizer.calculate(
+                available_capital_usdt=_capital,
+                atr_value=atr_for_sizing,
+                entry_price=entry_for_sizing,
+                score=weighted_score,
+                regime=regime,
+                drawdown_pct=0.0,
+            )
+            logger.debug("ConfluenceScorer: %s — Kelly fallback size=%.2f USDT", symbol, position_size)
 
         # ── Order expiry (5 candles in primary TF) ────────────
         tf_min  = TF_MINUTES.get(timeframe, 60)

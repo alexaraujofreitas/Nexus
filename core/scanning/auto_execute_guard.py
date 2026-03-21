@@ -25,13 +25,14 @@ TF_SECONDS: dict[str, int] = {
 }
 
 # Rejection reason codes returned by check_candidate()
-REJECT_NO_SIGNAL     = "no_signal"
-REJECT_STALE         = "stale_age"
-REJECT_COOLDOWN      = "cooldown"
-REJECT_DUPLICATE     = "duplicate_symbol"
+REJECT_NO_SIGNAL      = "no_signal"
+REJECT_STALE          = "stale_age"
+REJECT_COOLDOWN       = "cooldown"
+REJECT_DUPLICATE      = "duplicate_symbol"
 REJECT_POSITION_LIMIT = "position_limit"
-REJECT_DRAWDOWN_HALT = "drawdown_halt"
-PASS                 = "pass"
+REJECT_DRAWDOWN_HALT  = "drawdown_halt"
+REJECT_PORTFOLIO_CORR = "portfolio_correlation"
+PASS                  = "pass"
 
 
 class AutoExecuteState:
@@ -178,6 +179,23 @@ def check_candidate(
     if _has_duplicate_condition(candidate, open_positions):
         return REJECT_DUPLICATE
 
+    # ── Portfolio correlation guard ───────────────────────────────
+    # Block if too many correlated same-direction positions are already open.
+    try:
+        from core.analytics.portfolio_guard import get_portfolio_guard
+        _pg_factor, _pg_reason = get_portfolio_guard().get_correlation_factor(
+            symbol=sym,
+            direction=candidate.get("side", "buy"),
+            open_positions=open_positions,
+        )
+        if _pg_factor <= 0.0:
+            logger.info("AutoExecuteGuard: REJECTED %s — %s", sym, _pg_reason)
+            return REJECT_PORTFOLIO_CORR
+        # Store the factor in the candidate dict for the caller to apply to size
+        candidate["portfolio_corr_factor"] = _pg_factor
+    except Exception as _pg_exc:
+        logger.debug("AutoExecuteGuard: portfolio guard error (non-fatal): %s", _pg_exc)
+
     if not candidate_age_ok(candidate, timeframe):
         return REJECT_STALE
 
@@ -202,6 +220,13 @@ def run_batch(
     Evaluate the full batch of candidates and return those that should be
     auto-executed.  Updates *state* (record_execution) for each approved one.
     Callers should still call state.reset_if_new_day() before invoking this.
+
+    Symbol Priority & Allocation:
+        Before the per-candidate loop the batch is re-ranked by
+        adjusted_score = base_score × symbol_weight (from SymbolAllocator).
+        This ensures higher-priority symbols are evaluated — and therefore
+        approved — first when the batch is otherwise tied.
+        Ranking only; no signals, sizing, or risk parameters are modified.
 
     Limit: at most ONE approved candidate per PAIR per scan cycle.
     Multiple pairs can each get one trade in the same cycle.
@@ -230,6 +255,17 @@ def run_batch(
 
     # Roll over daily counter / cooldowns when the date changes
     state.reset_if_new_day()
+
+    # ── Symbol Priority Ranking ───────────────────────────────────────────────
+    # Re-rank candidates by adjusted_score = base_score × symbol_weight so that
+    # higher-priority symbols are evaluated first in the approval loop below.
+    # This is a RANKING ONLY operation — scores and risk params are untouched.
+    try:
+        from core.analytics.symbol_allocator import get_allocator
+        candidates = get_allocator().rank_candidates(list(candidates))
+    except Exception as _alloc_exc:
+        logger.debug("AutoExecuteGuard: symbol allocator error (non-fatal): %s", _alloc_exc)
+    # ─────────────────────────────────────────────────────────────────────────
 
     eligible: list[dict] = []
     # Track positions added within this batch for condition dedup
@@ -271,8 +307,13 @@ def run_batch(
                 "regime":       c.get("regime", ""),
             })
             logger.info(
-                "AutoExecuteGuard: APPROVED %s %s (score=%.3f)",
-                sym, c.get("side", "?"), c.get("score", 0.0),
+                "AutoExecuteGuard: APPROVED %s %s "
+                "(base_score=%.3f weight=%.2f adj_score=%.3f)",
+                sym,
+                c.get("side", "?"),
+                c.get("score", 0.0),
+                c.get("symbol_weight", 1.0),
+                c.get("adjusted_score", c.get("score", 0.0)),
             )
         elif verdict == REJECT_POSITION_LIMIT:
             logger.info(

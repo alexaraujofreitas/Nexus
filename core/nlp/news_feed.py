@@ -33,7 +33,9 @@ _HEADERS = {
 _RSS_FEEDS = [
     ("CoinDesk",       "https://www.coindesk.com/arc/outboundfeeds/rss/",  True),
     ("Cointelegraph",  "https://cointelegraph.com/rss",                     True),
-    ("The Block",      "https://www.theblock.co/rss.xml",                   True),
+    # The Block removed: theblock.co/rss.xml returns malformed XML on every request
+    # (not well-formed at offset 2:751). Removing saves ~1s of wasted fetch time per
+    # scan cycle. Re-add if The Block fixes their feed.
     ("Decrypt",        "https://decrypt.co/feed",                           True),
     ("Bitcoin Magazine","https://bitcoinmagazine.com/feed",                  True),
 ]

@@ -1,19 +1,23 @@
 # ============================================================
 # NEXUS TRADER — BTC-First Architecture Module
 #
-# Implements BTC prioritization across the entire signal pipeline:
+# Implements BTC prioritization across the signal pipeline:
 #
 #   1. Symbol priority scoring — BTC always gets highest weight
 #   2. Regime-gated universe filter — BTC regime gates alt entries
-#   3. Position sizing multiplier — BTC gets larger size allocation
-#   4. Signal confidence boost — BTC signals get confidence bonus
-#   5. Alt-entry gate — require BTC regime confirmation before alts
+#   3. Alt-entry gate — require BTC regime confirmation before alts
+#
+# Removed (Session 25):
+#   - BTC_SIZE_MULTIPLIER: execution-layer BTC size override removed.
+#     SymbolAllocator is the single allocation mechanism; position sizing
+#     is determined entirely by PositionSizer output and symbol weights.
+#   - adjust_confidence(): was never called in the production scan path.
 #
 # Design principles:
 #   - BTC is always watched/scanned regardless of watchlist
 #   - BTC/USDT regime is the primary market regime proxy
 #   - Alt signals require BTC regime alignment (configurable)
-#   - BTC position sizing uses 1.5x multiplier vs alts
+#   - Allocation priority is set exclusively via SymbolAllocator weights
 #
 # Publishes: Topics.BTC_PRIORITY_UPDATE on regime changes
 # ============================================================
@@ -30,10 +34,6 @@ logger = logging.getLogger(__name__)
 BTC_SYMBOL        = "BTC/USDT"
 BTC_COINGECKO_ID  = "bitcoin"
 BTC_BINANCE_SYM   = "BTCUSDT"
-
-# Multipliers relative to base allocation
-BTC_SIZE_MULTIPLIER   = 1.5   # BTC gets 50% more capital
-BTC_CONFIDENCE_BOOST  = 0.05  # +5% confidence on all BTC signals
 
 # Alt-entry gate modes
 ALT_GATE_DISABLED    = "disabled"     # alts always allowed
@@ -53,9 +53,10 @@ class BTCPriorityFilter:
 
     Used by:
       - MarketScanner: to prioritize BTC scan + gate alt entries
-      - PositionSizer: to apply BTC size multiplier
-      - OrchestatorEngine: to apply confidence boost on BTC signals
       - RegimePage: to publish BTC regime as primary market regime
+
+    NOTE: Position sizing overrides and confidence boosts were removed in
+    Session 25.  SymbolAllocator is the sole allocation mechanism.
     """
 
     def __init__(self):
@@ -111,23 +112,14 @@ class BTCPriorityFilter:
             return 0.1
         return 0.5   # UNKNOWN
 
-    # ── Size multiplier ───────────────────────────────────────
+    # ── Size multiplier (stub — always 1.0) ──────────────────
+    # BTC_SIZE_MULTIPLIER was removed in Session 25. SymbolAllocator is the
+    # single allocation mechanism. This stub is retained only so any external
+    # call-sites don't crash; it returns 1.0 (no override) for all symbols.
 
-    def get_size_multiplier(self, symbol: str) -> float:
-        """Return position size multiplier for *symbol*."""
-        base = symbol.split("/")[0].upper()
-        if base == "BTC":
-            return BTC_SIZE_MULTIPLIER
+    def get_size_multiplier(self, symbol: str) -> float:  # noqa: ARG002
+        """Always returns 1.0. BTC size override was removed (Session 25)."""
         return 1.0
-
-    # ── Confidence adjustment ─────────────────────────────────
-
-    def adjust_confidence(self, symbol: str, confidence: float) -> float:
-        """Apply BTC confidence boost if applicable."""
-        base = symbol.split("/")[0].upper()
-        if base == "BTC":
-            return min(1.0, confidence + BTC_CONFIDENCE_BOOST)
-        return confidence
 
     # ── Alt-entry gate ────────────────────────────────────────
 

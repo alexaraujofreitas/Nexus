@@ -202,6 +202,447 @@ SIGNAL_COLORS = {
     "neutral": "#8899AA",
 }
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rationale Panel HTML builder
+# Converts the per-symbol candidate dict (including diagnostics) into a rich
+# HTML document displayed in the QTextEdit rationale panel.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Model human-readable names
+_MODEL_DISPLAY_NAMES: dict[str, str] = {
+    "trend":              "Trend Model",
+    "mean_reversion":     "Mean Reversion",
+    "momentum_breakout":  "Momentum Breakout",
+    "vwap_reversion":     "VWAP Reversion",
+    "liquidity_sweep":    "Liquidity Sweep",
+    "funding_rate":       "Funding Rate",
+    "order_book":         "Order Book",
+    "sentiment":          "Sentiment",
+    "rl_ensemble":        "RL Ensemble",
+    "orchestrator":       "Orchestrator",
+}
+
+# Regime context descriptions (brief, conversational)
+_REGIME_CONTEXT: dict[str, str] = {
+    "bull_trend":            "Sustained upward price movement — trend-following models have highest edge.",
+    "bear_trend":            "Sustained downward price movement — short-bias models have highest edge.",
+    "ranging":               "Price oscillating between levels — mean-reversion models preferred.",
+    "volatility_expansion":  "Volatility spiking outward — breakout/momentum models active.",
+    "volatility_compression":"Volatility contracting — expect breakout soon; reversion models active.",
+    "uncertain":             "Directional signal is weak — all model activation weights are reduced.",
+}
+
+# Model 'no signal' reason explanations per regime
+_MODEL_REGIME_HINTS: dict[str, dict[str, str]] = {
+    "trend": {
+        "ranging":              "ADX insufficient for ranging regime — needs trending conditions.",
+        "uncertain":            "Evaluated but conditions not met (ADX threshold or EMA alignment).",
+        "volatility_expansion": "Evaluated in volatility expansion — EMA/ADX check not met.",
+        "default":              "EMA crossover or ADX threshold not met this candle.",
+    },
+    "momentum_breakout": {
+        "ranging":              "Low-volatility ranging markets suppress breakout signals.",
+        "uncertain":            "Evaluated — Bollinger/ATR squeeze condition not met.",
+        "default":              "Bollinger Band or ATR breakout threshold not met.",
+    },
+    "vwap_reversion": {
+        "bull_trend":           "Strong trend reduces VWAP reversion signal probability.",
+        "bear_trend":           "Strong trend reduces VWAP reversion signal probability.",
+        "default":              "Price not sufficiently deviated from VWAP this candle.",
+    },
+    "funding_rate": {
+        "default":              "Funding rate not extreme enough to trigger contrarian signal.",
+    },
+    "order_book": {
+        "default":              "Order book imbalance below threshold.",
+    },
+    "sentiment": {
+        "default":              "Insufficient sentiment signal from news analysis.",
+    },
+    "rl_ensemble": {
+        "default":              "RL model confidence below activation threshold.",
+    },
+}
+
+
+def _regime_model_hint(model_name: str, regime: str) -> str:
+    """Return a short reason why a model didn't fire in this regime."""
+    hints = _MODEL_REGIME_HINTS.get(model_name, {})
+    return hints.get(regime, hints.get("default", "Conditions not met this candle."))
+
+
+def _fmt_age(seconds) -> str:
+    """Format candle age as human-readable string."""
+    if seconds is None:
+        return "Unknown"
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s ago"
+    if s < 3600:
+        return f"{s // 60}m {s % 60}s ago"
+    return f"{s // 3600}h {(s % 3600) // 60}m ago"
+
+
+def _build_rationale_html(c: dict) -> str:
+    """
+    Build full-transparency HTML rationale for the IDSS analysis panel.
+    Uses actual pipeline state — no hardcoded messages.
+    """
+    # ── Core candidate fields ──────────────────────────────────────────
+    sym          = c.get("symbol", "?")
+    side_raw     = c.get("side", "")
+    tf           = c.get("timeframe", "1h")
+    is_approved  = c.get("is_approved", False)
+    status       = c.get("status", "")
+    score_val    = float(c.get("score") or 0.0)
+    entry        = c.get("entry_price")
+    stop_p       = float(c.get("stop_loss_price") or 0.0)
+    tp_p         = float(c.get("take_profit_price") or 0.0)
+    rr           = float(c.get("risk_reward_ratio") or 0.0)
+    size         = float(c.get("position_size_usdt") or 0.0)
+    models_fired = c.get("models_fired") or []
+    regime_raw   = c.get("regime", "")
+    htf_regime   = c.get("higher_tf_regime", "")
+    no_signal    = c.get("_no_signal", False)
+
+    # ── Diagnostics dict ──────────────────────────────────────────────
+    diag          = c.get("diagnostics") or {}
+    regime_conf   = float(diag.get("regime_confidence") or 0.0)
+    regime_probs  = diag.get("regime_probs") or {}
+    candle_age_s  = diag.get("candle_age_s")
+    candle_count  = int(diag.get("candle_count") or 0)
+    candle_ts     = diag.get("candle_ts_str", "")
+    all_models    = diag.get("all_model_names") or []
+    m_disabled    = diag.get("models_disabled") or []
+    m_no_signal   = diag.get("models_no_signal") or []
+    m_fired       = diag.get("models_fired") or models_fired
+    raw_score     = float(diag.get("raw_score") or score_val)
+    eff_thresh    = float(diag.get("effective_threshold") or 0.45)
+    per_model     = diag.get("per_model") or {}
+    dir_split     = diag.get("direction_split") or {}
+
+    # ── Derived display values ─────────────────────────────────────────
+    side_label  = "LONG" if side_raw == "buy" else ("SHORT" if side_raw == "sell" else "—")
+    side_color  = "#00CC77" if side_raw == "buy" else ("#FF3355" if side_raw == "sell" else "#8899AA")
+    regime_lbl  = REGIME_LABELS.get(regime_raw, regime_raw.replace("_", " ").title() if regime_raw else "Unknown")
+    regime_clr  = REGIME_COLORS.get(regime_raw, "#8899AA")
+    score_pct   = f"{raw_score:.1%}" if raw_score else "—"
+    thresh_pct  = f"{eff_thresh:.1%}"
+
+    # ── CSS shared across all sections ────────────────────────────────
+    S = {
+        "bg":       "#080C16",
+        "hdr_txt":  "#E8EBF0",
+        "dim":      "#6A7E99",
+        "bright":   "#C0D0E0",
+        "green":    "#00CC77",
+        "red":      "#FF3355",
+        "amber":    "#FFB300",
+        "blue":     "#1E90FF",
+        "label":    "color:#6A7E99; font-size:11px; font-weight:700; letter-spacing:0.08em;",
+        "value":    "color:#C0D0E0; font-size:13px;",
+        "mono":     "font-family:'Courier New',monospace; font-size:12px; color:#C0D0E0;",
+    }
+
+    def _sec(title: str) -> str:
+        return (f'<div style="color:#4A6A8A; font-size:10px; font-weight:700; '
+                f'letter-spacing:0.12em; text-transform:uppercase; '
+                f'margin-top:12px; margin-bottom:4px; '
+                f'border-bottom:1px solid #1A2332; padding-bottom:2px;">'
+                f'{title}</div>')
+
+    def _row(label: str, value_html: str) -> str:
+        return (f'<div style="display:flex; margin-bottom:3px;">'
+                f'<span style="color:#6A7E99; font-size:12px; min-width:110px; flex-shrink:0;">{label}</span>'
+                f'<span style="color:#C0D0E0; font-size:12px;">{value_html}</span>'
+                f'</div>')
+
+    parts: list[str] = []
+
+    # ════════════════════════════════════════════════════════════════
+    # HEADER — symbol + side + timeframe
+    # ════════════════════════════════════════════════════════════════
+    parts.append(
+        f'<div style="margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid #1A2332;">'
+        f'<span style="font-size:16px; font-weight:700; color:#FFFFFF;">{sym}</span>'
+        + (f'&nbsp;&nbsp;<span style="font-size:13px; font-weight:700; color:{side_color}; '
+           f'background:{side_color}22; padding:2px 8px; border-radius:3px;">{side_label}</span>' if side_raw else '')
+        + (f'&nbsp;<span style="font-size:12px; color:#4A6A8A;">· {tf}</span>' if tf else '')
+        + f'</div>'
+    )
+
+    # ════════════════════════════════════════════════════════════════
+    # STATUS
+    # ════════════════════════════════════════════════════════════════
+    parts.append(_sec("STATUS"))
+    if is_approved:
+        status_badge  = f'<b style="color:{S["green"]}; font-size:13px;">✓ APPROVED</b>'
+        status_detail = (f'Score <b style="color:{S["green"]}">{score_pct}</b> '
+                         f'&ge; threshold <b style="color:{S["amber"]}">{thresh_pct}</b>')
+    elif status in ("No signal", "No data", "Stale data", "Filtered"):
+        _badge_clr    = S["dim"]
+        status_badge  = f'<b style="color:{_badge_clr}; font-size:13px;">✗ {status.upper()}</b>'
+        status_detail = {
+            "No signal":  "No sub-model triggered signal conditions this candle.",
+            "No data":    "Insufficient OHLCV data returned from exchange.",
+            "Stale data": "Latest candle is older than 3× the timeframe — data may be stale.",
+            "Filtered":   "Symbol did not pass universe filter (liquidity / spread / ATR).",
+        }.get(status, status)
+    elif status == "Below threshold":
+        score_gap  = eff_thresh - raw_score
+        status_badge  = f'<b style="color:{S["amber"]}; font-size:13px;">✗ BELOW THRESHOLD</b>'
+        status_detail = (f'Score <b style="color:{S["amber"]}">{score_pct}</b> '
+                         f'vs threshold <b style="color:{S["amber"]}">{thresh_pct}</b> '
+                         f'&mdash; gap: <b style="color:{S["red"]}">{score_gap:.1%}</b>')
+    else:
+        # Risk gate rejection
+        status_badge  = f'<b style="color:{S["red"]}; font-size:13px;">✗ REJECTED</b>'
+        status_detail = f'<span style="color:#FF6680;">{status}</span>'
+
+    parts.append(f'<div style="margin-bottom:6px;">{status_badge}'
+                 f'&nbsp;&nbsp;<span style="color:#8899AA; font-size:12px;">{status_detail}</span></div>')
+
+    # ════════════════════════════════════════════════════════════════
+    # REGIME
+    # ════════════════════════════════════════════════════════════════
+    parts.append(_sec("REGIME"))
+    regime_conf_pct = f"{regime_conf:.0%}" if regime_conf else "?"
+    regime_ctx  = _REGIME_CONTEXT.get(regime_raw, "")
+    parts.append(
+        f'<div style="margin-bottom:4px;">'
+        f'<span style="color:{regime_clr}; font-weight:700; font-size:13px;">{regime_lbl}</span>'
+        f'&nbsp;&nbsp;<span style="color:#6A7E99; font-size:12px;">confidence {regime_conf_pct}</span>'
+        f'</div>'
+    )
+    if regime_ctx:
+        parts.append(f'<div style="color:#7A8FA8; font-size:11px; margin-bottom:4px; font-style:italic;">{regime_ctx}</div>')
+
+    # Top regime probabilities (show top-3 if available)
+    if regime_probs:
+        top3 = sorted(regime_probs.items(), key=lambda x: x[1], reverse=True)[:3]
+        prob_parts = []
+        for rk, rv in top3:
+            rc = REGIME_COLORS.get(rk, "#8899AA")
+            rl = REGIME_LABELS.get(rk, rk.replace("_", " ").title())
+            prob_parts.append(f'<span style="color:{rc};">{rl} {rv:.0%}</span>')
+        parts.append(
+            f'<div style="font-size:11px; color:#6A7E99; margin-bottom:2px;">'
+            f'Regime distribution: {" &nbsp;|&nbsp; ".join(prob_parts)}</div>'
+        )
+
+    # HTF regime alignment
+    if htf_regime:
+        htf_lbl = REGIME_LABELS.get(htf_regime, htf_regime.replace("_", " ").title())
+        htf_clr = REGIME_COLORS.get(htf_regime, "#8899AA")
+        # Alignment check
+        _htf_aligned = (side_raw == "buy" and "bear" not in htf_regime) or \
+                       (side_raw == "sell" and "bull" not in htf_regime) or \
+                       (not side_raw)
+        _align_str = f'<span style="color:{S["green"]};">✓ Aligned</span>' if _htf_aligned else \
+                     f'<span style="color:{S["red"]};">✗ Conflict</span>'
+        parts.append(
+            f'<div style="font-size:11px; color:#6A7E99; margin-bottom:2px;">'
+            f'4h HTF regime: <span style="color:{htf_clr};">{htf_lbl}</span>'
+            f'&nbsp;&nbsp;{_align_str}</div>'
+        )
+
+    # ════════════════════════════════════════════════════════════════
+    # MODEL BREAKDOWN
+    # ════════════════════════════════════════════════════════════════
+    parts.append(_sec("MODEL BREAKDOWN"))
+
+    # Build ordered list: fired first, then no-signal, then disabled
+    # Use all_models if available, otherwise fall back to fired+disabled+no_signal
+    _ordered_models = (
+        list(all_models) if all_models
+        else list(m_fired) + [m for m in m_no_signal if m not in m_fired]
+                          + [m for m in m_disabled if m not in m_fired and m not in m_no_signal]
+    )
+    # Deduplicate preserving order
+    _seen: set = set()
+    _model_order: list = []
+    for _mn in _ordered_models:
+        if _mn not in _seen:
+            _model_order.append(_mn)
+            _seen.add(_mn)
+    # If nothing available, show a generic placeholder
+    if not _model_order:
+        parts.append('<div style="color:#4A6A8A; font-size:12px; font-style:italic;">No model data available.</div>')
+    else:
+        for mname in _model_order:
+            mdisplay = _MODEL_DISPLAY_NAMES.get(mname, mname.replace("_", " ").title())
+            if mname in m_disabled:
+                # Disabled by config
+                parts.append(
+                    f'<div style="margin-bottom:3px; font-size:12px;">'
+                    f'<span style="color:#2A3A52;">—&nbsp;</span>'
+                    f'<span style="color:#2A4A3A;">{mdisplay}</span>'
+                    f'<span style="color:#1A3A2A; font-size:11px;">&nbsp;[DISABLED by config]</span>'
+                    f'</div>'
+                )
+            elif mname in m_fired or mname in per_model:
+                # Model fired — show direction, strength, contribution
+                pm    = per_model.get(mname, {})
+                dirs  = pm.get("direction", "")
+                st    = pm.get("strength", 0.0)
+                cont  = pm.get("contribution", 0.0)
+                wt    = pm.get("weight", 0.0)
+                d_clr = "#00CC77" if dirs == "long" else ("#FF3355" if dirs == "short" else "#8899AA")
+                d_lbl = dirs.upper() if dirs else "—"
+                parts.append(
+                    f'<div style="margin-bottom:3px; font-size:12px;">'
+                    f'<span style="color:{S["green"]};">✓&nbsp;</span>'
+                    f'<span style="color:#D0E0F0; font-weight:600;">{mdisplay}</span>'
+                    f'&nbsp;<span style="color:{d_clr}; font-size:11px;">[{d_lbl}]</span>'
+                    f'&nbsp;<span style="color:#8899AA; font-size:11px;">'
+                    f'str {st:.2f} &middot; wt {wt:.2f} &middot; contrib {cont:.1%}'
+                    f'</span>'
+                    f'</div>'
+                )
+            else:
+                # Model ran but no signal
+                hint = _regime_model_hint(mname, regime_raw)
+                parts.append(
+                    f'<div style="margin-bottom:3px; font-size:12px;">'
+                    f'<span style="color:#3A5A7A;">○&nbsp;</span>'
+                    f'<span style="color:#4A6A8A;">{mdisplay}</span>'
+                    f'<span style="color:#3A4A5A; font-size:11px;">&nbsp;— {hint}</span>'
+                    f'</div>'
+                )
+
+    # Direction split (only if meaningful)
+    if dir_split and (dir_split.get("long", 0) > 0 or dir_split.get("short", 0) > 0):
+        _dlong  = dir_split.get("long", 0)
+        _dshort = dir_split.get("short", 0)
+        _ddom   = dir_split.get("dominance", 0)
+        parts.append(
+            f'<div style="font-size:11px; color:#5A7A9A; margin-top:4px;">'
+            f'Direction weight: <span style="color:#00CC77;">Long {_dlong:.3f}</span>'
+            f' &nbsp;|&nbsp; <span style="color:#FF3355;">Short {_dshort:.3f}</span>'
+            f' &nbsp;|&nbsp; Dominance {_ddom:.0%}'
+            f'</div>'
+        )
+
+    # ════════════════════════════════════════════════════════════════
+    # TRADE SETUP (approved) or WHY NO TRADE (rejected/no signal)
+    # ════════════════════════════════════════════════════════════════
+    if is_approved and entry and entry > 0:
+        parts.append(_sec("TRADE SETUP"))
+        parts.append(
+            f'<div style="font-size:12px; margin-bottom:3px;">'
+            f'<span style="color:#6A7E99;">Entry&nbsp;</span>'
+            f'<span style="color:#E8EBF0; font-weight:600;">{_fmt_price(entry)}</span>'
+            f'&nbsp;&nbsp;'
+            f'<span style="color:#6A7E99;">Stop&nbsp;</span>'
+            f'<span style="color:#FF6680;">{_fmt_price(stop_p)}</span>'
+            f'&nbsp;&nbsp;'
+            f'<span style="color:#6A7E99;">Target&nbsp;</span>'
+            f'<span style="color:#00CC77;">{_fmt_price(tp_p)}</span>'
+            f'</div>'
+        )
+        parts.append(
+            f'<div style="font-size:12px;">'
+            f'<span style="color:#6A7E99;">R:R&nbsp;</span>'
+            f'<span style="color:#FFB300; font-weight:600;">{rr:.2f}×</span>'
+            f'&nbsp;&nbsp;'
+            f'<span style="color:#6A7E99;">Est. Size&nbsp;</span>'
+            f'<span style="color:#C0D0E0;">${size:.0f} USDT</span>'
+            f'</div>'
+        )
+    elif status == "Below threshold":
+        parts.append(_sec("WHY NO TRADE"))
+        score_gap  = eff_thresh - raw_score
+        fired_count = len(m_fired)
+        _gap_clr = S["amber"] if score_gap < 0.1 else S["red"]
+        parts.append(
+            f'<div style="font-size:12px; margin-bottom:4px; color:#8899AA;">'
+            f'Score <b style="color:{S["amber"]}">{raw_score:.1%}</b> needs to reach '
+            f'<b style="color:{S["amber"]}">{eff_thresh:.1%}</b> '
+            f'(gap: <b style="color:{_gap_clr}">{score_gap:.1%}</b>).'
+            f'</div>'
+        )
+        parts.append(_sec("WHAT NEEDS TO CHANGE"))
+        _need_parts = []
+        if fired_count == 1:
+            _need_parts.append("A second model firing in the same direction would increase confluence significantly.")
+        if regime_conf < 0.5:
+            _need_parts.append(f"Higher regime confidence (currently {regime_conf:.0%}) would lower the dynamic threshold.")
+        if score_gap < 0.08:
+            _need_parts.append("Score is very close — a slightly stronger signal from an active model may be sufficient.")
+        if regime_raw == "uncertain":
+            _need_parts.append("Clearer regime classification (e.g. ranging or bull_trend) would activate more models at full weight.")
+        if not _need_parts:
+            _need_parts.append("Wait for a stronger market impulse or regime shift to push signal strength above threshold.")
+        for _np in _need_parts:
+            parts.append(f'<div style="font-size:12px; color:#7A9ABB; margin-bottom:2px;">▸ {_np}</div>')
+
+    elif status in ("No signal", "Filtered", "No data", "Stale data"):
+        parts.append(_sec("WHAT NEEDS TO CHANGE"))
+        _status_advice = {
+            "No signal": (
+                f"Sub-models need clearer market conditions for regime <b style='color:{regime_clr}'>{regime_lbl}</b>. "
+                "A directional impulse (ADX rise, Bollinger squeeze break, VWAP deviation) "
+                "would trigger at least one model."
+            ),
+            "Filtered":   "Symbol did not pass the universe liquidity/spread filter. Volume or spread conditions need to improve.",
+            "No data":    "Exchange returned insufficient bars. Check connection and symbol availability.",
+            "Stale data": "Candle data is older than 3× the timeframe. The exchange or feed may be throttled.",
+        }
+        _adv = _status_advice.get(status, "Investigate the pipeline stage indicated in the STATUS field.")
+        parts.append(f'<div style="font-size:12px; color:#7A9ABB;">{_adv}</div>')
+
+    elif not is_approved and status:
+        # Risk gate rejection with specific reason
+        parts.append(_sec("WHY REJECTED"))
+        _rg_details = {
+            "EV gate":            "Expected value (win_prob × reward − loss_prob × risk) is below the minimum threshold of 0.05. Signal may not justify risk.",
+            "R:R floor":          f"Risk:Reward ratio {rr:.2f}× is below the minimum floor of 1.0. Stop may be too tight relative to target.",
+            "Portfolio heat":     "Portfolio is at maximum heat (6% capital at risk). No new trades until existing positions reduce.",
+            "MTF conflict":       f"Higher timeframe regime ({htf_regime or '4h'}) contradicts signal direction. Disable MTF confirmation to allow.",
+            "Correlation":        "This asset is too correlated with an existing open position.",
+        }
+        _found = False
+        for _key, _detail in _rg_details.items():
+            if _key.lower() in status.lower():
+                parts.append(f'<div style="font-size:12px; color:#8899AA; margin-bottom:2px;">{_detail}</div>')
+                _found = True
+                break
+        if not _found:
+            parts.append(f'<div style="font-size:12px; color:#8899AA;">{status}</div>')
+
+    # ════════════════════════════════════════════════════════════════
+    # DATA STATUS
+    # ════════════════════════════════════════════════════════════════
+    parts.append(_sec("DATA STATUS"))
+    _age_str = _fmt_age(candle_age_s)
+    _age_clr = S["green"] if candle_age_s is not None and candle_age_s < 120 else S["amber"]
+    _data_html = (
+        f'<span style="color:#6A7E99;">Last candle:</span> '
+        f'<span style="color:#B0C0D0;">{candle_ts or "—"}</span>'
+        f'&nbsp;&nbsp;'
+        f'<span style="color:#6A7E99;">Age:</span> '
+        f'<span style="color:{_age_clr};">{_age_str}</span>'
+        f'&nbsp;&nbsp;'
+        f'<span style="color:#6A7E99;">Bars:</span> '
+        f'<span style="color:#8899AA;">{candle_count or "—"}</span>'
+        f'&nbsp;&nbsp;'
+        f'<span style="color:#6A7E99;">TF:</span> '
+        f'<span style="color:#8899AA;">{tf}</span>'
+    )
+    parts.append(f'<div style="font-size:12px; margin-bottom:2px;">{_data_html}</div>')
+
+    # ════════════════════════════════════════════════════════════════
+    # Wrap in root div
+    # ════════════════════════════════════════════════════════════════
+    body = "\n".join(parts)
+    return (
+        f'<div style="background:#080C16; color:#C0D0E0; font-family:\'Segoe UI\',Arial,sans-serif; '
+        f'font-size:13px; line-height:1.55; padding:10px 12px;">'
+        f'{body}'
+        f'</div>'
+    )
+
 MIN_MCAP_OPTIONS: list[tuple[str, float]] = [
     ("Any market cap",  0),
     ("> $500M",         500e6),
@@ -1300,12 +1741,13 @@ class IDSSScannerTab(QWidget):
 
         self._rationale_txt = QTextEdit()
         self._rationale_txt.setReadOnly(True)
+        self._rationale_txt.setAcceptRichText(True)
         self._rationale_txt.setPlaceholderText(
-            "Select a candidate row above to view its full rationale…"
+            "Select a symbol row above to view full pipeline analysis…"
         )
         self._rationale_txt.setStyleSheet(
             "QTextEdit{background:#080C16;color:#C0D0E0;border:none;"
-            "font-size:13px;line-height:1.5;}"
+            "font-size:12px;}"
             "QScrollBar:vertical{width:6px;background:#0A0E1A;}"
             "QScrollBar::handle:vertical{background:#2A3A52;border-radius:3px;}"
         )
@@ -1521,32 +1963,22 @@ class IDSSScannerTab(QWidget):
     # ── candidate selection ─────────────────────────────────
     @Slot(dict)
     def _on_candidate_selected(self, candidate: dict):
-        sym     = candidate.get("symbol", "?")
-        side    = candidate.get("side", "?").upper()
-        regime  = REGIME_LABELS.get(candidate.get("regime", ""), "Unknown")
-        score   = candidate.get("score", 0.0)
-        models  = candidate.get("models_fired", [])
-        rr      = candidate.get("risk_reward_ratio", 0.0)
-        size    = candidate.get("position_size_usdt", 0.0)
-        entry   = candidate.get("entry_price")
-        stop_p  = candidate.get("stop_loss_price", 0.0)
-        tp      = candidate.get("take_profit_price", 0.0)
-        tf      = candidate.get("timeframe", "?")
-        rationale = candidate.get("rationale", "No rationale available.")
-        models_str = ", ".join(models) if models else "—"
-
-        lines = [
-            f"▸  {sym}  •  {side}  •  {regime}  •  TF: {tf}",
-            f"   Score: {score:.3f}   |   R:R: {rr:.2f}×   |   Size: ${size:.0f}   |   Models: {models_str}",
-            f"   Entry: {_fmt_price(entry) if entry else 'market'}   "
-            f"Stop: {_fmt_price(stop_p)}   Target: {_fmt_price(tp)}",
-            "",
-            rationale,
-        ]
-        self._rationale_txt.setPlainText("\n".join(lines))
+        # Build and display rich HTML rationale
+        try:
+            html = _build_rationale_html(candidate)
+            self._rationale_txt.setHtml(html)
+        except Exception as _exc:
+            logger.warning("IDSSScannerTab: rationale HTML build failed: %s", _exc)
+            # Fall back to plain text
+            sym   = candidate.get("symbol", "?")
+            score = candidate.get("score", 0.0)
+            self._rationale_txt.setPlainText(
+                f"{sym}  score={score:.3f}  status={candidate.get('status', '?')}"
+            )
 
         # Track selected candidate and enable/disable paper execute button
         no_signal = candidate.get("_no_signal", False)
+        models    = candidate.get("models_fired", [])
         self._selected_candidate = None if no_signal else candidate
         has_signal = (not no_signal) and bool(models)
         self._exec_paper_btn.setEnabled(has_signal)
@@ -1602,6 +2034,9 @@ class IDSSScannerTab(QWidget):
                 approved           = True,   # manually approved by user
                 expiry             = datetime.utcnow() + timedelta(hours=4),
             )
+            # Forward SymbolAllocator fields so paper_executor can log them
+            candidate.symbol_weight  = float(c.get("symbol_weight",  1.0) or 1.0)
+            candidate.adjusted_score = float(c.get("adjusted_score", c.get("score", 0.6)) or 0.6)
             ok = order_router.submit(candidate)
             if ok:
                 self._exec_status_lbl.setText(
@@ -1788,6 +2223,9 @@ class IDSSScannerTab(QWidget):
                 approved           = True,
                 expiry             = datetime.utcnow() + timedelta(hours=4),
             )
+            # Forward SymbolAllocator fields so paper_executor can log them
+            candidate.symbol_weight  = float(c.get("symbol_weight",  1.0) or 1.0)
+            candidate.adjusted_score = float(c.get("adjusted_score", c.get("score", 0.6)) or 0.6)
             ok = order_router.submit(candidate)
             if ok:
                 price_str = f"{entry:,.4f}" if entry else "market"

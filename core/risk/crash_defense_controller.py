@@ -98,6 +98,8 @@ class CrashDefenseController:
 
             self._current_tier = tier
             self._defensive_mode_active = True
+            if tier == "SYSTEMIC":
+                self._safe_mode_active = True   # diagnostic flag only — no auto-execution changes
 
             # Log actions
             log_entry = {
@@ -130,84 +132,68 @@ class CrashDefenseController:
             return actions_taken
 
     def _apply_defensive_tier1(self, actions: list[str]) -> None:
-        """Tier 1: Halt new longs, tighten stops, reduce size cap."""
-        try:
-            from core.execution.order_router import get_router
-            router = get_router()
-            # Disable auto-execution for longs
-            current = router.get_auto_exec_config()
-            if current.get("enabled"):
-                # Keep auto-exec but remove TRENDING_UP from whitelist
-                whitelist = current.get("regime_whitelist", [])
-                safe_whitelist = [r for r in whitelist if r not in ("TRENDING_UP", "RECOVERY")]
-                router.set_auto_execute(
-                    current.get("enabled", False),
-                    min_confidence=0.85,  # higher bar during defensive
-                    min_signal_strength=0.70,
-                    regime_whitelist=safe_whitelist if safe_whitelist else None,
-                )
-            actions.append("halt_new_longs: auto-exec confidence raised to 0.85")
-        except Exception as exc:
-            logger.debug("DefenseController tier1 router error: %s", exc)
-            actions.append("halt_new_longs: attempted (order_router unavailable)")
+        """
+        Tier 1: MONITOR-ONLY — log crash alert, do NOT auto-modify execution.
 
-        # Publish risk limit hit
+        Production hardening decision (Study 4 + Session 24):
+        Automatic execution intervention based on unvalidated crash scores caused
+        false positives during normal market volatility. The 10% drawdown circuit
+        breaker in PaperExecutor.submit() is the ONLY automatic execution block.
+        CrashDefense tiers are now diagnostic/notification only.
+        """
+        logger.warning(
+            "CrashDefense TIER-1 DEFENSIVE: crash score elevated. "
+            "Monitoring only — execution unchanged. "
+            "Review System Health > Crash Status for details."
+        )
         bus.publish(Topics.DRAWDOWN_ALERT, {
             "type":    "crash_detection",
             "tier":    "DEFENSIVE",
-            "message": "Crash detection activated — new long entries halted",
+            "message": "Crash score DEFENSIVE tier — monitor open positions",
         }, source="crash_defense")
-        actions.append("tighten_stops: trailing stop tightened to 1.5x ATR")
-        actions.append("reduce_size_cap: max position size reduced to 15%")
+        actions.append("MONITOR: crash score reached DEFENSIVE tier — no auto-intervention")
 
     def _apply_defensive_tier2(self, actions: list[str]) -> None:
-        """Tier 2: Partial long book reduction + trailing stops."""
-        try:
-            from core.execution.order_router import get_router
-            router = get_router()
-            # Fully disable auto-execution
-            router.set_auto_execute(
-                enabled=False,
-                min_confidence=0.95,
-                min_signal_strength=0.80,
-                regime_whitelist=[],
-            )
-            actions.append("auto_execute: disabled — manual confirmation required")
-        except Exception as exc:
-            logger.debug("DefenseController tier2 router error: %s", exc)
-
+        """Tier 2: HIGH_ALERT — monitor only. No automatic position changes."""
+        logger.warning(
+            "CrashDefense TIER-2 HIGH_ALERT: crash score high. "
+            "Monitoring only — review positions manually."
+        )
         bus.publish(Topics.RISK_LIMIT_HIT, {
             "type":    "crash_detection",
             "tier":    "HIGH_ALERT",
-            "message": "High alert — partial position reduction initiated",
+            "message": "Crash score HIGH_ALERT tier — review positions manually",
         }, source="crash_defense")
-        actions.append("partial_exit: close 50% of all long positions")
-        actions.append("trailing_stop: enabled at 1% from current price")
+        actions.append("MONITOR: crash score reached HIGH_ALERT tier — manual review recommended")
 
     def _apply_defensive_tier3(self, actions: list[str]) -> None:
-        """Tier 3: Full long book exit + read-only mode."""
+        """Tier 3: EMERGENCY — monitor only. No automatic position closure."""
+        logger.error(
+            "CrashDefense TIER-3 EMERGENCY: crash score critical. "
+            "Monitoring only — manual intervention required."
+        )
         bus.publish(Topics.RISK_LIMIT_HIT, {
             "type":    "crash_detection",
             "tier":    "EMERGENCY",
-            "message": "EMERGENCY: closing all long positions",
+            "message": "Crash score EMERGENCY tier — MANUAL intervention required",
             "severity": "critical",
         }, source="crash_defense")
-        actions.append("close_all_longs: all long positions closed")
-        actions.append("read_only_mode: no new trade entries permitted")
-        actions.append("notify_emergency: emergency notification dispatched")
+        actions.append("ALERT: crash score reached EMERGENCY tier — manual action required")
 
     def _apply_defensive_tier4(self, actions: list[str]) -> None:
-        """Tier 4: Close ALL positions + safe mode (systemic event)."""
-        self._safe_mode_active = True
+        """Tier 4: SYSTEMIC — monitor only. Log critical event, notify channels."""
+        logger.critical(
+            "CrashDefense TIER-4 SYSTEMIC: systemic crash score. "
+            "This is a monitoring alert only — no auto-trading changes. "
+            "Manually evaluate all open positions immediately."
+        )
         bus.publish(Topics.EMERGENCY_STOP, {
-            "reason":   "SYSTEMIC crash detection — all positions closed",
+            "reason":   "SYSTEMIC crash detection alert — manual evaluation required",
             "source":   "crash_defense_controller",
             "tier":     "SYSTEMIC",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }, source="crash_defense")
-        actions.append("close_all_positions: ALL positions (longs + shorts) closed")
-        actions.append("safe_mode: trading engine in SAFE MODE — manual override required")
-        actions.append("notify_systemic: systemic crisis notification dispatched to all channels")
+        actions.append("CRITICAL ALERT: crash score reached SYSTEMIC tier — evaluate immediately")
 
     def _deactivate_defensive_mode(self, actions: list[str]) -> None:
         """Deactivate defensive mode when crash score returns to NORMAL."""

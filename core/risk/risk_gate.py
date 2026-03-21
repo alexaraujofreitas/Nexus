@@ -194,11 +194,35 @@ class RiskGate:
             return candidate
 
         if ev_enabled:
-            # Use confluence score as win probability (sigmoid-calibrated)
+            # Use confluence score as win probability.
+            # Phase 3: ProbabilityCalibrator replaces sigmoid once trained (≥300 trades).
+            # Falls back to sigmoid when not trained.
             score = candidate.score
             k = float(_s.get("expected_value.sigmoid_steepness", 8.0))
             midpoint = float(_s.get("expected_value.score_midpoint", 0.55))
-            win_prob = 1.0 / (1.0 + math.exp(-k * (score - midpoint)))
+            _win_prob_source = "sigmoid"
+            try:
+                if _s.get("probability_calibrator.enabled", True):
+                    from core.learning.probability_calibrator import get_probability_calibrator
+                    from core.learning.trade_feature_extractor import extract_features_live
+                    from datetime import datetime as _dt, timezone as _tz
+                    _cal = get_probability_calibrator()
+                    if _cal.is_trained():
+                        _feats = extract_features_live(
+                            regime=regime,
+                            confluence_score=score,
+                            direction=candidate.side,
+                            models_fired=list(getattr(candidate, "models_fired", [])),
+                            utc_hour=_dt.now(_tz.utc).hour,
+                        )
+                        win_prob, _win_prob_source = _cal.get_win_prob(_feats, score, k, midpoint)
+                    else:
+                        win_prob = 1.0 / (1.0 + math.exp(-k * (score - midpoint)))
+                else:
+                    win_prob = 1.0 / (1.0 + math.exp(-k * (score - midpoint)))
+            except Exception as _cal_exc:
+                logger.debug("RiskGate: calibrator error (%s) — using sigmoid", _cal_exc)
+                win_prob = 1.0 / (1.0 + math.exp(-k * (score - midpoint)))
 
             # Penalty for uncertain regime or near-crash conditions
             regime = candidate.regime.lower() if candidate.regime else ""

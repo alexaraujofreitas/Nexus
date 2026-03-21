@@ -165,6 +165,7 @@ class SettingsPage(QWidget):
         tabs.addTab(self._build_backtest_tab(), "⊟  Backtesting")
         tabs.addTab(self._build_notifications_tab(), "⊕  Notifications")
         tabs.addTab(self._build_agents_tab(), "◉  Intelligence Agents")
+        tabs.addTab(self._build_portfolio_tab(), "◑  Portfolio Allocation")
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
@@ -792,6 +793,160 @@ class SettingsPage(QWidget):
         scroll.setWidget(container)
         return scroll
 
+    # ── Portfolio Allocation tab ──────────────────────────────────────────────
+
+    def _build_portfolio_tab(self) -> QWidget:
+        """
+        Portfolio Allocation Settings tab.
+
+        Lets the user configure:
+          - Mode: STATIC (fixed weights) or DYNAMIC (BTC-dominance-driven)
+          - Static weights per symbol
+          - BTC dominance value + thresholds (DYNAMIC mode)
+          - Three regime profiles: BTC Dominant / Neutral / Alt Season
+        """
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setSpacing(16)
+        v.setContentsMargins(0, 8, 0, 8)
+
+        # ── Overview label ─────────────────────────────────────────────────
+        info = QLabel(
+            "<b>Symbol Priority & Allocation</b><br>"
+            "Weights adjust candidate ranking only — they never modify signals, "
+            "position sizing, stop-loss/take-profit, or any risk parameter.<br>"
+            "<i>adjusted_score = base_score × symbol_weight</i><br>"
+            "Higher-weight symbols are evaluated first when multiple IDSS "
+            "candidates exist in the same scan cycle.<br>"
+            "<br>"
+            "<b>Study 4 Baseline:</b> SOL=1.3 (highest profit) · ETH=1.2 (highest quality) · "
+            "BTC=1.0 (benchmark) · BNB=0.8 · XRP=0.8"
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet(
+            "background:#1a2a3a; color:#aabbcc; padding:12px 16px; "
+            "border-radius:6px; font-size:13px; border:1px solid #2a3a4a;"
+        )
+        v.addWidget(info)
+
+        # ── Mode ───────────────────────────────────────────────────────────
+        self._alloc_mode_section = SettingsSection("Allocation Mode")
+        self._alloc_mode_section.add_combo(
+            "symbol_allocation.mode",
+            "Mode:",
+            ["STATIC", "DYNAMIC"],
+            settings.get("symbol_allocation.mode", "STATIC"),
+        )
+        mode_hint = QLabel(
+            "STATIC — use fixed weights below regardless of market conditions.<br>"
+            "DYNAMIC — automatically switch between three profiles based on "
+            "BTC Dominance percentage."
+        )
+        mode_hint.setWordWrap(True)
+        mode_hint.setStyleSheet("color:#778899; font-size:12px; padding:2px 4px;")
+        self._alloc_mode_section.layout().addRow("", mode_hint)
+        v.addWidget(self._alloc_mode_section)
+
+        # ── Static weights ─────────────────────────────────────────────────
+        _symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+        _static_defaults = {"BTC/USDT": 1.0, "ETH/USDT": 1.2, "SOL/USDT": 1.3,
+                            "BNB/USDT": 0.8, "XRP/USDT": 0.8}
+
+        self._alloc_static_section = SettingsSection(
+            "Static Weights  (used in STATIC mode)"
+        )
+        for sym in _symbols:
+            key = f"symbol_allocation.static_weights.{sym}"
+            default = _static_defaults.get(sym, 1.0)
+            self._alloc_static_section.add_double(
+                key,
+                f"{sym}:",
+                settings.get(key, default),
+                min_val=0.1, max_val=3.0, decimals=2,
+            )
+        static_hint = QLabel(
+            "Range 0.10 – 3.00.  Values outside this range are automatically clamped."
+        )
+        static_hint.setStyleSheet("color:#778899; font-size:12px; padding:2px 4px;")
+        self._alloc_static_section.layout().addRow("", static_hint)
+        v.addWidget(self._alloc_static_section)
+
+        # ── BTC Dominance (DYNAMIC mode) ───────────────────────────────────
+        self._alloc_btc_dom_section = SettingsSection(
+            "BTC Dominance  (DYNAMIC mode)"
+        )
+        self._alloc_btc_dom_section.add_double(
+            "symbol_allocation.btc_dominance_pct",
+            "Current BTC Dominance %:",
+            settings.get("symbol_allocation.btc_dominance_pct", 50.0),
+            min_val=0.0, max_val=100.0, decimals=1, suffix="%",
+        )
+        self._alloc_btc_dom_section.add_double(
+            "symbol_allocation.btc_dominance_high",
+            "High Threshold (→ BTC_DOMINANT):",
+            settings.get("symbol_allocation.btc_dominance_high", 55.0),
+            min_val=0.0, max_val=100.0, decimals=1, suffix="%",
+        )
+        self._alloc_btc_dom_section.add_double(
+            "symbol_allocation.btc_dominance_low",
+            "Low Threshold (→ ALT_SEASON):",
+            settings.get("symbol_allocation.btc_dominance_low", 45.0),
+            min_val=0.0, max_val=100.0, decimals=1, suffix="%",
+        )
+        dom_hint = QLabel(
+            "Dominance > High → <b>BTC_DOMINANT</b> profile (favour BTC/ETH)<br>"
+            "Dominance < Low → <b>ALT_SEASON</b> profile (favour SOL/alts)<br>"
+            "Between thresholds → <b>NEUTRAL</b> profile (balanced weights)"
+        )
+        dom_hint.setWordWrap(True)
+        dom_hint.setStyleSheet("color:#778899; font-size:12px; padding:2px 4px;")
+        self._alloc_btc_dom_section.layout().addRow("", dom_hint)
+        v.addWidget(self._alloc_btc_dom_section)
+
+        # ── Regime profiles ────────────────────────────────────────────────
+        _profile_defs = [
+            (
+                "btc_dominant",
+                "BTC Dominant Profile  (dominance > High threshold)",
+                {"BTC/USDT": 1.4, "ETH/USDT": 1.1, "SOL/USDT": 0.9,
+                 "BNB/USDT": 0.7, "XRP/USDT": 0.7},
+            ),
+            (
+                "neutral",
+                "Neutral Profile  (between thresholds)",
+                {"BTC/USDT": 1.0, "ETH/USDT": 1.2, "SOL/USDT": 1.3,
+                 "BNB/USDT": 0.8, "XRP/USDT": 0.8},
+            ),
+            (
+                "alt_season",
+                "Alt Season Profile  (dominance < Low threshold)",
+                {"BTC/USDT": 0.7, "ETH/USDT": 1.2, "SOL/USDT": 1.5,
+                 "BNB/USDT": 1.0, "XRP/USDT": 1.0},
+            ),
+        ]
+
+        self._alloc_profile_sections: dict[str, SettingsSection] = {}
+        for profile_key, profile_title, profile_defaults in _profile_defs:
+            sec = SettingsSection(profile_title)
+            for sym in _symbols:
+                key = f"symbol_allocation.profiles.{profile_key}.{sym}"
+                default = profile_defaults.get(sym, 1.0)
+                sec.add_double(
+                    key,
+                    f"{sym}:",
+                    settings.get(key, default),
+                    min_val=0.1, max_val=3.0, decimals=2,
+                )
+            self._alloc_profile_sections[profile_key] = sec
+            v.addWidget(sec)
+
+        v.addStretch()
+        scroll.setWidget(container)
+        return scroll
+
     def _save_all(self):
         try:
             changed: dict = {}
@@ -817,6 +972,11 @@ class SettingsPage(QWidget):
                 self._social_section,
                 self._options_section,
                 self._funding_section,
+                # Portfolio Allocation tab sections
+                self._alloc_mode_section,
+                self._alloc_static_section,
+                self._alloc_btc_dom_section,
+                *self._alloc_profile_sections.values(),
             ]:
                 for key, value in section.get_values().items():
                     if key in _VAULT_KEYS:

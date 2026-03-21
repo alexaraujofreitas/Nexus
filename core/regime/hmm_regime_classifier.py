@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 import numpy as np
 import pandas as pd
 from typing import Optional
@@ -130,7 +131,13 @@ class HMMRegimeClassifier:
                 random_state=42,
                 verbose=False,
             )
-            model.fit(X)
+            # Suppress hmmlearn UserWarnings (transmat_ zero sum, convergence) during fit.
+            # These are expected on low-variance or sparse price series and do not affect
+            # correctness — the fit() still returns the best estimate found.  Genuine
+            # failures (NaN / ValueError) are caught by the outer except block.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                model.fit(X)
 
             # Label states by comparing HMM-decoded regimes to rule-based labels
             state_seq = model.predict(X)

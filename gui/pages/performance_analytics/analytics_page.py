@@ -1818,6 +1818,310 @@ def _make_table(cols: list[str], stretch_col: int = 0) -> QTableWidget:
 # ─────────────────────────────────────────────────────────────
 # Performance Analytics Page
 # ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# 🔬  Validation Summary Tab (Session 23)
+# ─────────────────────────────────────────────────────────────
+class _ValidationTab(QWidget):
+    """
+    Consolidated validation dashboard.  Shows:
+      1. System Readiness level (STILL_LEARNING / IMPROVING / READY)
+      2. Per-model expectancy table (from ModelPerformanceTracker)
+      3. Per-regime performance (top 6 regimes)
+      4. Filter effectiveness summary (from FilterStatsTracker)
+      5. OI/Liq impact (fires + score delta)
+      6. Calibrator status (AUC, Brier, drift)
+      7. Correlation dampening activity
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(14)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border:none; background:transparent; }")
+        inner = QWidget()
+        inner.setStyleSheet(f"background:{_C_BG};")
+        v = QVBoxLayout(inner)
+        v.setSpacing(14)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        # ── 1. System Readiness banner ──────────────────────────────
+        self._readiness_banner = QLabel("System Readiness: —")
+        self._readiness_banner.setAlignment(Qt.AlignCenter)
+        self._readiness_banner.setStyleSheet(
+            f"font-size:16px; font-weight:700; padding:12px; "
+            f"border-radius:6px; background:{_C_CARD}; color:{_C_TEXT};"
+        )
+        v.addWidget(self._readiness_banner)
+
+        self._readiness_action = QLabel("")
+        self._readiness_action.setAlignment(Qt.AlignCenter)
+        self._readiness_action.setWordWrap(True)
+        self._readiness_action.setStyleSheet(f"color:{_C_MUTED}; font-size:13px; padding:4px 0 8px 0;")
+        v.addWidget(self._readiness_action)
+
+        # ── 2 + 3. Side-by-side: Model Expectancy + Regime Performance ──
+        row1 = QHBoxLayout()
+        row1.setSpacing(14)
+
+        # Per-model expectancy table
+        model_frame = QFrame()
+        model_frame.setStyleSheet(_CARD_STYLE)
+        mf_v = QVBoxLayout(model_frame)
+        mf_v.setContentsMargins(12, 10, 12, 10)
+        mf_v.addWidget(_section_label("Model Expectancy (rolling 50 trades)"))
+        self._model_tbl = QTableWidget(0, 5)
+        self._model_tbl.setHorizontalHeaderLabels(["Model", "Trades", "WR", "E[R]", "PF"])
+        self._model_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._model_tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._model_tbl.setAlternatingRowColors(True)
+        self._model_tbl.setStyleSheet(
+            f"QTableWidget {{ background:{_C_CARD}; color:{_C_TEXT}; "
+            f"gridline-color:{_C_BORDER}; font-size:12px; border:none; }}"
+            f"QHeaderView::section {{ background:#0A0E1A; color:{_C_MUTED}; "
+            f"font-size:11px; font-weight:600; border:none; padding:4px; }}"
+            f"QTableWidget::item:alternate {{ background:#0E1525; }}"
+        )
+        self._model_tbl.setMaximumHeight(200)
+        mf_v.addWidget(self._model_tbl)
+        row1.addWidget(model_frame, 1)
+
+        # Per-regime table
+        regime_frame = QFrame()
+        regime_frame.setStyleSheet(_CARD_STYLE)
+        rf_v = QVBoxLayout(regime_frame)
+        rf_v.setContentsMargins(12, 10, 12, 10)
+        rf_v.addWidget(_section_label("Regime Performance (top 6)"))
+        self._regime_tbl = QTableWidget(0, 4)
+        self._regime_tbl.setHorizontalHeaderLabels(["Regime", "Trades", "WR", "P&L $"])
+        self._regime_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._regime_tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._regime_tbl.setAlternatingRowColors(True)
+        self._regime_tbl.setStyleSheet(
+            f"QTableWidget {{ background:{_C_CARD}; color:{_C_TEXT}; "
+            f"gridline-color:{_C_BORDER}; font-size:12px; border:none; }}"
+            f"QHeaderView::section {{ background:#0A0E1A; color:{_C_MUTED}; "
+            f"font-size:11px; font-weight:600; border:none; padding:4px; }}"
+            f"QTableWidget::item:alternate {{ background:#0E1525; }}"
+        )
+        self._regime_tbl.setMaximumHeight(200)
+        rf_v.addWidget(self._regime_tbl)
+        row1.addWidget(regime_frame, 1)
+
+        v.addLayout(row1)
+
+        # ── 4 + 5. Filter Stats + OI/Calibrator ─────────────────────────
+        row2 = QHBoxLayout()
+        row2.setSpacing(14)
+
+        filter_frame = QFrame()
+        filter_frame.setStyleSheet(_CARD_STYLE)
+        ff_v = QVBoxLayout(filter_frame)
+        ff_v.setContentsMargins(12, 10, 12, 10)
+        ff_v.addWidget(_section_label("Filter Effectiveness"))
+        self._filter_tbl = QTableWidget(0, 3)
+        self._filter_tbl.setHorizontalHeaderLabels(["Filter", "Block Rate", "Top Blocked"])
+        self._filter_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._filter_tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._filter_tbl.setStyleSheet(
+            f"QTableWidget {{ background:{_C_CARD}; color:{_C_TEXT}; "
+            f"gridline-color:{_C_BORDER}; font-size:12px; border:none; }}"
+            f"QHeaderView::section {{ background:#0A0E1A; color:{_C_MUTED}; "
+            f"font-size:11px; font-weight:600; border:none; padding:4px; }}"
+        )
+        self._filter_tbl.setMaximumHeight(150)
+        ff_v.addWidget(self._filter_tbl)
+        row2.addWidget(filter_frame, 1)
+
+        # OI + Calibrator + Dampener info panel
+        info_frame = QFrame()
+        info_frame.setStyleSheet(_CARD_STYLE)
+        if_v = QVBoxLayout(info_frame)
+        if_v.setContentsMargins(12, 10, 12, 10)
+        if_v.addWidget(_section_label("Signal Quality Diagnostics"))
+        self._diag_text = QTextEdit()
+        self._diag_text.setReadOnly(True)
+        self._diag_text.setMaximumHeight(150)
+        self._diag_text.setStyleSheet(
+            f"QTextEdit {{ background:#0A0E1A; color:{_C_TEXT}; "
+            f"font-size:12px; border:1px solid {_C_BORDER}; border-radius:4px; padding:6px; }}"
+        )
+        if_v.addWidget(self._diag_text)
+        row2.addWidget(info_frame, 1)
+
+        v.addLayout(row2)
+        v.addStretch()
+        scroll.setWidget(inner)
+        root.addWidget(scroll)
+
+    def refresh(self, closed: list[dict]) -> None:
+        """Refresh all sections from live data."""
+        try:
+            self._refresh_readiness(closed)
+        except Exception as exc:
+            logger.debug("ValidationTab: readiness refresh error: %s", exc)
+        try:
+            self._refresh_model_table()
+        except Exception as exc:
+            logger.debug("ValidationTab: model table error: %s", exc)
+        try:
+            self._refresh_regime_table(closed)
+        except Exception as exc:
+            logger.debug("ValidationTab: regime table error: %s", exc)
+        try:
+            self._refresh_filter_table()
+        except Exception as exc:
+            logger.debug("ValidationTab: filter table error: %s", exc)
+        try:
+            self._refresh_diagnostics()
+        except Exception as exc:
+            logger.debug("ValidationTab: diagnostics error: %s", exc)
+
+    # ── Refresh helpers ────────────────────────────────────────────────────
+
+    def _refresh_readiness(self, closed: list[dict]) -> None:
+        from core.evaluation.system_readiness_evaluator import (
+            get_system_readiness_evaluator, SystemReadinessLevel,
+        )
+        assessment = get_system_readiness_evaluator().evaluate(closed)
+        level = assessment.level
+
+        _LEVEL_COLORS = {
+            SystemReadinessLevel.STILL_LEARNING:          (_C_RED,    "🔴"),
+            SystemReadinessLevel.IMPROVING:               (_C_YELLOW, "🟡"),
+            SystemReadinessLevel.READY_FOR_CAUTIOUS_LIVE: (_C_GREEN,  "🟢"),
+        }
+        col, icon = _LEVEL_COLORS.get(level, (_C_MUTED, "?"))
+        self._readiness_banner.setStyleSheet(
+            f"font-size:16px; font-weight:700; padding:12px; border-radius:6px; "
+            f"background:{_C_CARD}; color:{col};"
+        )
+        self._readiness_banner.setText(
+            f"{icon}  {level.value.replace('_', ' ')}  (score {assessment.score:.0f}/100)"
+        )
+        self._readiness_action.setText(assessment.action)
+
+    def _refresh_model_table(self) -> None:
+        from core.analytics.model_performance_tracker import get_model_performance_tracker
+        tracker = get_model_performance_tracker()
+        all_stats = tracker.get_all_stats()
+
+        rows = sorted(all_stats.items(), key=lambda x: x[1].get("trades", 0), reverse=True)
+        self._model_tbl.setRowCount(len(rows))
+        for r, (model, s) in enumerate(rows):
+            trades = s.get("trades", 0)
+            wr     = s.get("win_rate")
+            exp_r  = s.get("expectancy_r")
+            pf     = s.get("profit_factor")
+            wr_str  = f"{wr:.0%}" if wr is not None else "—"
+            exp_str = f"{exp_r:+.3f}R" if exp_r is not None else "—"
+            pf_str  = f"{pf:.2f}" if pf is not None else "—"
+
+            exp_col = _C_GREEN if (exp_r or 0) > 0 else (_C_RED if (exp_r or 0) < 0 else _C_MUTED)
+            wr_col  = _C_GREEN if (wr or 0) >= 0.45 else (_C_RED if (wr or 0) < 0.40 and trades >= 20 else _C_TEXT)
+
+            self._model_tbl.setItem(r, 0, _ci(model, _C_TEXT, Qt.AlignLeft))
+            self._model_tbl.setItem(r, 1, _ci(str(trades)))
+            self._model_tbl.setItem(r, 2, _ci(wr_str, wr_col))
+            self._model_tbl.setItem(r, 3, _ci(exp_str, exp_col))
+            self._model_tbl.setItem(r, 4, _ci(pf_str, _C_GREEN if (pf or 0) >= 1.10 else (_C_RED if (pf or 0) < 1.0 and pf is not None else _C_TEXT)))
+
+    def _refresh_regime_table(self, closed: list[dict]) -> None:
+        regime_data: dict[str, dict] = {}
+        for t in closed:
+            reg = (t.get("regime") or "unknown").lower()
+            if reg not in regime_data:
+                regime_data[reg] = {"trades": 0, "wins": 0, "pnl": 0.0}
+            regime_data[reg]["trades"] += 1
+            pnl_pct = float(t.get("pnl_pct") or 0)
+            if pnl_pct > 0:
+                regime_data[reg]["wins"] += 1
+            regime_data[reg]["pnl"] += float(t.get("pnl_usdt") or 0)
+
+        rows = sorted(regime_data.items(), key=lambda x: x[1]["trades"], reverse=True)[:6]
+        self._regime_tbl.setRowCount(len(rows))
+        for r, (reg, s) in enumerate(rows):
+            trades = s["trades"]
+            wr = s["wins"] / trades if trades > 0 else 0
+            pnl = s["pnl"]
+            wr_col  = _C_GREEN if wr >= 0.50 else (_C_RED if wr < 0.40 and trades >= 10 else _C_TEXT)
+            pnl_col = _C_GREEN if pnl > 0 else (_C_RED if pnl < 0 else _C_MUTED)
+            self._regime_tbl.setItem(r, 0, _ci(reg, _C_TEXT, Qt.AlignLeft))
+            self._regime_tbl.setItem(r, 1, _ci(str(trades)))
+            self._regime_tbl.setItem(r, 2, _ci(f"{wr:.0%}", wr_col))
+            self._regime_tbl.setItem(r, 3, _ci(f"${pnl:+,.2f}", pnl_col))
+
+    def _refresh_filter_table(self) -> None:
+        try:
+            from core.analytics.filter_stats import get_filter_stats_tracker
+            summaries = get_filter_stats_tracker().get_all_summaries()
+        except Exception:
+            summaries = {}
+
+        rows = list(summaries.items())
+        self._filter_tbl.setRowCount(len(rows))
+        for r, (fname, s) in enumerate(rows):
+            block_rate = s.get("block_rate_pct", 0.0)
+            top_blocked = s.get("top_blocked_symbols", [])
+            top_str = ", ".join(top_blocked[:2]) if top_blocked else "—"
+            br_col = _C_YELLOW if block_rate > 50 else _C_TEXT
+            self._filter_tbl.setItem(r, 0, _ci(fname, _C_TEXT, Qt.AlignLeft))
+            self._filter_tbl.setItem(r, 1, _ci(f"{block_rate:.1f}%", br_col))
+            self._filter_tbl.setItem(r, 2, _ci(top_str, _C_MUTED, Qt.AlignLeft))
+
+    def _refresh_diagnostics(self) -> None:
+        lines: list[str] = []
+
+        # Calibrator status
+        try:
+            from core.learning.calibrator_monitor import get_calibrator_monitor
+            status = get_calibrator_monitor().get_status()
+            auc = status.get("auc")
+            brier = status.get("brier")
+            n_pred = status.get("prediction_count", 0)
+            drift = status.get("drift_detected", False)
+            auc_str   = f"{auc:.3f}" if auc is not None else "insufficient data"
+            brier_str = f"{brier:.3f}" if brier is not None else "—"
+            drift_str = "⚠ DRIFT DETECTED" if drift else "stable"
+            lines.append(f"Calibrator AUC: {auc_str}  |  Brier: {brier_str}  |  {n_pred} predictions  |  {drift_str}")
+            if status.get("fallback_recommended"):
+                lines.append("  → Sigmoid fallback currently ACTIVE (calibrator AUC degraded)")
+        except Exception:
+            lines.append("Calibrator: unavailable")
+
+        # OI data quality summary
+        try:
+            from core.signals.oi_signal import _oi_history
+            n_syms = len(_oi_history)
+            lines.append(f"OI history tracked: {n_syms} symbol(s)")
+        except Exception:
+            pass
+
+        # Correlation dampener summary
+        try:
+            from core.analytics.correlation_dampener import CORRELATION_CLUSTERS
+            cluster_desc = [f"{k} ({', '.join(v)})" for k, v in CORRELATION_CLUSTERS.items()]
+            lines.append(f"Corr clusters: {len(CORRELATION_CLUSTERS)} defined")
+            lines.append(f"  {' | '.join(cluster_desc)}")
+        except Exception:
+            pass
+
+        # Portfolio guard status
+        try:
+            from core.analytics.portfolio_guard import CORRELATION_GROUPS
+            lines.append(f"Portfolio guard: {len(CORRELATION_GROUPS)} groups tracked")
+        except Exception:
+            pass
+
+        self._diag_text.setPlainText("\n".join(lines) if lines else "No diagnostic data yet.")
+
+
 class PerformanceAnalyticsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1832,7 +2136,7 @@ class PerformanceAnalyticsPage(QWidget):
         root.setSpacing(0)
         root.addWidget(PageHeader(
             "Performance Analytics",
-            "Equity curve · Regime · Model · Asset · Side · Distributions · Learning · Readiness · Edge Analysis"
+            "Equity curve · Regime · Model · Asset · Side · Distributions · Learning · Readiness · Edge Analysis · Validation"
         ))
 
         content = QWidget()
@@ -1887,25 +2191,27 @@ class PerformanceAnalyticsPage(QWidget):
             f"font-weight:700; }}"
         )
 
-        self._equity_tab   = _EquityTab()
-        self._regime_tab   = _RegimeTab()
-        self._model_tab    = _ModelTab()
-        self._asset_tab    = _AssetTab()
-        self._side_tab     = _SideTab()
-        self._dist_tab     = _DistTab()
-        self._learning_tab = _LearningTab()
-        self._readiness_tab = _ReadinessTab()
-        self._edge_tab      = _EdgeTab()
+        self._equity_tab      = _EquityTab()
+        self._regime_tab      = _RegimeTab()
+        self._model_tab       = _ModelTab()
+        self._asset_tab       = _AssetTab()
+        self._side_tab        = _SideTab()
+        self._dist_tab        = _DistTab()
+        self._learning_tab    = _LearningTab()
+        self._readiness_tab   = _ReadinessTab()
+        self._edge_tab        = _EdgeTab()
+        self._validation_tab  = _ValidationTab()
 
-        self._tabs.addTab(self._equity_tab,    "📈  Equity / DD")
-        self._tabs.addTab(self._regime_tab,    "🗂  By Regime")
-        self._tabs.addTab(self._model_tab,     "🧠  By Model")
-        self._tabs.addTab(self._asset_tab,     "🪙  By Asset")
-        self._tabs.addTab(self._side_tab,      "↕  By Side")
-        self._tabs.addTab(self._dist_tab,      "📊  Distributions")
-        self._tabs.addTab(self._learning_tab,  "🔄  Learning Loop")
-        self._tabs.addTab(self._readiness_tab, "🎯  Demo Readiness")
-        self._tabs.addTab(self._edge_tab,      "⚡  Edge Analysis")
+        self._tabs.addTab(self._equity_tab,      "📈  Equity / DD")
+        self._tabs.addTab(self._regime_tab,      "🗂  By Regime")
+        self._tabs.addTab(self._model_tab,       "🧠  By Model")
+        self._tabs.addTab(self._asset_tab,       "🪙  By Asset")
+        self._tabs.addTab(self._side_tab,        "↕  By Side")
+        self._tabs.addTab(self._dist_tab,        "📊  Distributions")
+        self._tabs.addTab(self._learning_tab,    "🔄  Learning Loop")
+        self._tabs.addTab(self._readiness_tab,   "🎯  Demo Readiness")
+        self._tabs.addTab(self._edge_tab,        "⚡  Edge Analysis")
+        self._tabs.addTab(self._validation_tab,  "🔬  Validation")
 
         v.addWidget(self._tabs, 1)
 
@@ -2004,6 +2310,7 @@ class PerformanceAnalyticsPage(QWidget):
             self._learning_tab.refresh(closed)
             self._readiness_tab.refresh(closed)
             self._edge_tab.refresh(closed)
+            self._validation_tab.refresh(closed)
 
             now = datetime.utcnow().strftime("%H:%M:%S UTC")
             self._updated_lbl.setText(

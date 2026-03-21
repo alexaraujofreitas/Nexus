@@ -9,7 +9,10 @@
 # - Dynamic stop adjustment via adjust_stop()
 # - Partial close via partial_close()
 # - Subscribes to POSITION_MONITOR_UPDATED events
-# - BTC-first size multiplier integration
+# - Full trade execution verification logging (risk_amount_usdt, expected_rr,
+#   symbol_weight, adjusted_score, realized_r) — Session 26
+# NOTE: BTC-first size multiplier removed in Session 25.
+#       SymbolAllocator is the sole per-symbol allocation mechanism.
 # ============================================================
 from __future__ import annotations
 
@@ -173,6 +176,8 @@ class PaperExecutor:
         self._max_positions_per_symbol: int = 10
         self._closed_trades:  list[dict] = []
         self._peak_capital    = initial_capital_usdt
+        # ── Production safeguards ────────────────────────────────────
+        self._dd_circuit_breaker_pct: float = 10.0   # Hard block at 10% drawdown
         # Restore any open positions that survived a restart (reads capital from JSON)
         self._load_open_positions()
         # Restore closed-trade history from SQLite — MUST run after _load_open_positions()
@@ -290,9 +295,18 @@ class PaperExecutor:
 
     @property
     def drawdown_pct(self) -> float:
-        total = self._capital + sum(
-            p.size_usdt * (1 + p.unrealized_pnl / 100) for pos_list in self._positions.values() for p in pos_list
+        # Total equity = free capital + current mark-to-market value of open positions.
+        # _capital is the TOTAL float (never deducted on position open; P&L added on close).
+        # available_capital = _capital - sum(size_usdt) removes the locked portion so we
+        # don't double-count position value when adding current_position_value below.
+        open_positions_flat = [
+            p for pos_list in self._positions.values() for p in pos_list
+        ]
+        locked_capital = sum(p.size_usdt for p in open_positions_flat)
+        current_pos_value = sum(
+            p.size_usdt * (1 + p.unrealized_pnl / 100) for p in open_positions_flat
         )
+        total = (self._capital - locked_capital) + current_pos_value
         if self._peak_capital > 0:
             dd = (self._peak_capital - total) / self._peak_capital * 100
             return max(0.0, dd)
@@ -331,6 +345,112 @@ class PaperExecutor:
         Applies BTC-first size multiplier.
         Returns True if position opened.
         """
+        # ── Drawdown circuit breaker ─────────────────────────────────
+        # Hard safeguard: block ALL new trades when drawdown >= 10%.
+        dd = self.drawdown_pct
+        _dd_limit = float(getattr(self, "_dd_circuit_breaker_pct", 10.0))
+        if dd >= _dd_limit:
+            logger.warning(
+                "PaperExecutor: CIRCUIT BREAKER ACTIVE — drawdown %.2f%% >= %.1f%% limit. "
+                "All new trade entries blocked until drawdown recovers.",
+                dd, _dd_limit,
+            )
+            bus.publish(
+                Topics.SYSTEM_WARNING,
+                data={"type": "drawdown_circuit_breaker", "drawdown_pct": round(dd, 2),
+                      "limit_pct": _dd_limit, "symbol": candidate.symbol},
+                source="paper_executor",
+            )
+            return False
+
+        # ── Performance-based pause (non-fatal advisory check) ────────
+        # Soft safeguard: log a strong WARNING when RAG assessment says
+        # should_pause=True, but does NOT hard-block (operator may override).
+        # Hard-blocks only when portfolio PF < 1.0 AND WR < 40% (clear
+        # negative-expectancy territory) over ≥ 30 trades.
+        try:
+            from core.monitoring.performance_thresholds import (
+                get_threshold_evaluator, RAGStatus,
+            )
+            _rag = get_threshold_evaluator().evaluate()
+            if _rag.should_pause:
+                logger.warning(
+                    "PaperExecutor: PERFORMANCE PAUSE RECOMMENDED — %s. "
+                    "Trade will proceed (operator must manually pause). "
+                    "Review Demo Monitor → RAG Status.",
+                    _rag.pause_reason,
+                )
+                bus.publish(
+                    Topics.SYSTEM_WARNING,
+                    data={"type":         "performance_pause_recommended",
+                          "pause_reason": _rag.pause_reason,
+                          "symbol":       candidate.symbol},
+                    source="paper_executor",
+                )
+            _port = _rag.portfolio
+            _port_trades = _port.trades if _port else 0
+            if _port_trades >= 30:
+                from core.monitoring.performance_thresholds import RAGStatus
+                _pf_val = _port.pf.value or 999
+                _wr_val = _port.wr.value or 999
+
+                # ── Intermediate hard stop: PF<1.2 AND WR<45% ───────────────
+                # Fires before the final safeguard to catch deteriorating
+                # performance early enough to protect capital.
+                _pf_inter = _pf_val < 1.2
+                _wr_inter = _wr_val < 0.45
+                if _pf_inter and _wr_inter:
+                    logger.critical(
+                        "PaperExecutor: INTERMEDIATE HARD BLOCK — "
+                        "portfolio PF=%.3f < 1.2 AND WR=%.1f%% < 45%% "
+                        "over %d trades. Blocking new entry for %s. "
+                        "Investigate performance before resuming.",
+                        _pf_val,
+                        _wr_val * 100,
+                        _port_trades,
+                        candidate.symbol,
+                    )
+                    bus.publish(
+                        Topics.SYSTEM_WARNING,
+                        data={"type":    "performance_intermediate_block",
+                              "pf":      _pf_val,
+                              "wr":      _wr_val,
+                              "trades":  _port_trades,
+                              "symbol":  candidate.symbol},
+                        source="paper_executor",
+                    )
+                    return False
+
+                # ── Final hard block: PF<1.0 AND WR<40% ────────────────────
+                # Last-resort safeguard for confirmed negative-expectancy.
+                _pf_red = (_port.pf.status == RAGStatus.RED and _pf_val < 1.0)
+                _wr_red = (_port.wr.status == RAGStatus.RED and _wr_val < 0.40)
+                if _pf_red and _wr_red:
+                    logger.warning(
+                        "PaperExecutor: HARD PERFORMANCE BLOCK — "
+                        "portfolio PF=%.3f < 1.0 AND WR=%.1f%% < 40%% "
+                        "over %d trades. Blocking new entry for %s.",
+                        _pf_val,
+                        _wr_val * 100,
+                        _port_trades,
+                        candidate.symbol,
+                    )
+                    bus.publish(
+                        Topics.SYSTEM_WARNING,
+                        data={"type":    "performance_hard_block",
+                              "pf":      _pf_val,
+                              "wr":      _wr_val,
+                              "trades":  _port_trades,
+                              "symbol":  candidate.symbol},
+                        source="paper_executor",
+                    )
+                    return False
+        except Exception as _perf_exc:
+            logger.debug(
+                "PaperExecutor: performance pause check failed (non-fatal): %s",
+                _perf_exc,
+            )
+
         existing = self._positions.get(candidate.symbol, [])
         if len(existing) >= self._max_positions_per_symbol:
             logger.debug("PaperExecutor: max positions (%d) reached for %s",
@@ -356,21 +476,9 @@ class PaperExecutor:
             logger.warning("PaperExecutor: invalid entry price for %s", candidate.symbol)
             return False
 
+        # PositionSizer output (position_size_usdt) is final — SymbolAllocator
+        # is the single allocation mechanism.  No per-symbol overrides applied here.
         size_usdt = candidate.position_size_usdt
-
-        # Apply BTC-first size multiplier
-        try:
-            from core.scanning.btc_priority import get_btc_priority_filter
-            btc_filter = get_btc_priority_filter()
-            size_multiplier = btc_filter.get_size_multiplier(candidate.symbol)
-            size_usdt = size_usdt * size_multiplier
-            if size_multiplier != 1.0:
-                logger.info(
-                    "PaperExecutor: applied BTC-first multiplier %.2f for %s",
-                    size_multiplier, candidate.symbol
-                )
-        except Exception as exc:
-            logger.debug("PaperExecutor: BTC-first multiplier error (using 1.0): %s", exc)
 
         fill_price = self._apply_slippage(entry_price, candidate.side) if entry_price > 0 else entry_price
         slippage_cost = abs(fill_price - entry_price)
@@ -396,12 +504,36 @@ class PaperExecutor:
         # Store enriched fields for Level-2 learning on close
         pos.entry_expected  = entry_price           # pre-slippage price
         pos.expected_value  = getattr(candidate, "expected_value", None)
+
+        # ── Trade execution verification fields (Session 26) ────────────────
+        # symbol_weight and adjusted_score are stamped by SymbolAllocator onto
+        # the candidate dict and then forwarded as attributes in scanner_page.py.
+        pos.symbol_weight   = float(getattr(candidate, "symbol_weight",  1.0) or 1.0)
+        pos.adjusted_score  = float(getattr(candidate, "adjusted_score", candidate.score) or candidate.score)
+        # Compute risk_amount_usdt: how many USDT at risk based on fill price and SL
+        _sl_p = candidate.stop_loss_price or 0.0
+        _tp_p = candidate.take_profit_price or 0.0
+        pos.risk_amount_usdt = 0.0
+        pos.expected_rr      = 0.0
+        if fill_price > 0 and _sl_p > 0 and size_usdt > 0:
+            pos.risk_amount_usdt = round(abs(fill_price - _sl_p) / fill_price * size_usdt, 4)
+        if fill_price > 0 and _sl_p > 0 and _tp_p > 0:
+            _risk   = abs(fill_price - _sl_p)
+            _reward = abs(_tp_p - fill_price)
+            if _risk > 0:
+                pos.expected_rr = round(_reward / _risk, 4)
+        # ────────────────────────────────────────────────────────────────────
+
         self._positions.setdefault(candidate.symbol, []).append(pos)
         logger.info(
-            "PaperExecutor: opened %s %s @ %.4f | SL=%.4f TP=%.4f | size=%.2f USDT",
-            candidate.side, candidate.symbol, entry_price,
+            "PaperExecutor: OPENED %s %s @ %.4f (fill) | SL=%.4f TP=%.4f | "
+            "size=%.2f USDT | risk=%.2f USDT | expRR=%.2f | "
+            "score=%.3f wt=%.2f adjScore=%.3f | models=%s",
+            candidate.side, candidate.symbol, fill_price,
             candidate.stop_loss_price, candidate.take_profit_price,
-            size_usdt,
+            size_usdt, pos.risk_amount_usdt, pos.expected_rr,
+            candidate.score, pos.symbol_weight, pos.adjusted_score,
+            list(getattr(candidate, "models_fired", [])),
         )
         bus.publish(Topics.TRADE_OPENED, data=pos.to_dict(), source="paper_executor")
         self._save_open_positions()
@@ -554,10 +686,10 @@ class PaperExecutor:
             return self.close_position(symbol)
 
         # Calculate partial quantity
-        original_qty = pos.quantity
-        close_qty = original_qty * reduce_pct
-        close_price = pos.current_price
-        new_qty = original_qty - close_qty
+        original_qty  = pos.quantity
+        close_qty     = original_qty * reduce_pct
+        close_price   = pos.current_price
+        new_qty       = original_qty - close_qty
 
         # Calculate P&L for closed fraction
         if pos.side == "buy":
@@ -565,13 +697,27 @@ class PaperExecutor:
         else:
             pnl_usdt = (pos.entry_price - close_price) * close_qty
 
-        # Update position with new quantity
-        pos.quantity = new_qty
+        # ── Update position: reduce quantity AND size_usdt proportionally ──
+        # size_usdt must shrink so that available_capital, portfolio heat, and
+        # drawdown_pct all reflect the smaller remaining position correctly.
+        pos.quantity  = new_qty
+        pos.size_usdt = pos.size_usdt * (1.0 - reduce_pct)
+
+        # ── Realise P&L into capital ────────────────────────────────────────
+        # Full closes (close_position) already do this via _close_position().
+        # Partial closes must do it here so equity curve stays accurate.
+        self._capital += pnl_usdt
+        if self._capital > self._peak_capital:
+            self._peak_capital = self._capital
+
+        # Persist updated state so restart sees correct position size
+        self._save_open_positions()
 
         logger.info(
             "PaperExecutor: partial close for %s | closed %.2f%% (qty=%.8f) @ %.4f | "
-            "remaining qty=%.8f | P&L=%.2f USDT",
-            symbol, reduce_pct * 100, close_qty, close_price, new_qty, pnl_usdt
+            "remaining qty=%.8f | P&L=%.2f USDT | capital=%.2f",
+            symbol, reduce_pct * 100, close_qty, close_price, new_qty,
+            pnl_usdt, self._capital,
         )
         bus.publish(
             Topics.POSITION_UPDATED,
@@ -829,6 +975,75 @@ class PaperExecutor:
             "short_pnl_usdt":     round(short_pnl, 2),
         }
 
+    def get_production_status(self) -> dict:
+        """
+        Return a concise production monitoring snapshot.
+        Called by the Risk Management page and System Health page each refresh.
+
+        Returns
+        -------
+        dict with keys:
+          capital_usdt         : float — current total capital
+          peak_capital_usdt    : float — peak capital since start
+          total_return_pct     : float — (capital/initial - 1) * 100
+          drawdown_pct         : float — current drawdown from peak
+          circuit_breaker_on   : bool  — True when drawdown >= 10%
+          portfolio_heat_pct   : float — current committed risk as % of capital
+          open_positions       : int   — total open positions
+          open_symbols         : list  — symbols with open positions
+          last_10_outcomes     : list  — last 10 trade outcomes ["W"/"L"]
+          current_losing_streak: int   — consecutive losses (most recent)
+          total_trades         : int   — all-time closed trades
+          session_pnl_usdt     : float — P&L since startup
+        """
+        closed = self._closed_trades
+        n = len(closed)
+
+        # Portfolio heat: sum of (risk per open trade) as % of capital
+        heat = 0.0
+        if self._capital > 0:
+            for pos_list in self._positions.values():
+                for p in pos_list:
+                    if p.stop_loss and p.stop_loss > 0 and p.entry_price > 0:
+                        stop_dist = abs(p.entry_price - p.stop_loss)
+                        qty = p.size_usdt / p.entry_price if p.entry_price > 0 else 0
+                        heat += (qty * stop_dist) / self._capital * 100
+                    else:
+                        # Fallback: assume 1% risk
+                        heat += (p.size_usdt / self._capital) * 0.01 * 100
+
+        # Last 10 outcomes
+        last10 = []
+        streak = 0
+        for t in reversed(closed[-10:]):
+            won = (t.get("pnl_usdt") or 0) > 0
+            last10.insert(0, "W" if won else "L")
+
+        # Losing streak (from most recent)
+        for t in reversed(closed):
+            won = (t.get("pnl_usdt") or 0) > 0
+            if not won:
+                streak += 1
+            else:
+                break
+
+        dd = self.drawdown_pct
+
+        return {
+            "capital_usdt":          round(self._capital, 2),
+            "peak_capital_usdt":     round(self._peak_capital, 2),
+            "total_return_pct":      round((self._capital / self._initial_capital - 1) * 100, 2) if self._initial_capital > 0 else 0.0,
+            "drawdown_pct":          round(dd, 2),
+            "circuit_breaker_on":    dd >= self._dd_circuit_breaker_pct,
+            "portfolio_heat_pct":    round(heat, 2),
+            "open_positions":        sum(len(v) for v in self._positions.values()),
+            "open_symbols":          list(self._positions.keys()),
+            "last_10_outcomes":      last10,
+            "current_losing_streak": streak,
+            "total_trades":          n,
+            "session_pnl_usdt":      round(self._capital - self._initial_capital, 2),
+        }
+
     def _close_position(self, symbol: str, exit_price: float, reason: str, pos: Optional[PaperPosition] = None) -> None:
         if pos is None:
             pos_list = self._positions.get(symbol, [])
@@ -849,6 +1064,21 @@ class PaperExecutor:
 
         # Calculate actual duration in seconds
         duration_s = (datetime.utcnow() - pos.opened_at).total_seconds()
+
+        # Pre-compute R metrics so they're available both in the trade dict
+        # and in the learning / monitor blocks below.
+        _entry_p  = pos.entry_price or 0.0
+        _sl_p     = pos.stop_loss   or 0.0
+        _tp_p     = pos.take_profit or 0.0
+        _sz       = pos.size_usdt   or 0.0
+        _risk_usdt_pre = getattr(pos, "risk_amount_usdt", 0.0) or 0.0
+        _exp_rr_pre    = getattr(pos, "expected_rr",      0.0) or 0.0
+        # If stored values aren't available, recompute from close-time data
+        if _risk_usdt_pre <= 0 and _entry_p > 0 and _sl_p > 0 and _sz > 0:
+            _risk_usdt_pre = round(abs(_entry_p - _sl_p) / _entry_p * _sz, 4)
+        if _exp_rr_pre <= 0 and _entry_p > 0 and _sl_p > 0 and _tp_p > 0:
+            _r = abs(_entry_p - _sl_p); _rw = abs(_tp_p - _entry_p)
+            if _r > 0: _exp_rr_pre = round(_rw / _r, 4)
 
         trade = {
             "symbol":           symbol,
@@ -872,6 +1102,11 @@ class PaperExecutor:
             # Enriched fields for Level-2 learning
             "entry_expected":   getattr(pos, "entry_expected", None),
             "expected_value":   getattr(pos, "expected_value", None),
+            # Trade execution verification fields (Session 26)
+            "risk_amount_usdt": _risk_usdt_pre,
+            "expected_rr":      _exp_rr_pre,
+            "symbol_weight":    float(getattr(pos, "symbol_weight",  1.0) or 1.0),
+            "adjusted_score":   float(getattr(pos, "adjusted_score", pos.score or 0.0) or 0.0),
         }
         self._closed_trades.append(trade)
         self._capital      += pnl_usdt   # realize P&L
@@ -893,24 +1128,13 @@ class PaperExecutor:
         try:
             from core.learning.level2_tracker import get_level2_tracker as _get_l2
             from core.learning.trade_outcome_store import get_outcome_store as _get_store
-            # Compute realized_r and expected_rr here so both L2 tracker and store get them
-            _entry  = trade.get("entry_price", 0.0) or 0.0
-            _sl     = trade.get("stop_loss",    0.0) or 0.0
-            _tp     = trade.get("take_profit",  0.0) or 0.0
-            _size   = trade.get("size_usdt",    0.0) or 0.0
-            _pnl_u  = trade.get("pnl_usdt",     0.0) or 0.0
-            _side   = trade.get("side", "buy")
-            _realized_r = None
-            _expected_rr = None
-            if _entry > 0 and _sl > 0 and _size > 0:
-                _risk_usdt = abs(_entry - _sl) / _entry * _size
-                if _risk_usdt > 0:
-                    _realized_r = round(_pnl_u / _risk_usdt, 4)
-            if _entry > 0 and _sl > 0 and _tp > 0:
-                _risk   = (_entry - _sl) if _side == "buy" else (_sl - _entry)
-                _reward = (_tp - _entry) if _side == "buy" else (_entry - _tp)
-                if _risk > 0:
-                    _expected_rr = round(_reward / _risk, 4)
+            # Use pre-computed risk values from the trade dict (calculated above)
+            _pnl_u      = trade.get("pnl_usdt", 0.0) or 0.0
+            _risk_usdt  = trade.get("risk_amount_usdt", 0.0) or 0.0
+            _realized_r  = round(_pnl_u / _risk_usdt, 4) if _risk_usdt > 0 else None
+            _expected_rr = trade.get("expected_rr") or None
+            # Stamp realized_r back into trade dict for all downstream consumers
+            trade["realized_r"] = _realized_r
             _get_l2().record(
                 models      = _models,
                 won         = _won,
@@ -924,6 +1148,20 @@ class PaperExecutor:
             _get_store().record(trade)
         except Exception as _l2_exc:
             logger.debug("PaperExecutor: L2 learning record failed (non-fatal): %s", _l2_exc)
+
+        # ── Feed CalibratorMonitor (Session 23) ──────────────────────────
+        # Record the prediction that was made at entry time vs the actual outcome.
+        # The predicted probability is stored on the position as 'win_prob' if
+        # the calibrator was used; fall back to score-based sigmoid estimate.
+        try:
+            from core.learning.calibrator_monitor import get_calibrator_monitor
+            _pred_prob = float(getattr(pos, "win_prob", None) or (pos.score or 0.5))
+            get_calibrator_monitor().record(
+                predicted_prob=_pred_prob,
+                actual_win=_won,
+            )
+        except Exception as _cm_exc:
+            logger.debug("PaperExecutor: calibrator monitor record failed (non-fatal): %s", _cm_exc)
 
         # ── Feed trade monitor for 75-trade checkpoint metrics ────
         try:
@@ -941,9 +1179,50 @@ class PaperExecutor:
         except Exception as _mon_exc:
             logger.debug("PaperExecutor: trade monitor record failed (non-fatal): %s", _mon_exc)
 
+        # ── Enhanced trade log (Phase 1 feature extraction dataset) ──
+        try:
+            from core.analytics.trade_log import log_trade as _log_trade
+            _utc_hour = pos.opened_at.hour if pos.opened_at else None
+            _log_trade(
+                symbol=symbol, side=pos.side, direction=pos.side,
+                entry_price=pos.entry_price, exit_price=exit_fill,
+                stop_loss=pos.stop_loss, take_profit=pos.take_profit,
+                size_usdt=pos.size_usdt, regime=pos.regime or "unknown",
+                regime_confidence=float(getattr(pos, "regime_confidence", 0.0) or 0.0),
+                confluence_score=float(pos.score or 0.0),
+                models_fired=pos.models_fired or [], timeframe=pos.timeframe or "1h",
+                pnl_pct=float(trade.get("pnl_pct") or 0.0),
+                pnl_usdt=float(trade.get("pnl_usdt") or 0.0),
+                exit_reason=reason, realized_r=_realized_r,
+                utc_hour_at_entry=_utc_hour,
+                opened_at=trade.get("opened_at"), closed_at=trade.get("closed_at"),
+            )
+        except Exception as _tl_exc:
+            logger.debug("PaperExecutor: trade log write failed (non-fatal): %s", _tl_exc)
+
+        # ── Model performance tracking (Phase 2) ──
+        try:
+            from core.analytics.model_performance_tracker import get_model_performance_tracker
+            get_model_performance_tracker().record(
+                models_fired=pos.models_fired or [],
+                won=_won,
+                realized_r=_realized_r,
+                regime=pos.regime or "unknown",
+            )
+        except Exception as _mp_exc:
+            logger.debug("PaperExecutor: model perf tracker failed (non-fatal): %s", _mp_exc)
+
+        # ── Live vs Backtest tracker (Session 26) ──
+        try:
+            from core.monitoring.live_vs_backtest import get_live_vs_backtest_tracker
+            get_live_vs_backtest_tracker().record(trade)
+        except Exception as _lvb_exc:
+            logger.debug("PaperExecutor: live_vs_backtest record failed (non-fatal): %s", _lvb_exc)
+
         logger.info(
-            "PaperExecutor: CLOSED %s @ %.4f | reason=%s | PnL=%.2f%%  (%.2f USDT)",
+            "PaperExecutor: CLOSED %s @ %.4f | reason=%s | PnL=%.2f%%  (%.2f USDT) | R=%.2f",
             symbol, exit_price, reason, pnl_pct, pnl_usdt,
+            _realized_r if _realized_r is not None else 0.0,
         )
         bus.publish(Topics.TRADE_CLOSED, data=trade, source="paper_executor")
         self._save_trade_to_db(trade)

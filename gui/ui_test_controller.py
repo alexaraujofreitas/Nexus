@@ -105,10 +105,16 @@ class UITestController:
         report = ctrl.run_all_checks()
     """
 
+    # Pages hidden from the sidebar (navigable internally, no sidebar button).
+    # Production-hardening (Study 4): Strategies and Signal Explorer removed
+    # from nav to reduce UI clutter.  quant_dashboard is also internal-only.
+    HIDDEN_PAGES: set[str] = {"strategies", "signal_explorer", "quant_dashboard"}
+
     # Pages to navigate + capture during a full check run.
     # Format: (page_key, human_label)
     ALL_PAGES: list[tuple[str, str]] = [
         ("dashboard",             "Dashboard"),
+        ("demo_monitor",          "Demo Live Monitor"),
         ("market_scanner",        "Market Scanner"),
         ("chart_workspace",       "Chart Workspace"),
         ("strategies",            "Strategies"),
@@ -304,8 +310,15 @@ class UITestController:
                            passed, details)
 
     def _check_sidebar_active(self, page_key: str, label: str) -> CheckResult:
-        """Check that the sidebar button is checked after navigation."""
+        """Check that the sidebar button is checked after navigation.
+
+        Hidden pages (not in the sidebar by design) pass automatically —
+        they are navigable internally but have no sidebar button.
+        """
         cid = f"SB-{page_key}"
+        if page_key in self.HIDDEN_PAGES:
+            return CheckResult(cid, label, "Sidebar button checked after nav",
+                               True, "hidden page — no sidebar button by design")
         self.go_to_page(page_key)
         btn = self._win.sidebar._buttons.get(page_key)
         if btn is None:

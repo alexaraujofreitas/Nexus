@@ -520,6 +520,56 @@ class RiskManagementPage(QWidget):
         kv.addLayout(reset_row)
         v.addWidget(kill_card)
 
+        # ── Row 4b: Production Monitor ────────────────────────────
+        prod_card = QFrame()
+        prod_card.setObjectName("card")
+        prod_card.setStyleSheet(_CARD_STYLE)
+        pmon = QVBoxLayout(prod_card)
+        pmon.setContentsMargins(20, 16, 20, 16)
+        pmon.setSpacing(10)
+
+        pmon_title = QLabel("PRODUCTION MONITOR")
+        pmon_title.setStyleSheet(_SECT_STYLE)
+        pmon.addWidget(pmon_title)
+
+        sep_pm = QFrame()
+        sep_pm.setFrameShape(QFrame.HLine)
+        sep_pm.setStyleSheet("color:#1A2332;")
+        pmon.addWidget(sep_pm)
+
+        # Two-column grid
+        pm_grid = QGridLayout()
+        pm_grid.setSpacing(8)
+
+        def _pm_row(label):
+            lbl = QLabel(label)
+            lbl.setStyleSheet(_PARAM_LABEL)
+            val = QLabel("—")
+            val.setStyleSheet(_PARAM_VALUE)
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            return lbl, val
+
+        r0l, self._pm_capital     = _pm_row("Current Capital")
+        r1l, self._pm_return      = _pm_row("Total Return")
+        r2l, self._pm_dd          = _pm_row("Drawdown")
+        r3l, self._pm_cb          = _pm_row("Circuit Breaker")
+        r4l, self._pm_heat        = _pm_row("Portfolio Heat")
+        r5l, self._pm_streak      = _pm_row("Losing Streak")
+        r6l, self._pm_trades      = _pm_row("Total Trades")
+        r7l, self._pm_last10      = _pm_row("Last 10 Trades")
+
+        for i, (lbl, val) in enumerate([
+            (r0l, self._pm_capital), (r1l, self._pm_return),
+            (r2l, self._pm_dd),     (r3l, self._pm_cb),
+            (r4l, self._pm_heat),   (r5l, self._pm_streak),
+            (r6l, self._pm_trades), (r7l, self._pm_last10),
+        ]):
+            pm_grid.addWidget(lbl, i, 0)
+            pm_grid.addWidget(val, i, 1)
+
+        pmon.addLayout(pm_grid)
+        v.addWidget(prod_card)
+
         # ── Row 5: Correlation Matrix ─────────────────────────────
         corr_group = QFrame()
         corr_group.setObjectName("card")
@@ -728,6 +778,55 @@ class RiskManagementPage(QWidget):
                 self._alert_frame.setStyleSheet(_ALERT_CLEAR)
                 self._alert_lbl.setStyleSheet("color:#3CAA6C; font-size:13px;")
                 self._alert_lbl.setText("✓  All risk limits within acceptable range.")
+
+            # ── Production Monitor panel ──────────────────────
+            try:
+                if hasattr(_pe, "get_production_status"):
+                    ps = _pe.get_production_status()
+                    cap = ps.get("capital_usdt", 0)
+                    ret = ps.get("total_return_pct", 0)
+                    dd2 = ps.get("drawdown_pct", 0)
+                    cb  = ps.get("circuit_breaker_on", False)
+                    ht  = ps.get("portfolio_heat_pct", 0)
+                    sl  = ps.get("current_losing_streak", 0)
+                    tc  = ps.get("total_trades", 0)
+                    l10 = ps.get("last_10_outcomes", [])
+
+                    self._pm_capital.setText(f"${cap:,.2f}")
+                    ret_col = "#00CC77" if ret >= 0 else "#FF3355"
+                    self._pm_return.setText(f"<span style='color:{ret_col};font-weight:700'>{ret:+.2f}%</span>")
+                    self._pm_return.setTextFormat(Qt.RichText)
+
+                    dd_col2 = "#FF3355" if dd2 >= 10 else ("#FFB300" if dd2 >= 5 else "#00CC77")
+                    self._pm_dd.setText(f"<span style='color:{dd_col2};font-weight:700'>{dd2:.2f}%</span>")
+                    self._pm_dd.setTextFormat(Qt.RichText)
+
+                    if cb:
+                        self._pm_cb.setText("<span style='color:#FF3355;font-weight:800'>⛔ ACTIVE — no new trades</span>")
+                        self._pm_cb.setTextFormat(Qt.RichText)
+                    else:
+                        self._pm_cb.setText("<span style='color:#00CC77;font-weight:700'>✓ Clear</span>")
+                        self._pm_cb.setTextFormat(Qt.RichText)
+
+                    ht_col = "#FF3355" if ht >= 4.0 else ("#FFB300" if ht >= 3.0 else "#00CC77")
+                    self._pm_heat.setText(f"<span style='color:{ht_col};font-weight:700'>{ht:.2f}%</span>")
+                    self._pm_heat.setTextFormat(Qt.RichText)
+
+                    sl_col = "#FF3355" if sl >= 5 else ("#FFB300" if sl >= 3 else "#E8EBF0")
+                    self._pm_streak.setText(f"<span style='color:{sl_col};font-weight:700'>{sl} consecutive losses</span>")
+                    self._pm_streak.setTextFormat(Qt.RichText)
+
+                    self._pm_trades.setText(str(tc))
+
+                    outcome_html = " ".join(
+                        f"<span style='color:#00CC77;font-weight:700'>W</span>" if o == "W"
+                        else f"<span style='color:#FF3355;font-weight:700'>L</span>"
+                        for o in l10
+                    ) if l10 else "—"
+                    self._pm_last10.setText(outcome_html)
+                    self._pm_last10.setTextFormat(Qt.RichText)
+            except Exception as pm_exc:
+                logger.debug("RiskPage: production monitor refresh error: %s", pm_exc)
 
         except Exception as exc:
             logger.debug("RiskPage refresh error: %s", exc)

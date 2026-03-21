@@ -150,19 +150,24 @@ class TestTogglePersistence:
     def test_ae03_enable_saves_true(self):
         """AE-03: Enabling the toggle calls settings.set('scanner.auto_execute', True)."""
         from config.settings import settings
-        original = settings.get("scanner.auto_execute", False)
         try:
             settings.set("scanner.auto_execute", True)
             assert settings.get("scanner.auto_execute") is True
         finally:
-            settings.set("scanner.auto_execute", original)
+            # Restore production required value: scanner.auto_execute must always be True
+            # (CLAUDE.md: "MUST always be true — auto-execute on every restart")
+            settings.set("scanner.auto_execute", True)
 
     def test_ae04_disable_saves_false(self):
         """AE-04: Disabling the toggle calls settings.set('scanner.auto_execute', False)."""
         from config.settings import settings
-        settings.set("scanner.auto_execute", True)
-        settings.set("scanner.auto_execute", False)
-        assert settings.get("scanner.auto_execute") is False
+        try:
+            settings.set("scanner.auto_execute", True)
+            settings.set("scanner.auto_execute", False)
+            assert settings.get("scanner.auto_execute") is False
+        finally:
+            # Restore production required value after test
+            settings.set("scanner.auto_execute", True)
 
 
 # ─────────────────────────────────────────────────────────────

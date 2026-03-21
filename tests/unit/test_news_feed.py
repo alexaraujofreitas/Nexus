@@ -146,9 +146,9 @@ class TestUserAgentHeader:
 # ── NF-04: RSS feed registry ────────────────────────────────
 
 class TestRSSFeedRegistry:
-    def test_nf04a_at_least_5_feeds(self):
-        """NF-04a: Registry has at least 5 RSS feeds."""
-        assert len(_RSS_FEEDS) >= 5
+    def test_nf04a_at_least_4_feeds(self):
+        """NF-04a: Registry has at least 4 RSS feeds (The Block removed due to malformed XML)."""
+        assert len(_RSS_FEEDS) >= 4
 
     def test_nf04b_coindesk_url_updated(self):
         """NF-04b: CoinDesk URL is the modern /arc/ URL, not FeedBurner."""

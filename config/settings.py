@@ -34,9 +34,9 @@ DEFAULT_CONFIG = {
             "rsi_short_min": 30,
             "rsi_short_max": 55,
             "strength_base": 0.15,
-            "ema20_bonus": 0.25,
+            "ema20_bonus": 0.15,
             "macd_bonus": 0.20,
-            "adx_bonus_max": 0.40,
+            "adx_bonus_max": 0.30,
         },
         "momentum_breakout": {
             "entry_buffer_atr": 0.10,
@@ -81,12 +81,13 @@ DEFAULT_CONFIG = {
             "min_confidence": 0.60,
             "sl_atr_mult": 1.5,
             "tp_atr_mult": 2.0,
+            "max_timeframe": "30m",
         },
         "sentiment": {
             "min_signal": 0.35,
             "min_confidence": 0.55,
             "min_headlines": 3,
-            "max_age_minutes": 480,
+            "max_age_minutes": 90,
             "sl_atr_mult": 1.5,
             "tp_atr_mult": 2.5,
         },
@@ -227,6 +228,30 @@ DEFAULT_CONFIG = {
         "auto_execute_min_signal": 0.55,
         "auto_execute_regime_whitelist": ["TRENDING_UP", "TRENDING_DOWN", "RECOVERY"],
     },
+    # Phase 1 — Trade filters
+    "filters": {
+        "time_of_day": {
+            "enabled": True,
+            "start_hour_utc": 12,
+            "end_hour_utc": 21,
+        },
+        "volatility": {
+            "enabled": True,
+            "min_atr_ratio": 0.5,
+        },
+        "model_auto_disable": {
+            "enabled": False,
+            "min_trades": 20,              # absolute minimum before any criterion fires
+            "wr_threshold": 0.40,          # rolling WR below this is criterion 1
+            # v2 additional criteria (all must fail before global disable):
+            "expectancy_threshold": -0.10, # avg R < this = negative expected value
+            "pf_threshold": 0.85,          # profit factor below this after 30+ trades
+        },
+        "btc_trend": {
+            "enabled": False,
+            "strong_trend_margin_pct": 0.5,
+        },
+    },
     # Phase 1 settings
     "scanner": {
         "btc_only_mode": False,
@@ -253,9 +278,114 @@ DEFAULT_CONFIG = {
         "replay_buffer_size": 50000,
         "reward_leverage": 10.0,
         "train_every_n_candles": 10,
+        "shadow_only": True,
     },
     "orchestrator": {
         "veto_enabled": True,
+    },
+    # Phase 4 settings — OI signal
+    "oi_signal": {
+        "enabled": True,
+        # Independent ablation toggles — disable individually to measure contribution:
+        #   oi_modifier_enabled=false  → removes trend-confirm/weak-trend/spike logic
+        #   liq_modifier_enabled=false → removes liquidation cluster bonus
+        "oi_modifier_enabled": True,
+        "liq_modifier_enabled": True,
+        "spike_threshold_pct": 30.0,
+        "trend_confirm_bonus": 0.05,
+        "weak_trend_penalty": 0.03,
+        # liq_clusters_enabled retained for backward-compat (superseded by liq_modifier_enabled)
+        "liq_clusters_enabled": True,
+        "liq_density_threshold": 0.70,
+        "liq_cluster_bonus": 0.04,
+        # Session 23: data quality gate — suppress modifier when data quality < this score
+        # 0=no_agent, 1=no_data, 2=stale/spike, 3=fresh_normal. Default 2 = require fresh.
+        "min_data_quality": 2,
+    },
+    # Session 23: Correlation dampening — reduces double-counting of correlated signals
+    "correlation_dampening": {
+        "enabled": True,
+        # Global minimum factor (floor) — correlated models never get less than this weight
+        "min_factor": 0.50,
+    },
+    # Session 23: Portfolio correlation guard
+    "portfolio_guard": {
+        "enabled": True,
+        # Hard block when this many same-direction correlated positions are already open
+        "max_same_group_same_dir": 4,
+        # Size multipliers for N=0,1,2,3,4 same-group same-direction positions
+        "multipliers": [1.00, 0.80, 0.55, 0.30, 0.10],
+    },
+    # Session 24: Symbol Priority & Allocation System
+    # Weights are ranking-only — they never affect signals, sizing, or risk.
+    # adjusted_score = base_score × symbol_weight; candidates ranked by adjusted_score.
+    "symbol_allocation": {
+        # STATIC — fixed weights per symbol
+        # DYNAMIC — weights switch between three profiles based on BTC dominance
+        "mode": "STATIC",
+        # ── Static weights (Study 4 baseline) ────────────────────────────────
+        "static_weights": {
+            "BTC/USDT": 1.0,
+            "ETH/USDT": 1.2,
+            "SOL/USDT": 1.3,
+            "BNB/USDT": 0.8,
+            "XRP/USDT": 0.8,
+        },
+        # ── BTC Dominance (DYNAMIC mode) ─────────────────────────────────────
+        # User updates btc_dominance_pct manually or via future agent integration.
+        "btc_dominance_pct":  50.0,    # current BTC dominance reading
+        "btc_dominance_high": 55.0,    # above → BTC_DOMINANT
+        "btc_dominance_low":  45.0,    # below → ALT_SEASON (between → NEUTRAL)
+        # ── Regime profiles (DYNAMIC mode) ───────────────────────────────────
+        "profiles": {
+            # BTC dominance > high_threshold: favour BTC/ETH over alts
+            "btc_dominant": {
+                "BTC/USDT": 1.4,
+                "ETH/USDT": 1.1,
+                "SOL/USDT": 0.9,
+                "BNB/USDT": 0.7,
+                "XRP/USDT": 0.7,
+            },
+            # btc_dominance_low ≤ dominance ≤ btc_dominance_high: balanced
+            "neutral": {
+                "BTC/USDT": 1.0,
+                "ETH/USDT": 1.2,
+                "SOL/USDT": 1.3,
+                "BNB/USDT": 0.8,
+                "XRP/USDT": 0.8,
+            },
+            # BTC dominance < low_threshold: alt season, favour alts
+            "alt_season": {
+                "BTC/USDT": 0.7,
+                "ETH/USDT": 1.2,
+                "SOL/USDT": 1.5,
+                "BNB/USDT": 1.0,
+                "XRP/USDT": 1.0,
+            },
+        },
+    },
+    # ── Performance Framework (Session 27) ───────────────────────────────────
+    # RAG threshold system — controls when verdicts are issued.
+    # Min trades before any non-INSUFFICIENT_DATA verdict.
+    "performance_thresholds": {
+        "min_trades_for_verdict":    20,    # trades below this → INSUFFICIENT_DATA
+        # Hard performance block thresholds (applied in paper_executor.submit)
+        "hard_block_pf_below":       1.0,   # portfolio PF must be below this
+        "hard_block_wr_below":       0.40,  # portfolio WR must be below this
+        "hard_block_min_trades":     30,    # minimum trades before hard block can fire
+    },
+    # Scale manager — phase definitions (informational, actual phases defined in code)
+    "scale_manager": {
+        "current_phase":             1,     # updated by operator after manual advancement
+        "phase1_risk_pct":           0.005, # 0.5%
+        "phase2_risk_pct":           0.0075,# 0.75%
+        "phase3_risk_pct":           0.010, # 1.0%
+        "phase1_min_trades":         50,    # trades in phase 1 before advancement possible
+        "phase2_min_trades":         50,    # trades in phase 2 before advancement possible
+    },
+    # Phase 3 settings — Probability calibrator
+    "probability_calibrator": {
+        "enabled": True,
     },
     # Phase 4 settings
     "multi_asset": {
@@ -310,10 +440,10 @@ DEFAULT_CONFIG = {
         "crash_short_multiplier": 1.5,
     },
     "dynamic_confluence": {
-        "enabled": True,
-        "base_threshold": 0.45,
-        "min_floor": 0.28,
-        "max_ceiling": 0.65,
+        "enabled": False,   # PRODUCTION: fixed threshold 0.20 per Study 4 backtest
+        "base_threshold": 0.20,
+        "min_floor": 0.20,
+        "max_ceiling": 0.20,
         "regime_confidence_high": 0.70,
         "regime_confidence_low": 0.40,
         "vol_expansion_factor": 1.15,
@@ -335,7 +465,11 @@ DEFAULT_CONFIG = {
         "regime_uncertainty_penalty": 0.15,
     },
     "risk_engine": {
-        "portfolio_heat_max_pct": 0.06,
+        # ── Production sizing config (Study 4 Moderate scenario) ──
+        "sizing_mode": "risk_based",       # "risk_based" | "kelly"
+        "risk_pct_per_trade": 0.5,         # % of capital to risk per trade — Phase 1 (0.5%)
+        # ── Portfolio heat ──────────────────────────────────────────
+        "portfolio_heat_max_pct": 0.04,   # 4% max portfolio heat — Study 4 validated
         "vol_adjusted_sizing": True,
         "atr_percentile_lookback_days": 90,
         "loss_streak_trigger": 3,

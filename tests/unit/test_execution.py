@@ -354,19 +354,71 @@ def test_pe009_adjust_stop_nonexistent_symbol_returns_false(paper_executor):
 @pytest.mark.unit
 def test_pe010_partial_close_reduces_quantity(paper_executor):
     """
-    partial_close(symbol, 0.5) must halve the position's quantity.
+    partial_close(symbol, 0.5) must halve the position's quantity AND size_usdt.
     """
     c = make_candidate(symbol="BTC/USDT", entry=65_000.0,
                        sl=63_700.0, tp=68_000.0, size=200.0)
     paper_executor.submit(c)
 
-    original_qty = paper_executor._positions["BTC/USDT"][0].quantity
+    pos = paper_executor._positions["BTC/USDT"][0]
+    original_qty      = pos.quantity
+    original_size_usdt = pos.size_usdt
     result = paper_executor.partial_close("BTC/USDT", 0.5)
 
     assert result is True
-    new_qty = paper_executor._positions["BTC/USDT"][0].quantity
-    # Quantity should be ~50% of original (within floating-point tolerance)
-    assert new_qty == pytest.approx(original_qty * 0.5, rel=1e-5)
+    # Quantity must halve
+    assert pos.quantity    == pytest.approx(original_qty       * 0.5, rel=1e-5)
+    # size_usdt must halve so available_capital / drawdown_pct are correct
+    assert pos.size_usdt   == pytest.approx(original_size_usdt * 0.5, rel=1e-5)
+
+
+@pytest.mark.unit
+def test_pe010_partial_close_realises_pnl_into_capital(paper_executor):
+    """
+    partial_close must credit realised P&L to _capital immediately.
+    Scenario: buy at 65,000 at t=0; price rises to 65,650 (+1%);
+    close 50% → P&L on closed fraction should increase _capital.
+    """
+    size     = 200.0
+    entry    = 65_000.0
+    c = make_candidate(symbol="BTC/USDT", entry=entry,
+                       sl=63_700.0, tp=68_000.0, size=size)
+    paper_executor.submit(c)
+
+    # Simulate a price move so current_price != entry_price
+    pos = paper_executor._positions["BTC/USDT"][0]
+    new_price = 65_650.0   # +1 % gain
+    pos.current_price    = new_price
+    pos.unrealized_pnl   = (new_price - entry) / entry * 100   # ≈ +1 %
+
+    initial_capital = paper_executor._capital
+    paper_executor.partial_close("BTC/USDT", 0.5)
+
+    # Closed qty = 50 % of (200 / 65_000) = 0.001538...
+    # P&L = (65_650 - 65_000) * closed_qty  > 0
+    assert paper_executor._capital > initial_capital
+
+
+@pytest.mark.unit
+def test_pe010_partial_close_loss_reduces_capital(paper_executor):
+    """
+    Partial close at a loss must reduce _capital by the realised loss.
+    """
+    size  = 200.0
+    entry = 65_000.0
+    c = make_candidate(symbol="BTC/USDT", entry=entry,
+                       sl=63_700.0, tp=68_000.0, size=size)
+    paper_executor.submit(c)
+
+    pos = paper_executor._positions["BTC/USDT"][0]
+    new_price = 64_350.0   # −1 % loss
+    pos.current_price  = new_price
+    pos.unrealized_pnl = (new_price - entry) / entry * 100
+
+    initial_capital = paper_executor._capital
+    paper_executor.partial_close("BTC/USDT", 0.5)
+
+    assert paper_executor._capital < initial_capital
 
 
 @pytest.mark.unit
@@ -414,7 +466,6 @@ def test_pe010_invalid_reduce_pct_returns_false(paper_executor):
 def test_available_capital_decreases_when_position_open(paper_executor):
     """
     Opening a position must reduce available_capital by the position size.
-    Uses ETH/USDT (BTC-first multiplier = 1.0) to get exact position size.
     """
     before = paper_executor.available_capital
     paper_executor.submit(make_candidate(symbol="ETH/USDT", size=200.0,

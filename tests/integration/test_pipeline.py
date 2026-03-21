@@ -114,11 +114,13 @@ def test_pipe001_full_pipeline_happy_path(cs, gate, paper_executor):
     assert candidate.score  >= SCORE_THRESHOLD
 
     # ── Step 3: RiskGate ───────────────────────────────────────
+    # Use 100_000 to match PaperExecutor's starting capital (which ConfluenceScorer
+    # reads for risk-based sizing — position sizes are computed from 100k).
     candidate.approved = False   # ensure we're testing validation, not preset flag
     result = gate.validate(
         candidate,
         open_positions          = [],
-        available_capital_usdt  = 10_000.0,
+        available_capital_usdt  = 100_000.0,
         portfolio_drawdown_pct  = 0.0,
     )
 
@@ -173,7 +175,7 @@ def test_pipe002_risk_gate_blocks_duplicate_position(cs, gate, paper_executor):
     result_diff = gate.validate(
         candidate_diff_condition,
         open_positions         = open_positions,
-        available_capital_usdt = 10_000.0,
+        available_capital_usdt = 100_000.0,   # match PaperExecutor starting capital
         portfolio_drawdown_pct = 0.0,
     )
     # Different models_fired → different condition → RiskGate should approve
@@ -254,7 +256,7 @@ def test_pipe004_stop_loss_closes_position_and_updates_capital(cs, gate, paper_e
     candidate = gate.validate(
         candidate,
         open_positions         = [],
-        available_capital_usdt = 10_000.0,
+        available_capital_usdt = 100_000.0,   # match PaperExecutor starting capital
         portfolio_drawdown_pct = 0.0,
     )
     assert candidate.approved, (

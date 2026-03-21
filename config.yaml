@@ -202,6 +202,9 @@ backtesting:
   walk_forward_validate_months: 6.0
 confluence:
   min_direction_dominance: 0.3
+correlation_dampening:
+  enabled: true
+  min_factor: 0.5
 crash_detector:
   enabled: true
   eval_interval_seconds: 60
@@ -231,10 +234,11 @@ data:
 disabled_models:
 - mean_reversion
 - liquidity_sweep
+- vwap_reversion
 dynamic_confluence:
-  base_threshold: 0.52
-  enabled: true
-  max_ceiling: 0.75
+  base_threshold: 0.2
+  enabled: false
+  max_ceiling: 0.2
   min_floor: 0.45
   regime_confidence_high: 0.7
   regime_confidence_low: 0.4
@@ -260,6 +264,23 @@ expected_value:
   regime_uncertainty_penalty: 0.15
   score_midpoint: 0.5
   sigmoid_steepness: 2.5
+filters:
+  btc_trend:
+    enabled: false
+    strong_trend_margin_pct: 0.5
+  model_auto_disable:
+    enabled: false
+    expectancy_threshold: -0.1
+    min_trades: 20
+    pf_threshold: 0.85
+    wr_threshold: 0.4
+  time_of_day:
+    enabled: false
+    end_hour_utc: 21
+    start_hour_utc: 12
+  volatility:
+    enabled: true
+    min_atr_ratio: 0.5
 finbert:
   enabled: true
   min_confidence: 0.55
@@ -326,6 +347,7 @@ models:
     strength_base: 0.35
     vol_mult_min: 1.5
   order_book:
+    max_timeframe: 30m
     min_confidence: 0.6
     min_signal: 0.35
     sl_atr_mult: 1.5
@@ -419,8 +441,35 @@ notifications:
     enabled: false
     from_number: ''
     to_number: ''
+oi_signal:
+  enabled: true
+  liq_cluster_bonus: 0.04
+  liq_clusters_enabled: true
+  liq_density_threshold: 0.7
+  liq_modifier_enabled: true
+  min_data_quality: 2
+  oi_modifier_enabled: true
+  spike_threshold_pct: 30.0
+  trend_confirm_bonus: 0.05
+  weak_trend_penalty: 0.03
 orchestrator:
   veto_enabled: true
+performance_thresholds:
+  hard_block_min_trades: 30
+  hard_block_pf_below: 1.0
+  hard_block_wr_below: 0.4
+  min_trades_for_verdict: 20
+portfolio_guard:
+  enabled: true
+  max_same_group_same_dir: 4
+  multipliers:
+  - 1.0
+  - 0.8
+  - 0.55
+  - 0.3
+  - 0.1
+probability_calibrator:
+  enabled: true
 regime:
   hmm_weight: 0.35
   rule_weight: 0.65
@@ -586,17 +635,27 @@ risk_engine:
   max_positions_per_symbol: 10
   max_trades_per_scan_cycle: 1
   min_position_pct: 0.003
-  portfolio_heat_max_pct: 0.06
+  portfolio_heat_max_pct: 0.04
+  risk_pct_per_trade: 0.5
+  sizing_mode: risk_based
   vol_adjusted_sizing: true
 rl:
   enabled: true
   model_dir: ''
   replay_buffer_size: 50000
   reward_leverage: 10.0
+  shadow_only: true
   train_every_n_candles: 10
 rlmf:
   enabled: false
   feedback_interval_episodes: 50
+scale_manager:
+  current_phase: 1
+  phase1_min_trades: 50
+  phase1_risk_pct: 0.005
+  phase2_min_trades: 50
+  phase2_risk_pct: 0.0075
+  phase3_risk_pct: 0.01
 scanner:
   auto_execute: true
   auto_execute_cooldown_seconds: 30
@@ -630,3 +689,33 @@ staged_candidates:
   max_active: 20
   retention_seconds: 86400
   ttl_seconds: 10800
+symbol_allocation:
+  btc_dominance_high: 55.0
+  btc_dominance_low: 45.0
+  btc_dominance_pct: 50.0
+  mode: STATIC
+  profiles:
+    alt_season:
+      BNB/USDT: 1.0
+      BTC/USDT: 0.7
+      ETH/USDT: 1.2
+      SOL/USDT: 1.5
+      XRP/USDT: 1.0
+    btc_dominant:
+      BNB/USDT: 0.7
+      BTC/USDT: 1.4
+      ETH/USDT: 1.1
+      SOL/USDT: 0.9
+      XRP/USDT: 0.7
+    neutral:
+      BNB/USDT: 0.8
+      BTC/USDT: 1.0
+      ETH/USDT: 1.2
+      SOL/USDT: 1.3
+      XRP/USDT: 0.8
+  static_weights:
+    BNB/USDT: 0.8
+    BTC/USDT: 1.0
+    ETH/USDT: 1.2
+    SOL/USDT: 1.3
+    XRP/USDT: 0.8

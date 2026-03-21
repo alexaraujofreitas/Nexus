@@ -23,9 +23,9 @@
 #  • Subscribes to Topics.POSITION_MONITOR_UPDATED for dynamic actions
 #  • Supports adjust_stop, partial_close, full_close, tighten_stop actions
 #
-# BTC-first integration:
-#  • Applies size multiplier from btc_priority filter to capital allocation
-#  • BTC positions receive 1.5x size multiplier
+# Allocation:
+#  • PositionSizer output is final — no per-symbol post-sizing overrides
+#  • SymbolAllocator is the single allocation mechanism (Session 25)
 #
 # ⚠  LIVE MODE PLACES REAL ORDERS WITH REAL MONEY ⚠
 # ============================================================
@@ -323,25 +323,12 @@ class LiveExecutor:
             logger.warning("LiveExecutor._place_order: invalid entry price for %s", symbol)
             return False
 
-        # Use position_size_usdt from the candidate
+        # PositionSizer output (position_size_usdt) is final — SymbolAllocator
+        # is the single allocation mechanism.  No per-symbol overrides applied here.
         size_usdt = candidate.position_size_usdt
         if size_usdt <= 0:
             logger.warning("LiveExecutor._place_order: zero size_usdt for %s", symbol)
             return False
-
-        # Apply BTC-first size multiplier
-        try:
-            from core.scanning.btc_priority import get_btc_priority_filter
-            btc_filter = get_btc_priority_filter()
-            size_multiplier = btc_filter.get_size_multiplier(symbol)
-            size_usdt = size_usdt * size_multiplier
-            if size_multiplier != 1.0:
-                logger.info(
-                    "LiveExecutor: applied BTC-first multiplier %.2f for %s",
-                    size_multiplier, symbol
-                )
-        except Exception as exc:
-            logger.debug("LiveExecutor: BTC-first multiplier error (using 1.0): %s", exc)
 
         amount = size_usdt / entry_ref   # approximate base-currency quantity
 

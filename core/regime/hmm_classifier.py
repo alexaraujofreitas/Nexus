@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 import numpy as np
 import pandas as pd
 from typing import Optional, Tuple
@@ -194,7 +195,12 @@ class HMMClassifier:
                 random_state=42,
                 verbose=False,
             )
-            model.fit(X)
+            # Suppress hmmlearn UserWarnings (transmat_ zero sum, convergence) during fit.
+            # These are expected on low-variance price series and do not affect correctness.
+            # Genuine failures (NaN / ValueError) are caught by the outer except block.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                model.fit(X)
 
             # Compute state statistics for dynamic mapping
             state_seq = model.predict(X)
