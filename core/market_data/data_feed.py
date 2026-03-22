@@ -9,7 +9,7 @@ import time
 from typing import Optional, Dict, List
 from enum import Enum
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QThread, QTimer, Signal, Slot
 
 from core.event_bus import bus, Topics
 from config.settings import settings
@@ -54,6 +54,10 @@ class LiveDataFeed(QThread):
 
     tick_received = Signal(dict)   # {symbol: {last, change, volume, ...}}
     feed_mode_changed = Signal(str)  # "websocket" | "rest_polling" | "rest_fallback"
+    # Internal signal: routes tickers to PaperExecutor on the MAIN thread via
+    # QueuedConnection (emitted from background thread, QThread object lives
+    # in main thread so AutoConnection → QueuedConnection automatically).
+    _tickers_for_pe = Signal(dict)
 
     def __init__(self, exchange_manager=None, symbols: List[str] = None, timeframes: List[str] = None):
         super().__init__()
@@ -97,6 +101,11 @@ class LiveDataFeed(QThread):
         """Start the data feed thread."""
         if not self._running:
             self._running = True
+            # Wire PaperExecutor tick processing through the main thread.
+            # _tickers_for_pe is emitted from the background QThread; since this
+            # QThread object's affinity is the main thread, AutoConnection →
+            # QueuedConnection → _dispatch_pe_ticks runs on main thread.
+            self._tickers_for_pe.connect(self._dispatch_pe_ticks)
             self.start()
             logger.info("Live data feed started — %d symbols, WS available: %s",
                         len(self._symbols), _WS_AVAILABLE)
@@ -317,20 +326,36 @@ class LiveDataFeed(QThread):
                 self.tick_received.emit(tickers)
                 bus.publish(Topics.TICK_UPDATE, tickers, source="data_feed")
 
-                # Notify PaperExecutor for stop-loss/take-profit checks
-                try:
-                    from core.execution.paper_executor import paper_executor as _pe
-                    for symbol, ticker in tickers.items():
-                        price = ticker.get("last") or ticker.get("close")
-                        if price:
-                            _pe.on_tick(symbol, float(price))
-                except Exception as _exc:
-                    logger.debug("PaperExecutor tick update error: %s", _exc)
+                # Route PaperExecutor SL/TP checks to the main thread via
+                # _tickers_for_pe signal (QueuedConnection).  Do NOT call
+                # _pe.on_tick() directly here — this method runs in the
+                # background QThread and direct bus.publish(POSITION_UPDATED)
+                # from here invokes GUI callbacks cross-thread, crashing Qt.
+                self._tickers_for_pe.emit(tickers)
 
         except Exception as e:
             logger.warning("REST feed poll error: %s", e)
             # Retry after a longer interval on error
             self._timer.setInterval(5000)
+
+    @Slot(dict)
+    def _dispatch_pe_ticks(self, tickers: dict) -> None:
+        """
+        Called on the MAIN thread (via _tickers_for_pe QueuedConnection).
+
+        Notifies PaperExecutor of price updates so it can check stop-loss /
+        take-profit levels and publish POSITION_UPDATED.  Running on the main
+        thread guarantees that bus.publish(POSITION_UPDATED) invokes GUI
+        callbacks safely — no cross-thread Qt crash.
+        """
+        try:
+            from core.execution.paper_executor import paper_executor as _pe
+            for symbol, ticker in tickers.items():
+                price = ticker.get("last") or ticker.get("close")
+                if price:
+                    _pe.on_tick(symbol, float(price))
+        except Exception as exc:
+            logger.debug("PaperExecutor tick dispatch error: %s", exc)
 
     def _process_ticker(self, symbol: str, ticker: dict):
         """
@@ -348,14 +373,9 @@ class LiveDataFeed(QThread):
                 if elapsed_ms > 0:
                     self._last_ws_latency_ms = elapsed_ms
 
-            # Notify PaperExecutor
-            try:
-                from core.execution.paper_executor import paper_executor as _pe
-                price = ticker.get("last") or ticker.get("close")
-                if price:
-                    _pe.on_tick(symbol, float(price))
-            except Exception as _exc:
-                logger.debug("PaperExecutor tick update error: %s", _exc)
+            # Route PaperExecutor SL/TP check to main thread (same reason
+            # as _poll_rest — do NOT call _pe.on_tick() from background thread).
+            self._tickers_for_pe.emit(normalized)
 
         except Exception as e:
             logger.debug("Ticker process error for %s: %s", symbol, e)

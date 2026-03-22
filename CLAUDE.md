@@ -1734,3 +1734,44 @@ After 50 trades, also check:
 - **1,297/1,297 pass** (1,104 unit/learning/evaluation/validation/integration + 193 intelligence)
 - 9 skipped (GPU), 0 failures
 - 30/30 pre-launch verification checks pass
+
+## Session 29 — Crash Fix, DB Cleanup, CoinglassAgent (2026-03-22)
+
+### Bug 1 — Cross-Thread Qt Crash (Critical — caused every restart to crash within 15s)
+- **Symptom**: NexusTrader crashed ~15 seconds after every startup with no Python traceback. Log always ended with 3 `position.updated` events immediately after first REST poll tick.
+- **Root cause**: `data_feed._poll_rest()` runs in a background `QThread`. It called `_pe.on_tick()` directly, which calls `bus.publish(Topics.POSITION_UPDATED, ...)`. `bus.publish()` invokes all Python callbacks synchronously from the calling thread. GUI subscribers (`OrdersPositionsPage._on_position_updated`, etc.) were registered as Python callbacks — they executed directly in the background thread, touching Qt widgets from a non-main thread → Qt fatal crash (hard kill, no traceback).
+- **Root cause evidence**: Log ends at 12:55:05 immediately after `tick_received` → 3x `position.updated` events; identical pattern to Session 10 WS crash at 10Hz; same code path.
+- **Why it wasn't caught before**: Earlier sessions had fewer/no open positions, so `_pe.on_tick()` returned immediately without publishing `POSITION_UPDATED`. With 3 open positions (BNB, XRP, ETH), 3 GUI callbacks fired → guaranteed crash.
+- **Fix** (`core/market_data/data_feed.py`):
+  1. Added `_tickers_for_pe = Signal(dict)` — internal signal with `QueuedConnection` to main thread
+  2. In `start_feed()` (main thread): `self._tickers_for_pe.connect(self._dispatch_pe_ticks)`
+  3. Added `@Slot(dict) _dispatch_pe_ticks(tickers)` — runs on main thread via QueuedConnection; calls `_pe.on_tick()` safely
+  4. Removed direct `_pe.on_tick()` calls from `_poll_rest()` and `_process_ticker()`; replaced with `self._tickers_for_pe.emit(tickers)`
+- **Why this works**: `LiveDataFeed` is a `QThread` object created in the main thread (thread affinity = main thread). When `_tickers_for_pe.emit()` is called from `run()` (background thread), Qt detects receiver thread ≠ sender thread → uses `QueuedConnection` → `_dispatch_pe_ticks` runs on main thread → `_pe.on_tick()` → `bus.publish(POSITION_UPDATED)` → GUI callbacks called from main thread → safe.
+- **Rule**: NEVER call `_pe.on_tick()` directly from any background thread (QThread, asyncio, ThreadPoolExecutor). Always route through a Qt signal so execution is guaranteed on the main thread.
+
+### Bug 2 — coinglass_agent Module Missing (OI modifiers always suppressed)
+- **Symptom**: `assess_oi_data_quality()` always returned `(0, "agent_import_error")`; OI modifiers always suppressed since Session 22.
+- **Root cause**: `oi_signal.py` imported `from core.agents.coinglass_agent import coinglass_agent` but the file was never created.
+- **Fix**: Created `core/agents/coinglass_agent.py` with full `CoinglassAgent` implementation (5-min TTL, 12-bucket 1h OI history, `threading.RLock()`, API key vault loading, graceful error handling).
+- **Subtlety**: Used `RLock` not `Lock` — `get_oi_data()` acquires the lock then calls `_build_result()` which also acquires it. `RLock` allows same-thread re-acquisition; `Lock` would deadlock.
+
+### Bug 3 — LiquidationIntelligenceAgent.get_symbol_data() Missing
+- **Symptom**: `AttributeError: 'LiquidationIntelligenceAgent' object has no attribute 'get_symbol_data'`
+- **Fix**: Added `get_symbol_data(symbol)` method that reads `self._cache` dict and returns `state.to_dict()` or `{}` on miss/stale.
+
+### DB Cleanup
+- Deleted 2 BTC/USDT test trades (id=1, id=2) from `paper_trades`; capital restored to $100,000 baseline.
+- Added `scripts/remove_test_trades.py` utility for future cleanup (requires confirmation).
+
+### New Tests
+- `tests/unit/test_coinglass_agent.py` — 15 tests (CG-01 through CG-15)
+
+### Test Results
+- **1,288/1,288 pass** (unit/learning/evaluation/validation), 9 skipped (GPU), 0 failures
+
+### Rule — Cross-Thread Qt Safety
+- `bus.publish()` calls Python callbacks synchronously from the calling thread.
+- Any code that calls `bus.publish()` from a background thread (QThread, asyncio, ThreadPoolExecutor) will invoke GUI subscribers cross-thread → Qt crash.
+- Pattern for safe background→main thread dispatch: use a `Signal` on a `QThread` object (whose affinity is the main thread) → AutoConnection becomes QueuedConnection → slot runs on main thread.
+- Specifically: `_pe.on_tick()` MUST only be called from the main thread.
