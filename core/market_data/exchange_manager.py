@@ -5,6 +5,7 @@
 
 import logging
 import threading
+import time as _time
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -57,6 +58,9 @@ class ExchangeManager:
         self._exchange_model: Optional[ExchangeModel] = None
         self._markets: dict = {}
         self._lock = threading.RLock()
+        self._last_fetch_at: float = 0.0    # epoch seconds of last successful fetch_tickers
+        self._last_latency_ms: int = 0       # round-trip ms of last successful fetch_tickers
+        self._mode: str = "Unknown"          # "Live", "Demo Trading", "Testnet", or "Unknown"
         self._initialized = True
 
     # ── Initialization ─────────────────────────────────────────
@@ -200,6 +204,10 @@ class ExchangeManager:
             else:
                 exchange_mode = "live"
 
+            # Store mode for System Health display
+            self._mode = {"demo": "Demo Trading", "sandbox": "Testnet",
+                          "live": "Live"}.get(exchange_mode, "Unknown")
+
             bus.publish(Topics.EXCHANGE_CONNECTED,
                         {"name": data["name"], "connected": True,
                          "exchange_mode": exchange_mode},
@@ -236,6 +244,21 @@ class ExchangeManager:
         """
         with self._lock:
             return self._ws_exchange
+
+    @property
+    def last_fetch_at(self) -> float:
+        """Epoch seconds of the last successful fetch_tickers() call. 0.0 if none yet."""
+        return self._last_fetch_at
+
+    @property
+    def last_latency_ms(self) -> int:
+        """Round-trip milliseconds of the last successful fetch_tickers() call."""
+        return self._last_latency_ms
+
+    @property
+    def mode(self) -> str:
+        """Human-readable exchange mode: 'Live', 'Demo Trading', 'Testnet', or 'Unknown'."""
+        return self._mode
 
     def is_connected(self) -> bool:
         return self._exchange is not None
@@ -303,7 +326,11 @@ class ExchangeManager:
         if not ex:
             return {}
         try:
+            _t0 = _time.time()
             raw = ex.fetch_tickers(symbols)
+            _elapsed_ms = int((_time.time() - _t0) * 1000)
+            self._last_fetch_at = _time.time()
+            self._last_latency_ms = _elapsed_ms
             result = {}
             for sym, t in raw.items():
                 result[sym] = {

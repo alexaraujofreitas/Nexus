@@ -1813,7 +1813,24 @@ class IDSSScannerTab(QWidget):
         self._sig_exchange_ready.emit()
 
     def _start_scanner_now(self):
-        """Actually start the scanner (called after exchange is ready)."""
+        """Schedule scanner start with an 8s GPU/RL init delay.
+
+        Delays the first concurrent OHLCV prefetch by 8 seconds to allow
+        FinBERT model loading and RL CUDA context initialisation to complete.
+        Without this window, a race between ThreadPoolExecutor threads and
+        GPU initialisation can cause a native-level process crash with no
+        Python traceback (observed 2026-03-22, crashed 6s after startup).
+        """
+        if self._idss and self._auto_running:
+            from PySide6.QtCore import QTimer as _QT
+            _QT.singleShot(8_000, self._do_start_scanner)
+            logger.info("IDSSScannerTab: auto-scan deferred 8s for GPU/RL init window")
+            self._status_lbl.setText(
+                "Status: <b style='color:#1E90FF'>Starting in 8s…</b>"
+            )
+
+    def _do_start_scanner(self):
+        """Inner: called after 8s delay — actually starts the IDSS scanner."""
         if self._idss and self._auto_running:
             try:
                 if not self._idss._running:

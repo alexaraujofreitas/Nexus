@@ -745,24 +745,39 @@ class NotificationManager:
             from core.execution.paper_executor import paper_executor as _pe
             stats = _pe.get_stats()
 
-            data["portfolio_value"]  = round(_pe._capital, 2)
+            # Compute true total equity = free cash + mark-to-market value of open positions.
+            # _capital alone is settled cash only — it does NOT include unrealized P&L.
+            # This matches the Dashboard's equity figure.
+            _open_flat = [p for pos_list in _pe._positions.values() for p in pos_list]
+            _locked     = sum(p.size_usdt for p in _open_flat)
+            _mtm_value  = sum(p.size_usdt * (1 + p.unrealized_pnl / 100) for p in _open_flat)
+            _total_equity = (_pe._capital - _locked) + _mtm_value
+
+            # Unrealized P&L in USDT across all open positions
+            _unrealized_usdt = sum(
+                p.size_usdt * (p.unrealized_pnl / 100) for p in _open_flat
+            )
+
+            data["portfolio_value"]  = round(_total_equity, 2)
             data["available_cash"]   = round(_pe.available_capital, 2)
             data["win_rate"]         = stats.get("win_rate", 0.0)
             data["total_trades"]     = stats.get("total_trades", 0)
             data["open_positions"]   = stats.get("open_positions", 0)
 
-            # Today's P&L — sum closed trades where closed_at is today (UTC)
+            # Today's P&L = closed trades realised today + current unrealized P&L on open positions.
+            # This mirrors what the Dashboard equity curve reflects in real time.
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            today_pnl = 0.0
+            today_pnl_closed = 0.0
             for t in _pe._closed_trades:
                 closed_at = t.get("closed_at", "")
                 if isinstance(closed_at, str) and closed_at.startswith(today_str):
-                    today_pnl += float(t.get("pnl_usdt", 0))
+                    today_pnl_closed += float(t.get("pnl_usdt") or 0)
+            today_pnl = today_pnl_closed + _unrealized_usdt
             data["today_pnl"] = round(today_pnl, 2)
 
-            # Today P&L as % of portfolio
-            portfolio = data["portfolio_value"]
-            data["today_pnl_pct"] = round(today_pnl / portfolio * 100, 2) if portfolio else 0.0
+            # Today P&L as % of initial capital (so the % reflects gain/loss vs starting equity)
+            _initial = _pe._initial_capital or _pe._capital or 1.0
+            data["today_pnl_pct"] = round(today_pnl / _initial * 100, 2)
 
         except Exception as exc:
             logger.debug("NotificationManager: health check portfolio data error — %s", exc)

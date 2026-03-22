@@ -180,13 +180,15 @@ class DashboardPage(QWidget):
     _sig_feed_active        = Signal(bool)
     _sig_tickers            = Signal(object)      # tickers dict
     _sig_signal_confirmed   = Signal(object)      # event data dict
+    _sig_scanner_status     = Signal(str, str)    # status text, color
+    _sig_last_trade         = Signal(str, str)    # status text, color
 
     def __init__(self, parent=None):
         super().__init__(parent)
         # Session-level counters for the signals card
-        self._signals_today   = 0
-        self._confirmed_today = 0
-        self._rejected_today  = 0
+        self._signals_today      = 0
+        self._confirmed_today    = 0
+        self._trades_opened_today = 0
         self._build()
         self._wire_signals()
         self._subscribe()
@@ -194,6 +196,8 @@ class DashboardPage(QWidget):
         QTimer.singleShot(500,  self._refresh_from_executor)
         # Start live feed for default watch symbols
         QTimer.singleShot(1500, self._start_feed)
+        # Populate scanner + last trade rows from current runtime state
+        QTimer.singleShot(2000, self._update_scanner_row_startup)
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -235,18 +239,18 @@ class DashboardPage(QWidget):
         self._card_portfolio  = MetricCard("PORTFOLIO VALUE", "—", "Paper mode")
         self._card_pnl        = MetricCard("TODAY'S P&L", "+$0.00", "0.00% today", "#00CC77")
         self._card_positions  = MetricCard("OPEN POSITIONS", "0", "IDSS scanner")
-        self._card_strategies = MetricCard("ACTIVE STRATEGIES", "0", "0 live · 0 shadow")
+        self._card_strategies = MetricCard("ACTIVE STRATEGIES", "0", "0 active · 0 disabled")
         self._card_winrate    = MetricCard("WIN RATE (30D)", "—", "No trades yet")
-        self._card_sharpe     = MetricCard("SHARPE RATIO", "—", "30-day rolling")
+        self._card_heat       = MetricCard("PORTFOLIO HEAT", "0.0%", "% capital at risk")
         self._card_drawdown   = MetricCard("MAX DRAWDOWN", "0.00%", "Current drawdown")
-        self._card_signals    = MetricCard("SIGNALS TODAY", "0", "0 confirmed · 0 rejected")
+        self._card_signals    = MetricCard("SIGNALS TODAY", "0", "0 evaluated · 0 traded")
 
         grid.addWidget(self._card_portfolio,  0, 0)
         grid.addWidget(self._card_pnl,        0, 1)
         grid.addWidget(self._card_positions,  0, 2)
         grid.addWidget(self._card_strategies, 0, 3)
         grid.addWidget(self._card_winrate,    1, 0)
-        grid.addWidget(self._card_sharpe,     1, 1)
+        grid.addWidget(self._card_heat,       1, 1)
         grid.addWidget(self._card_drawdown,   1, 2)
         grid.addWidget(self._card_signals,    1, 3)
         v.addLayout(grid)
@@ -272,13 +276,13 @@ class DashboardPage(QWidget):
         )
         sl.addWidget(lbl_t)
 
-        self._row_exchange = StatusRow("Exchange Connection", "Error", "#FF3355")
-        self._row_feed     = StatusRow("Market Data Feed",    "Inactive",     "#4A5568")
+        self._row_scanner  = StatusRow("IDSS Scanner",     "Starting…",    "#4A5568")
+        self._row_last_trade = StatusRow("Last Trade",      "No trades yet","#4A5568")
         self._row_ml       = StatusRow("ML Models",           "Not Loaded",   "#4A5568")
         self._row_strategy = StatusRow("Strategy Engine",     "Standby",      "#4A5568")
         self._row_risk     = StatusRow("Risk Manager",        "Active",       "#00FF88")
 
-        for row in [self._row_exchange, self._row_feed,
+        for row in [self._row_scanner, self._row_last_trade,
                     self._row_ml, self._row_strategy, self._row_risk]:
             sl.addWidget(row)
 
@@ -296,6 +300,8 @@ class DashboardPage(QWidget):
         self._sig_feed_active.connect(self._update_feed_active)
         self._sig_tickers.connect(self._update_tickers)
         self._sig_signal_confirmed.connect(self._update_signal_confirmed)
+        self._sig_scanner_status.connect(self._update_scanner_row)
+        self._sig_last_trade.connect(self._update_last_trade_row)
 
     # ── EventBus subscriptions ─────────────────────────────
     def _subscribe(self):
@@ -311,7 +317,7 @@ class DashboardPage(QWidget):
         bus.subscribe(Topics.POSITION_UPDATED,   self._on_position_updated)
         # IDSS signal events
         bus.subscribe(Topics.SIGNAL_CONFIRMED,   self._on_signal_confirmed)
-        # Scanner lifecycle — update Strategy Engine status
+        # Scanner lifecycle — update Strategy Engine + Scanner status rows
         bus.subscribe(Topics.SCAN_CYCLE_COMPLETE, self._on_scan_cycle_complete)
 
     # ── PaperExecutor handlers ─────────────────────────────
@@ -363,29 +369,75 @@ class DashboardPage(QWidget):
             self._card_winrate.set_value("—")
             self._card_winrate.set_sub("No trades yet")
 
-        # Today's P&L
+        # Today's P&L = realised P&L closed today + current unrealized P&L on open positions.
+        # This matches what the Demo Live Monitor and Health Check show.
         today = datetime.now(timezone.utc).date().isoformat()
-        today_pnl = sum(
-            t.get("pnl_usdt", 0)
+        closed_pnl_today = sum(
+            float(t.get("pnl_usdt") or 0)
             for t in closed
             if t.get("closed_at", "")[:10] == today
         )
+        unrealized_usdt = sum(
+            float(p.get("size_usdt") or 0) * float(p.get("unrealized_pnl") or 0) / 100
+            for p in pe.get_open_positions()
+        )
+        today_pnl = closed_pnl_today + unrealized_usdt
         pnl_color = "#00CC77" if today_pnl >= 0 else "#FF3355"
-        pnl_pct   = today_pnl / max(1.0, total_value) * 100
+        initial   = pe._initial_capital or max(1.0, total_value)
+        pnl_pct   = today_pnl / initial * 100
         self._card_pnl.set_value(
             f"{'+' if today_pnl >= 0 else ''}${today_pnl:.2f}",
             pnl_color,
         )
-        self._card_pnl.set_sub(f"{pnl_pct:+.2f}% today")
+        self._card_pnl.set_sub(f"{pnl_pct:+.3f}% today (incl. unrealised)")
+
+        # Active Strategies — count enabled signal models vs disabled
+        try:
+            from config.settings import settings as _s
+            _all_models = [
+                "trend", "momentum_breakout", "mean_reversion", "vwap_reversion",
+                "liquidity_sweep", "order_book", "funding_rate", "sentiment", "rl_ensemble",
+            ]
+            _disabled = list(_s.get("disabled_models", []) or [])
+            _active_n  = len([m for m in _all_models if m not in _disabled])
+            _disabled_n = len([m for m in _all_models if m in _disabled])
+            strat_color = "#00CC77" if _active_n >= 5 else "#FFB300"
+            self._card_strategies.set_value(str(_active_n), strat_color)
+            self._card_strategies.set_sub(f"{_active_n} active · {_disabled_n} disabled")
+        except Exception:
+            pass
+
+        # Portfolio Heat — % of capital currently at risk across open positions
+        try:
+            _status = pe.get_production_status()
+            _heat   = float(_status.get("portfolio_heat_pct") or 0.0)
+            heat_color = "#FF3355" if _heat > 5.0 else ("#FFB300" if _heat > 3.0 else "#00CC77")
+            self._card_heat.set_value(f"{_heat:.1f}%", heat_color)
+            self._card_heat.set_sub("% capital at risk")
+        except Exception:
+            pass
 
     def _on_trade_opened(self, event):
-        # Use QTimer.singleShot(0, ...) to schedule on main thread
-        from PySide6.QtCore import QTimer
+        # Increment trades-opened counter and refresh signals card
+        self._trades_opened_today += 1
+        self._card_signals.set_sub(
+            f"{self._signals_today} evaluated · {self._trades_opened_today} traded"
+        )
         QTimer.singleShot(0, self._refresh_from_executor)
 
     def _on_trade_closed(self, event):
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(0, self._refresh_from_executor)
+        # Update Last Trade row from the closed trade data
+        try:
+            data  = event.data if hasattr(event, "data") else {}
+            sym   = data.get("symbol", "?")
+            side  = str(data.get("side", "")).upper()[:1]
+            pnl   = float(data.get("pnl_usdt") or 0.0)
+            sign  = "+" if pnl >= 0 else ""
+            color = "#00CC77" if pnl >= 0 else "#FF3355"
+            self._sig_last_trade.emit(f"{sym} {side} | {sign}${pnl:.2f}", color)
+        except Exception:
+            pass
 
     def _on_position_updated(self, event):
         from PySide6.QtCore import QTimer
@@ -439,26 +491,31 @@ class DashboardPage(QWidget):
     @Slot(str, bool)
     def _update_exchange_connected(self, name: str, connected: bool):
         if connected:
-            self._row_exchange.set_status(f"Connected — {name}", "#00FF88")
             # Start the live feed now that the exchange is confirmed connected
             self._start_feed()
-            # Update ML and strategy status now that exchange is ready
-            # (RL trainer and scanner start after exchange connects)
+            # Update ML, strategy, and scanner status now that exchange is ready
             QTimer.singleShot(3000, self._update_ml_and_strategy_status)
+            QTimer.singleShot(3500, self._update_scanner_row_startup)
         else:
-            self._row_exchange.set_status("Disconnected", "#FF3355")
+            self._sig_scanner_status.emit("Waiting for exchange…", "#4A5568")
 
     @Slot(str, str)
     def _update_exchange_error(self, name: str, reason: str):
-        # Show the specific reason (e.g. "Geo-blocked (US IP)") in amber
-        self._row_exchange.set_status(f"{reason}", "#FF8800")
+        # Exchange error visible in status bar; no duplicate row here
+        pass
 
     @Slot(bool)
     def _update_feed_active(self, active: bool):
-        if active:
-            self._row_feed.set_status("Active", "#00CC77")
-        else:
-            self._row_feed.set_status("Inactive", "#4A5568")
+        # Feed status visible in status bar; no duplicate row here
+        pass
+
+    @Slot(str, str)
+    def _update_scanner_row(self, text: str, color: str):
+        self._row_scanner.set_status(text, color)
+
+    @Slot(str, str)
+    def _update_last_trade_row(self, text: str, color: str):
+        self._row_last_trade.set_status(text, color)
 
     @Slot(object)
     def _update_tickers(self, tickers: dict):
@@ -470,16 +527,77 @@ class DashboardPage(QWidget):
         self._confirmed_today += n
         self._signals_today   += n
         self._card_signals.set_value(str(self._signals_today))
+        # _trades_opened_today = signals that passed risk gate and were auto-executed
         self._card_signals.set_sub(
-            f"{self._confirmed_today} confirmed · {self._rejected_today} rejected"
+            f"{self._signals_today} evaluated · {self._trades_opened_today} traded"
         )
 
     # ── ML Models & Strategy Engine dynamic status ─────────
 
     def _on_scan_cycle_complete(self, event):
-        """Update strategy engine status when a scan cycle completes."""
+        """Update strategy engine and scanner status rows when a scan cycle completes."""
         try:
             self._row_strategy.set_status("Active — IDSS Scanning", "#00FF88")
+        except Exception:
+            pass
+        # Update scanner row with last scan freshness
+        try:
+            from core.scanning.scanner import scanner as _sc
+            last = _sc._last_scan_at
+            if last is not None:
+                age_s = (datetime.now(timezone.utc) - last.replace(tzinfo=timezone.utc)).total_seconds()
+                if age_s < 120:
+                    ago = "just now"
+                elif age_s < 3600:
+                    ago = f"{int(age_s // 60)}m ago"
+                else:
+                    ago = f"{int(age_s // 3600)}h {int((age_s % 3600) // 60)}m ago"
+                self._sig_scanner_status.emit(f"Running | Last scan: {ago}", "#00FF88")
+            else:
+                self._sig_scanner_status.emit("Running | No scan yet", "#FFB300")
+        except Exception:
+            pass
+
+    def _update_scanner_row_startup(self):
+        """Probe scanner state on startup to populate the Scanner row."""
+        try:
+            from core.scanning.scanner import scanner as _sc
+            if _sc._running:
+                last = _sc._last_scan_at
+                if last is not None:
+                    age_s = (datetime.now(timezone.utc) - last.replace(tzinfo=timezone.utc)).total_seconds()
+                    ago = f"{int(age_s // 60)}m ago" if age_s < 3600 else f"{int(age_s // 3600)}h ago"
+                    self._sig_scanner_status.emit(f"Running | Last scan: {ago}", "#00FF88")
+                else:
+                    self._sig_scanner_status.emit("Running | No scan yet", "#FFB300")
+            else:
+                self._sig_scanner_status.emit("Stopped", "#FF3355")
+        except Exception:
+            self._sig_scanner_status.emit("Unknown", "#4A5568")
+
+        # Populate Last Trade row from closed trade history
+        try:
+            from core.execution.paper_executor import paper_executor as _pe
+            closed = _pe._closed_trades
+            if closed:
+                t     = closed[-1]
+                sym   = t.get("symbol", "?")
+                side  = str(t.get("side", "")).upper()[:1]
+                pnl   = float(t.get("pnl_usdt") or 0.0)
+                sign  = "+" if pnl >= 0 else ""
+                color = "#00CC77" if pnl >= 0 else "#FF3355"
+                # Time ago
+                closed_at = t.get("closed_at", "")
+                try:
+                    if isinstance(closed_at, str) and closed_at:
+                        ts = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
+                        age_s = (datetime.now(timezone.utc) - ts).total_seconds()
+                        ago_str = f"{int(age_s // 60)}m ago" if age_s < 3600 else f"{int(age_s // 3600)}h ago"
+                        self._sig_last_trade.emit(f"{sym} {side} | {ago_str} | {sign}${pnl:.2f}", color)
+                    else:
+                        self._sig_last_trade.emit(f"{sym} {side} | {sign}${pnl:.2f}", color)
+                except Exception:
+                    self._sig_last_trade.emit(f"{sym} {side} | {sign}${pnl:.2f}", color)
         except Exception:
             pass
 

@@ -1,0 +1,15 @@
+{
+  "current_phase": 3,
+  "phase_started_at": "2026-03-22T17:24:56.512735+00:00",
+  "trades_at_start": 0,
+  "last_evaluated_at": "2026-03-22T17:24:56.513521+00:00",
+  "advancement_log": [
+    {
+      "ts": "2026-03-22T17:24:56.513521+00:00",
+      "phase": 3,
+      "can_advance": false,
+      "trades": 999,
+      "green": true
+    }
+  ]
+}

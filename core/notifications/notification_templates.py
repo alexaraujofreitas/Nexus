@@ -543,10 +543,14 @@ def crash_systemic(data: dict) -> dict[str, str]:
 
 def health_check(data: dict) -> dict[str, str]:
     """
-    4-hour system health check notification.
+    System health check notification.
     data keys: scanner_status, last_scan_ago, exchange_status, feed_status,
                ai_status, portfolio_value, available_cash, today_pnl,
                today_pnl_pct, win_rate, total_trades, open_positions, timestamp
+
+    portfolio_value = total equity (free cash + mark-to-market value of open positions)
+    today_pnl       = realised P&L closed today + current unrealized P&L on open positions
+    total_trades    = closed trades only (open positions are shown separately)
     """
     scanner      = data.get("scanner_status",  "Unknown")
     last_scan    = data.get("last_scan_ago",    "Unknown")
@@ -555,8 +559,8 @@ def health_check(data: dict) -> dict[str, str]:
     ai           = data.get("ai_status",       "Unknown")
     portfolio    = _fmt_price(data.get("portfolio_value"), 2)
     cash         = _fmt_price(data.get("available_cash"), 2)
-    t_pnl        = data.get("today_pnl", 0.0)
-    t_pnl_pct    = data.get("today_pnl_pct", 0.0)
+    t_pnl        = float(data.get("today_pnl", 0.0) or 0.0)
+    t_pnl_pct    = float(data.get("today_pnl_pct", 0.0) or 0.0)
     win_rate     = data.get("win_rate", 0.0)
     trades       = data.get("total_trades", 0)
     open_pos     = data.get("open_positions", 0)
@@ -569,10 +573,15 @@ def health_check(data: dict) -> dict[str, str]:
             return "❌"
         return "⚠️"
 
-    pnl_sign = "✅" if float(t_pnl or 0) >= 0 else "❌"
-    pnl_str  = f"{pnl_sign} {_fmt_pct(t_pnl_pct)} ({'+' if float(t_pnl or 0) >= 0 else ''}{_fmt_price(t_pnl, 2)} USDT)"
+    pnl_sign = "✅" if t_pnl >= 0 else "❌"
+    pnl_prefix = "+" if t_pnl >= 0 else ""
+    pnl_str  = f"{pnl_sign} {_fmt_pct(t_pnl_pct)} ({pnl_prefix}{_fmt_price(t_pnl, 2)} USDT)"
 
-    subject = f"💊 Health Check — Portfolio: {portfolio} USDT | Today P&L: {_fmt_pct(t_pnl_pct)}"
+    # Closed trades stat — make clear this is completed trades only
+    closed_label = f"{trades} closed"
+    wr_label     = f"{win_rate:.1f}%" if trades > 0 else "n/a (no closed trades)"
+
+    subject = f"💊 Health Check — Portfolio: {portfolio} USDT | P&L: {_fmt_pct(t_pnl_pct)}"
 
     body = (
         f"{'='*42}\n"
@@ -589,15 +598,15 @@ def health_check(data: dict) -> dict[str, str]:
         f"{'─'*42}\n"
         f"  PORTFOLIO\n"
         f"{'─'*42}\n"
-        f"  Portfolio:     {portfolio} USDT\n"
+        f"  Total Equity:  {portfolio} USDT  (incl. open P&L)\n"
         f"  Available:     {cash} USDT\n"
         f"  Open Positions:{open_pos}\n"
         f"{'─'*42}\n"
         f"  PERFORMANCE\n"
         f"{'─'*42}\n"
-        f"  Today P&L:     {pnl_str}\n"
-        f"  Win Rate:      {win_rate:.1f}%\n"
-        f"  Total Trades:  {trades}\n"
+        f"  Today P&L:     {pnl_str}  (realised + unrealised)\n"
+        f"  Win Rate:      {wr_label}\n"
+        f"  Closed Trades: {closed_label}\n"
         f"{'='*42}"
     )
 
@@ -606,8 +615,8 @@ def health_check(data: dict) -> dict[str, str]:
         f"{_status_icon(scanner)} Scanner: {scanner} (last scan: {last_scan}) | "
         f"{_status_icon(exchange)} Exchange: {exchange} | "
         f"{_status_icon(feed)} Feed: {feed}\n"
-        f"Portfolio: {portfolio} USDT | Cash: {cash} USDT\n"
-        f"Today P&L: {pnl_str} | WR: {win_rate:.1f}% | Trades: {trades} | Open: {open_pos}"
+        f"Equity: {portfolio} USDT | Cash: {cash} USDT | Open: {open_pos}\n"
+        f"P&L: {pnl_str} | WR: {wr_label} | Closed: {closed_label}"
     )
 
     return {"subject": subject, "body": body, "short": short}

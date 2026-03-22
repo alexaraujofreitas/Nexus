@@ -240,11 +240,31 @@ class ScanWorker(QThread):
             _ohlcv_cache: dict[str, list] = {}
 
             def _fetch_one(sym: str) -> tuple[str, list]:
+                """Fetch OHLCV for one symbol with a hard 20s per-symbol timeout.
+
+                The outer concurrent pool calls shutdown(wait=False) on timeout,
+                but running threads are NOT killed — they become zombies if fetch_ohlcv
+                hangs.  To prevent thread accumulation over long sessions, each call
+                is wrapped in its own inner pool with a 20s timeout.  The inner thread
+                may survive briefly (until CCXT's 15s socket timeout fires), but the
+                outer pool thread — the one that accumulates — returns promptly.
+                """
                 _t0 = time.time()
+                _inner = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                 try:
-                    raw = self._exchange.fetch_ohlcv(
-                        sym, self._timeframe, limit=_ohlcv_limit
+                    _f = _inner.submit(
+                        self._exchange.fetch_ohlcv,
+                        sym, self._timeframe, limit=_ohlcv_limit,
                     )
+                    try:
+                        raw = _f.result(timeout=20.0)
+                    except concurrent.futures.TimeoutError:
+                        _elapsed_ms = (time.time() - _t0) * 1000
+                        logger.warning(
+                            "Scanner: prefetch TIMED OUT for %s after %.0fms — skipping",
+                            sym, _elapsed_ms,
+                        )
+                        return sym, []
                     raw, _dropped = enforce_closed_candles(
                         raw, self._timeframe, log_symbol=sym,
                     )
@@ -260,6 +280,8 @@ class ScanWorker(QThread):
                     _elapsed_ms = (time.time() - _t0) * 1000
                     logger.warning("Scanner: prefetch FAILED for %s after %.0fms: %s", sym, _elapsed_ms, _exc)
                     return sym, []
+                finally:
+                    _inner.shutdown(wait=False, cancel_futures=True)
 
             # IMPORTANT: Do NOT use `with ThreadPoolExecutor` here.
             # shutdown(wait=True) in __exit__ blocks forever if any fetch hangs.

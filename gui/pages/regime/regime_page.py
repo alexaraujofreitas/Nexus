@@ -47,41 +47,147 @@ _REGIME_COLORS = {
 
 _REGIME_DESCRIPTIONS = {
     "bull_trend": (
-        "Strong upward trend with high ADX and positive EMA slope. "
-        "Trend-following strategies (momentum, breakout) are favoured. "
-        "Risk-to-reward ratios tend to be positive."
+        "A sustained, high-momentum upward trend has been confirmed across multiple technical "
+        "layers. ADX (Average Directional Index) is above the 25 threshold, distinguishing a "
+        "genuine directional move from sideways noise. EMA-9 has crossed above EMA-21 and is "
+        "widening, confirming trend persistence. RSI is typically between 50 and 75, reflecting "
+        "bullish momentum that has not yet reached overbought exhaustion. Volume is rising on "
+        "up-candles, which reinforces the direction. Both the HMM and rule-based classifiers "
+        "agree on this state — the market is trending, not oscillating."
     ),
     "bear_trend": (
-        "Strong downward trend with high ADX and negative EMA slope. "
-        "Short or hedging strategies are favoured. "
-        "Avoid new long positions without strong confluence."
+        "A sustained, high-momentum downward trend has been confirmed across multiple technical "
+        "layers. ADX (Average Directional Index) is above the 25 threshold, confirming trend "
+        "strength — this is a real directional move, not a sideways chop. EMA-9 has crossed "
+        "below EMA-21 and is widening, indicating the bearish structure is active and deepening. "
+        "RSI is typically below 45, confirming sustained selling momentum rather than a brief "
+        "dip. The HMM component detects a low-return, moderate-to-high volatility environment, "
+        "which is the statistical fingerprint of a downtrend. Both classifiers agree on this "
+        "state, which is why confidence is high."
     ),
     "ranging": (
-        "Low ADX with price oscillating between support/resistance. "
-        "Mean-reversion and range strategies are preferred. "
-        "Trend-following signals have higher false-positive rates."
+        "Price is moving sideways with no clear directional trend. ADX is below 20, meaning "
+        "neither bulls nor bears have sufficient force to establish a sustained move. EMAs are "
+        "flat or closely intertwined, and price oscillates between identifiable support and "
+        "resistance levels. RSI tends to cycle between 35 and 65 without committing to either "
+        "extreme. The HMM detects a low-variance, mean-reverting return sequence consistent "
+        "with a consolidation phase. The market is 'taking a breath' — the next significant "
+        "move will likely be determined by an external catalyst or a breakout from the range."
     ),
     "volatility_expansion": (
-        "Bollinger Band width expanding rapidly, indicating a volatility breakout. "
-        "Breakout strategies can fire; high slippage risk. "
-        "Use tighter risk management — moves can be sharp in either direction."
+        "A volatility breakout is underway — Bollinger Band width is expanding sharply, "
+        "signalling that price is leaving a period of compression or consolidation at high "
+        "speed. ATR (Average True Range) has spiked relative to its 20-period average. The "
+        "direction of the move is not guaranteed; volatility expansion can accompany both "
+        "upside breakouts and crash events. The HMM identifies unusually large return "
+        "magnitudes in recent bars, which is the statistical signature of an expansion phase. "
+        "Slippage is elevated and order fills can be poor — risk management is critical."
     ),
     "volatility_compression": (
-        "Bollinger Bands tightly compressed — a squeeze is forming. "
-        "Market is 'coiling' before a directional move. "
-        "Wait for breakout confirmation before entering trend positions."
+        "The market is coiling — Bollinger Bands are contracting to unusually narrow width, "
+        "indicating that volatility has collapsed and a high-energy move is likely building. "
+        "ATR is well below its 20-period average. This state is sometimes called a 'squeeze'. "
+        "Price is compressing into a tight range as buyers and sellers reach an impasse. "
+        "Historically, prolonged compressions resolve with sharp directional moves in either "
+        "direction. The HMM identifies very small, low-variance returns over recent bars. "
+        "The correct response is to wait: do not enter trend positions before the direction "
+        "of the breakout is confirmed."
     ),
     "uncertain": (
-        "Insufficient data or borderline indicator values prevent confident classification. "
-        "No single regime dominates. Reduce position sizing and require higher confluence."
+        "The classifier cannot assign high confidence to any single regime. Indicators are "
+        "contradictory: ADX may be borderline, EMAs may be tangled without a clear cross, "
+        "and/or there is insufficient data (fewer than 30 bars) to compute reliable indicators. "
+        "The HMM probability distribution is flat — no single state dominates. This happens "
+        "most commonly during low-liquidity sessions, immediately after major news events "
+        "that disrupt the normal indicator relationships, or during the first few minutes "
+        "after a restart before enough bars accumulate. It is NOT necessarily a bad sign — "
+        "it means the system is honest about uncertainty rather than forcing a false verdict."
     ),
     "accumulation": (
-        "Smart money accumulation phase — ADX low with volume rising and RSI in the 30–55 zone. "
-        "Institutions quietly building positions. Favour cautious longs, tight stops, smaller sizes."
+        "Smart money appears to be quietly building positions. ADX is low (no strong trend "
+        "yet), but volume is rising on otherwise unremarkable price candles — institutions "
+        "absorbing sell-side supply without pushing price up aggressively. RSI is in the "
+        "30–55 zone, indicating neither overbought nor deeply oversold conditions. This "
+        "divergence between rising volume and flat price is the classic accumulation signal. "
+        "The HMM identifies a low-volatility, mildly positive drift pattern. This regime "
+        "often precedes a bull_trend transition once the supply has been fully absorbed and "
+        "a catalyst triggers the directional move."
     ),
     "distribution": (
-        "Smart money distribution phase — volume falling with price near 20-bar highs and RSI elevated. "
-        "Institutions quietly offloading. Reduce long exposure; be alert for reversal signals."
+        "Smart money appears to be quietly offloading positions. Price is near its 20-bar "
+        "high and RSI is elevated (typically 55–75), yet volume is declining — institutions "
+        "are selling into retail strength. The classic distribution signature is 'rising "
+        "price on falling volume', meaning fewer participants are willing to buy at these "
+        "levels. The HMM identifies a low-volatility environment with slowing upward drift. "
+        "This regime often precedes a bear_trend or rapid correction once institutional "
+        "selling pressure accelerates and retail buying exhausts."
+    ),
+}
+
+# How the classifier arrived at the regime verdict — shown in the "How Detected" section
+_REGIME_DETECTION = {
+    "bull_trend": (
+        "Detection path: Rule-based check confirmed ADX > 25 (strong trend) + EMA-9 above "
+        "EMA-21 (bullish crossover) + RSI 50–75 (bullish momentum). The HMM independently "
+        "classified this as a high-return, moderate-volatility state (the HMM's 'bull' state "
+        "in its internal 4-state model). The ensemble blends these at 60% HMM + 40% "
+        "rule-based. Both agreed → high confidence. Source data: BTC/USDT 1h bars from "
+        "Binance public API (200 bars, no auth required)."
+    ),
+    "bear_trend": (
+        "Detection path: Rule-based check confirmed ADX > 25 (strong trend) + EMA-9 below "
+        "EMA-21 (bearish crossover) + RSI below 45 (bearish momentum). The HMM "
+        "independently classified this as a low-return, moderate-to-high volatility state "
+        "(the HMM's 'bear' state in its internal 4-state model). The ensemble blends at "
+        "60% HMM + 40% rule-based. When both methods independently assign the same label, "
+        "the confidence score rises toward 100%. A 100% reading means the classifier "
+        "has very high certainty — all indicator conditions are clearly met and the HMM "
+        "probability mass is heavily concentrated on this state. Source: BTC/USDT 1h, "
+        "200 bars. This page re-classifies every 5 minutes."
+    ),
+    "ranging": (
+        "Detection path: Rule-based check confirmed ADX < 20 (no trend) + EMAs flat or "
+        "crossing without sustained separation + RSI cycling 35–65 without extreme readings. "
+        "The HMM classified this as a mean-reverting, low-drift state with low variance. "
+        "Ensemble blend: 60% HMM + 40% rule-based. Confidence reflects the degree to "
+        "which both methods agree — high confidence means both the ADX and HMM clearly "
+        "indicate range behaviour; low confidence means indicators are borderline. "
+        "Source: BTC/USDT 1h, 200 bars."
+    ),
+    "volatility_expansion": (
+        "Detection path: Bollinger Band width (current / 20-bar average) exceeded the "
+        "expansion threshold. ATR spiked relative to its rolling average. The HMM detected "
+        "an unusually large-return state in recent bars. Both the magnitude of returns and "
+        "the rate of Bollinger width change contributed to the classification. Ensemble: "
+        "60% HMM + 40% rule-based. Source: BTC/USDT 1h, 200 bars."
+    ),
+    "volatility_compression": (
+        "Detection path: Bollinger Band width dropped below the compression threshold "
+        "(bands unusually narrow relative to their recent average). ATR is well below "
+        "its rolling baseline. The HMM detected a very-low-variance return state in "
+        "recent bars. Ensemble: 60% HMM + 40% rule-based. Source: BTC/USDT 1h, 200 bars."
+    ),
+    "uncertain": (
+        "Detection path: No single regime met its confidence threshold. ADX is borderline "
+        "(near 20–25), EMAs lack a clean cross, and the HMM probability distribution is "
+        "spread across multiple states without a dominant winner. The ensemble could not "
+        "reach a minimum confidence threshold — rather than forcing a guess, it reports "
+        "'uncertain'. This is the safest and most conservative output. Source: BTC/USDT "
+        "1h, 200 bars (or insufficient bars on first startup)."
+    ),
+    "accumulation": (
+        "Detection path: Rule-based confirmed ADX < 20 (no trend established) + volume "
+        "rising while price is flat or only mildly upward + RSI in the 30–55 zone. The "
+        "HMM classified this as a low-volatility, positive-drift state. The divergence "
+        "between volume increase and price stability is the key signal. Ensemble: 60% "
+        "HMM + 40% rule-based. Source: BTC/USDT 1h, 200 bars."
+    ),
+    "distribution": (
+        "Detection path: Rule-based confirmed price near 20-bar high + RSI elevated (55–75) "
+        "+ volume declining on recent up-candles. The HMM classified this as a low-volatility "
+        "state with slowing upward drift. The falling volume at high RSI with price near "
+        "highs is the key divergence signal. Ensemble: 60% HMM + 40% rule-based. "
+        "Source: BTC/USDT 1h, 200 bars."
     ),
 }
 
@@ -203,23 +309,44 @@ class RegimePage(QWidget):
     def _build_regime_description_card(self) -> QGroupBox:
         box = QGroupBox("Regime Meaning & Strategy Implications")
         box.setStyleSheet(self._box_style())
-        v = QVBoxLayout(box)
-        v.setSpacing(12)
 
+        # Use a scroll area so the expanded text doesn't squash the layout
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background:transparent; border:none; }")
+
+        inner = QWidget()
+        v = QVBoxLayout(inner)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(10)
+
+        # ── What this regime means ──────────────────────────
+        v.addWidget(_sep("WHAT THIS REGIME MEANS"))
         self._desc_lbl = QLabel(
             "No regime detected yet. The system needs at least 30 bars of indicator "
             "data to classify the current market state."
         )
         self._desc_lbl.setWordWrap(True)
-        self._desc_lbl.setStyleSheet(f"color:{_LIGHT}; font-size:13px; line-height:150%;")
+        self._desc_lbl.setStyleSheet(f"color:{_LIGHT}; font-size:13px;")
         v.addWidget(self._desc_lbl)
 
+        # ── How NexusTrader detected it ──────────────────────
+        v.addWidget(_sep("HOW NEXUS TRADER DETECTED THIS REGIME"))
+        self._detection_lbl = QLabel("Waiting for first classification…")
+        self._detection_lbl.setWordWrap(True)
+        self._detection_lbl.setStyleSheet(f"color:#9BB4CC; font-size:13px;")
+        v.addWidget(self._detection_lbl)
+
+        # ── Active strategies ───────────────────────────────
         v.addWidget(_sep("ACTIVE STRATEGIES IN THIS REGIME"))
         self._strategy_hint_lbl = QLabel("—")
         self._strategy_hint_lbl.setWordWrap(True)
         self._strategy_hint_lbl.setStyleSheet(f"color:{_YELLOW}; font-size:13px;")
         v.addWidget(self._strategy_hint_lbl)
 
+        # ── Risk adjustment ─────────────────────────────────
         v.addWidget(_sep("RISK ADJUSTMENT"))
         self._risk_hint_lbl = QLabel("—")
         self._risk_hint_lbl.setWordWrap(True)
@@ -227,6 +354,11 @@ class RegimePage(QWidget):
         v.addWidget(self._risk_hint_lbl)
 
         v.addStretch()
+        scroll.setWidget(inner)
+
+        outer_v = QVBoxLayout(box)
+        outer_v.setContentsMargins(0, 8, 0, 4)
+        outer_v.addWidget(scroll, 1)
         return box
 
     def _build_hmm_probs_section(self) -> QGroupBox:
@@ -465,25 +597,151 @@ class RegimePage(QWidget):
         desc = _REGIME_DESCRIPTIONS.get(regime, "")
         self._desc_lbl.setText(desc)
 
+        # How-detected explanation
+        self._detection_lbl.setText(
+            _REGIME_DETECTION.get(regime,
+                "Classification used BTC/USDT 1h data from Binance public API (no auth "
+                "required). The ensemble combines a Hidden Markov Model (60% weight) with "
+                "a rule-based indicator check (40% weight). Confidence reflects the degree "
+                "of agreement between the two methods and the probability mass the HMM "
+                "assigns to the winning state.")
+        )
+
         strategy_hints = {
-            "bull_trend": "Trend Following, Momentum Breakout",
-            "bear_trend": "Short strategies, reduced long exposure",
-            "ranging": "Mean Reversion, Range trading",
-            "volatility_expansion": "Breakout entries with tight stops",
-            "volatility_compression": "Wait for squeeze release; prepare breakout orders",
-            "uncertain": "Reduce size, require higher confluence threshold",
-            "accumulation": "Gradual long accumulation, scale in on pullbacks",
-            "distribution": "Reduce longs, hedge or flip to short on confirmation",
+            "bull_trend": (
+                "TrendModel (bull affinity=1.0) and MomentumBreakout (affinity=1.0) are "
+                "fully active and fire at maximum weight. Disabled models — MeanReversion "
+                "and LiquiditySweep — remain off. Long (BUY) signals are accepted; short "
+                "signals require very high confluence. The EV gate applies a standard win "
+                "probability to all signals. The multi-timeframe filter (if enabled) checks "
+                "the 4h chart for agreement before approving a 1h-timeframe signal."
+            ),
+            "bear_trend": (
+                "TrendModel is active and fires SELL signals at affinity=0.9 (90% of its "
+                "normal weight). MomentumBreakout fires short signals at affinity=0.7. "
+                "Disabled models — MeanReversion and LiquiditySweep — remain off. New "
+                "LONG (BUY) entries are strongly filtered: the EV gate applies a -15% "
+                "win-probability penalty to any long signal generated in a bear regime, "
+                "effectively raising the confluence bar for longs. The multi-timeframe "
+                "filter (if enabled) will block BUY signals where the 4h chart also shows "
+                "a bear regime. Shorts and hedging positions can still be opened normally."
+            ),
+            "ranging": (
+                "MeanReversion (affinity=1.0) and VWAPReversion (affinity=0.8) are the "
+                "primary models in ranging conditions. TrendModel has low affinity (0.1) "
+                "and will rarely fire — trending signals have elevated false-positive rates "
+                "in sideways markets. MomentumBreakout's affinity drops to 0.2. The "
+                "confluence threshold may lower slightly in ranging conditions, reflecting "
+                "the higher frequency of reversion opportunities. Note: MeanReversion and "
+                "LiquiditySweep are currently disabled via config — so only the reduced "
+                "TrendModel and MomentumBreakout signals are active in this regime."
+            ),
+            "volatility_expansion": (
+                "MomentumBreakout (vol_expansion affinity=1.0) is the primary active "
+                "model. TrendModel fires at 0.6 affinity. ATR multipliers on stop-loss "
+                "and take-profit calculations are automatically widened to account for "
+                "the elevated true range — a stop placed too tightly will get hit on "
+                "normal noise. Slippage risk is above average due to fast-moving markets. "
+                "Position sizing is NOT automatically reduced but the wider stops mean "
+                "each trade naturally risks more nominal distance from entry to stop."
+            ),
+            "volatility_compression": (
+                "No trend-following models should be entered before the breakout direction "
+                "is confirmed. The scanner will still run and evaluate signals, but a "
+                "compression regime is a warning sign: signals that fire in compression "
+                "often resolve against the position when the breakout occurs. If a signal "
+                "does reach the approval threshold, stop-loss placement should be wide "
+                "enough to survive the initial volatility of the breakout. Wait for a "
+                "confirmed candle close beyond the compression zone before committing."
+            ),
+            "uncertain": (
+                "All models fire at reduced affinity weights (e.g. TrendModel=0.3, "
+                "MomentumBreakout=0.3, VWAPReversion=0.4). The dynamic confluence "
+                "threshold rises to reflect the regime uncertainty — more signal agreement "
+                "is required before a candidate is approved. The EV gate applies an "
+                "additional -15% win-probability penalty to all signals in the uncertain "
+                "regime. In practice, very few candidates are approved during this regime "
+                "unless signals are unusually strong and consistent."
+            ),
+            "accumulation": (
+                "Cautious long (BUY) accumulation is favoured. TrendModel fires longs at "
+                "reduced affinity. The ideal entry is a quiet pullback toward support on "
+                "low volatility — not a chase. Stops should be placed below recent "
+                "support or the entry range. Take partial profits quickly; the move to "
+                "bull_trend is not guaranteed and the accumulation phase can be long."
+            ),
+            "distribution": (
+                "Reduce long exposure. New BUY signals should only be acted on if "
+                "confluence is very high and the signal comes after a meaningful pullback. "
+                "The system may approve SELL (short) signals if a confirmation of reversal "
+                "appears (e.g. a high-volume down-candle breaks recent support). Watch "
+                "closely for signs of regime transition to bear_trend — if that transition "
+                "is confirmed, short positions become the primary strategy."
+            ),
         }
         risk_hints = {
-            "bull_trend": "Standard position sizing applies",
-            "bear_trend": "Reduce long position sizes; tighten stops",
-            "ranging": "Use ATR-based stops; avoid breakout trades",
-            "volatility_expansion": "Increase ATR multiplier; widen stops",
-            "volatility_compression": "Hold off on new positions; monitor for breakout",
-            "uncertain": "Maximum caution: 50% of normal position size",
-            "accumulation": "Use 75% normal position size; widen stops slightly",
-            "distribution": "50% position size; tighten stops; watch for reversal",
+            "bull_trend": (
+                "Standard position sizing applies — Quarter-Kelly formula with a 4% hard "
+                "cap per trade. The CrashDetector's defensive_mode_multiplier is 1.0 "
+                "(no reduction). The portfolio heat check limits total open risk to 6% of "
+                "capital at any time. ATR multipliers are at their baseline values for "
+                "stop-loss (1.5×) and take-profit (2.5×)."
+            ),
+            "bear_trend": (
+                "Long (BUY) positions face a -15% win-probability reduction from the EV "
+                "gate — they must show higher confluence to pass. Short positions use "
+                "standard sizing. ATR stop multipliers are unchanged (bear_trend does not "
+                "itself increase volatility enough to require wider stops). The portfolio "
+                "heat check still enforces the 6% cap. If the CrashDetector escalates "
+                "to DEFENSIVE or higher tiers, the defensive_mode_multiplier will "
+                "proportionally reduce long-side position sizes. Monitor the Dashboard "
+                "crash risk score — anything above 6.0 triggers size reduction."
+            ),
+            "ranging": (
+                "ATR multipliers are reduced for MeanReversion entries (stop = 1.0× ATR "
+                "for tighter risk, target = 1.5× ATR for more conservative exits). "
+                "TrendModel-generated trades use wider multipliers to absorb oscillation. "
+                "Standard Quarter-Kelly sizing and 4% hard cap apply. The reduced affinity "
+                "of TrendModel means fewer trades fire in ranging conditions, keeping "
+                "overall capital exposure lower than in trending regimes."
+            ),
+            "volatility_expansion": (
+                "ATR multipliers are increased across all active sub-models to prevent "
+                "premature stop-outs from the elevated true range. Expect wider stop-loss "
+                "distances — this means each trade carries a larger nominal risk distance, "
+                "even if the percentage risk per trade (Quarter-Kelly cap) is unchanged. "
+                "Consider manually verifying that the Est. Size on approved candidates "
+                "is not outsized before auto-execution fires."
+            ),
+            "volatility_compression": (
+                "50% of normal position size is the recommended approach — uncertainty "
+                "about breakout direction is the primary concern. The system will not "
+                "automatically halve sizes (this would require a configuration change "
+                "to risk_pct_per_trade), but fewer signals should be approved in this "
+                "regime. Avoid layering multiple positions while compression persists."
+            ),
+            "uncertain": (
+                "50% of normal position size is recommended. The regime uncertainty "
+                "penalty and elevated confluence threshold collectively ensure very few "
+                "trades are approved. If trades do fire, they have passed a stricter "
+                "filter and represent the system's highest-confidence signals under "
+                "ambiguous conditions. Standard 4% hard cap and 6% heat check remain "
+                "active as normal safety nets."
+            ),
+            "accumulation": (
+                "75% of normal position size is recommended — the move is not yet "
+                "confirmed. Stop-losses should be placed slightly wider than normal to "
+                "accommodate the low-volatility environment where noise can trigger tight "
+                "stops. Targets should be modest on the first entry; if the regime "
+                "transitions to bull_trend, the full position can be built up."
+            ),
+            "distribution": (
+                "50% of normal position size. Tighten stops on existing long positions "
+                "to lock in gains made during the preceding bull phase. Be alert for "
+                "the regime transitioning to bear_trend — at that point, the risk "
+                "adjustment shifts to the bear_trend profile above. New longs should be "
+                "the exception, not the rule, during distribution."
+            ),
         }
         self._strategy_hint_lbl.setText(strategy_hints.get(regime, "—"))
         self._risk_hint_lbl.setText(risk_hints.get(regime, "—"))

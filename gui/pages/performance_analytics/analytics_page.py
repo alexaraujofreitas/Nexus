@@ -166,12 +166,19 @@ class _StatCard(QWidget):
         t.setStyleSheet(_SECT_STYLE)
         self._val = QLabel(value)
         self._val.setStyleSheet(f"font-size:17px; font-weight:700; color:{color};")
+        self._sub = QLabel("")
+        self._sub.setStyleSheet(f"font-size:11px; color:{_C_MUTED};")
         v.addWidget(t)
         v.addWidget(self._val)
+        v.addWidget(self._sub)
 
     def set(self, text: str, color: str = _C_TEXT):
         self._val.setText(text)
         self._val.setStyleSheet(f"font-size:17px; font-weight:700; color:{color};")
+
+    def set_sub(self, text: str):
+        """Set a small secondary line below the main value (e.g. 'N closed · N open')."""
+        self._sub.setText(text)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2060,16 +2067,18 @@ class _ValidationTab(QWidget):
     def _refresh_filter_table(self) -> None:
         try:
             from core.analytics.filter_stats import get_filter_stats_tracker
-            summaries = get_filter_stats_tracker().get_all_summaries()
+            # get_all_summaries() returns list[dict] (each dict has a "filter" key)
+            summaries: list = get_filter_stats_tracker().get_all_summaries()
         except Exception:
-            summaries = {}
+            summaries = []
 
-        rows = list(summaries.items())
-        self._filter_tbl.setRowCount(len(rows))
-        for r, (fname, s) in enumerate(rows):
-            block_rate = s.get("block_rate_pct", 0.0)
+        self._filter_tbl.setRowCount(len(summaries))
+        for r, s in enumerate(summaries):
+            fname      = s.get("filter", "—")
+            block_rate = s.get("block_rate_pct") or 0.0
+            # top_blocked_symbols is a list of (symbol, count) tuples
             top_blocked = s.get("top_blocked_symbols", [])
-            top_str = ", ".join(top_blocked[:2]) if top_blocked else "—"
+            top_str = ", ".join(sym for sym, _ in top_blocked[:2]) if top_blocked else "—"
             br_col = _C_YELLOW if block_rate > 50 else _C_TEXT
             self._filter_tbl.setItem(r, 0, _ci(fname, _C_TEXT, Qt.AlignLeft))
             self._filter_tbl.setItem(r, 1, _ci(f"{block_rate:.1f}%", br_col))
@@ -2255,8 +2264,20 @@ class PerformanceAnalyticsPage(QWidget):
             dur  = stats["avg_duration_s"]
             dd   = stats["drawdown_pct"]
 
+            # ── Unrealized P&L from open positions ─────
+            open_positions = _pe.get_open_positions()
+            n_open = len(open_positions)
+            unrealized_usdt = sum(
+                p.get("size_usdt", 0) * p.get("unrealized_pnl", 0) / 100
+                for p in open_positions
+            )
+            combined_pnl = pnl + unrealized_usdt
+
             # ── Stat strip ─────────────────────────────
-            self._s_trades.set(str(n))
+            self._s_trades.set(str(n + n_open))
+            self._s_trades.set_sub(
+                f"{n} closed · {n_open} open" if n_open else f"{n} closed"
+            )
 
             wr_col = (_C_GREEN if wr >= 55 else
                       _C_YELLOW if wr >= 45 else
@@ -2264,9 +2285,15 @@ class PerformanceAnalyticsPage(QWidget):
             self._s_winrate.set(f"{wr:.1f}%" if n else "—", wr_col)
 
             self._s_pnl.set(
-                f"${pnl:+,.2f}" if n else "+$0.00",
-                _C_GREEN if pnl >= 0 else _C_RED,
+                f"${combined_pnl:+,.2f}" if (n or n_open) else "+$0.00",
+                _C_GREEN if combined_pnl >= 0 else _C_RED,
             )
+            if n_open:
+                self._s_pnl.set_sub(
+                    f"${pnl:+.2f} realized · ${unrealized_usdt:+.2f} open"
+                )
+            else:
+                self._s_pnl.set_sub("realized only" if n else "")
             self._s_pf.set(
                 f"{pf:.2f}" if n else "—",
                 _C_GREEN if pf >= 1 else (_C_RED if n else _C_TEXT),
@@ -2313,8 +2340,9 @@ class PerformanceAnalyticsPage(QWidget):
             self._validation_tab.refresh(closed)
 
             now = datetime.utcnow().strftime("%H:%M:%S UTC")
+            open_note = f"   |   {n_open} open position(s)" if n_open else ""
             self._updated_lbl.setText(
-                f"Last refreshed: {now}   |   {n} closed trade(s)"
+                f"Last refreshed: {now}   |   {n} closed trade(s){open_note}"
             )
 
         except Exception as exc:

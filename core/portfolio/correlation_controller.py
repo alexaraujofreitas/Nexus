@@ -39,9 +39,12 @@ _BASE_CORRELATION = {
     ("ETH/USDT", "SOL/USDT"): 0.80,
     ("ETH/USDT", "BNB/USDT"): 0.75,
     ("ETH/USDT", "ADA/USDT"): 0.78,
+    ("ETH/USDT", "XRP/USDT"): 0.70,   # previously missing — fell back to 0.50
     ("SOL/USDT", "BNB/USDT"): 0.72,
     ("SOL/USDT", "ADA/USDT"): 0.74,
+    ("SOL/USDT", "XRP/USDT"): 0.65,   # previously missing — fell back to 0.50
     ("BNB/USDT", "ADA/USDT"): 0.70,
+    ("BNB/USDT", "XRP/USDT"): 0.65,   # previously missing — fell back to 0.50
 }
 
 

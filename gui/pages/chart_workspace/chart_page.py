@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QComboBox, QPushButton, QProgressBar, QScrollArea,
     QCheckBox, QGridLayout, QSplitter, QSizePolicy,
-    QButtonGroup, QGroupBox, QStackedWidget
+    QButtonGroup, QGroupBox, QStackedWidget, QSpinBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor
@@ -39,7 +39,16 @@ class SignalBadge(QLabel):
 
     def setSignal(self, signal: str, strength: int = 50):
         fg, bg = self._COLORS.get(signal, self._COLORS["neutral"])
-        label = f"● {signal.upper()} {strength}%"
+        # strength is the bullish vote proportion (0–100).
+        # Show the percentage in the direction of the stated signal so
+        # "BEARISH 75%" means 75% of indicators are bearish (not 25%).
+        if signal == "bearish":
+            display_pct = 100 - strength   # bearish confirmation %
+        elif signal == "bullish":
+            display_pct = strength         # bullish confirmation %
+        else:
+            display_pct = strength         # neutral — show bullish %
+        label = f"● {signal.upper()} {display_pct}%"
         self.setText(label)
         self.setStyleSheet(
             f"background:{bg}; color:{fg}; border:1px solid {fg}; "
@@ -268,6 +277,10 @@ class ChartWorkspacePage(QWidget):
         # Signal summary card
         self._signal_card = self._build_signal_card()
         right_layout.addWidget(self._signal_card)
+
+        # Trade overlay controls card
+        self._overlay_card = self._build_overlay_card()
+        right_layout.addWidget(self._overlay_card)
 
         right_layout.addStretch()
         splitter.addWidget(right_panel)
@@ -595,13 +608,20 @@ class ChartWorkspacePage(QWidget):
 
     @Slot(str, int)
     def _on_gap_fill_finished(self, symbol: str, new_rows: int):
-        """Reload from DB after gap-fill to show the combined fresh data."""
+        """
+        Reload from DB after gap-fill to show the combined fresh data.
+
+        After reloading, re-applies the same freshness check used by
+        _load_from_db() so that large gaps (> 1 batch) are filled
+        automatically without requiring repeated manual "Load Data" clicks.
+        """
         self._progress_bar.setVisible(False)
         self._load_btn.setEnabled(True)
         try:
             from core.database.engine import get_session
             from core.database.models import Asset
             from core.market_data.historical_loader import load_ohlcv_from_db
+            import pandas as pd
             with get_session() as session:
                 asset = session.query(Asset).filter_by(symbol=symbol).first()
                 asset_id = asset.id if asset else None
@@ -610,10 +630,30 @@ class ChartWorkspacePage(QWidget):
                 if df is not None and not df.empty:
                     self._current_df = df
                     self._refresh_chart()
-                    self._status_label.setText(
-                        f"✓ {symbol} up to date — {len(df):,} candles"
-                        + (f" (+{new_rows:,} new)" if new_rows else "")
-                    )
+
+                    # ── Freshness re-check: chain another fill if still behind ──
+                    latest_ts  = df.index[-1]
+                    now_utc    = pd.Timestamp.utcnow().tz_localize(None)
+                    hours_behind = (now_utc - latest_ts).total_seconds() / 3600
+                    tf_h = self._TF_HOURS.get(self._current_timeframe, 1)
+                    stale_threshold = tf_h * self._STALE_MULTIPLIER
+
+                    if hours_behind > stale_threshold:
+                        # Still behind — trigger another gap fill automatically
+                        behind_str = (
+                            f"{int(hours_behind)}h" if hours_behind < 48
+                            else f"{int(hours_behind / 24)}d"
+                        )
+                        self._status_label.setText(
+                            f"✓ {len(df):,} candles (+{new_rows:,} new,"
+                            f" still {behind_str} behind) — fetching more…"
+                        )
+                        self._fetch_gap(asset_id, latest_ts)
+                    else:
+                        self._status_label.setText(
+                            f"✓ {symbol} up to date — {len(df):,} candles"
+                            + (f" (+{new_rows:,} new)" if new_rows else "")
+                        )
                     return
         except Exception as e:
             logger.warning("Post-gap-fill DB load failed: %s", e)
@@ -729,6 +769,172 @@ class ChartWorkspacePage(QWidget):
         self._load_btn.setEnabled(True)
         self._status_label.setText(f"⚠ Error: {error}")
 
+    def _build_overlay_card(self) -> QFrame:
+        """Right-panel card with trade overlay display controls."""
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+
+        title = QLabel("📍 Trade Overlay")
+        title.setStyleSheet("font-weight: bold; font-size: 13px; color: #E8EBF0;")
+        layout.addWidget(title)
+
+        cb_style = (
+            "QCheckBox { font-size: 13px; color: #C0CCD8; spacing: 5px; } "
+            "QCheckBox::indicator { width: 13px; height: 13px; } "
+            "QCheckBox:checked { color: #E8EBF0; }"
+        )
+
+        # Master visibility toggle
+        # NOTE: stateChanged must be connected BEFORE setChecked(True).
+        # If connected after, the initial setChecked emits stateChanged but
+        # no slot is attached yet → _on_overlay_show_changed never fires at
+        # startup → overlay stays setVisible(False) even though the checkbox
+        # appears checked (primary root cause of "overlay always empty" bug).
+        self._overlay_show_cb = QCheckBox("Show Trade Overlay")
+        self._overlay_show_cb.setStyleSheet(cb_style)
+        self._overlay_show_cb.stateChanged.connect(self._on_overlay_show_changed)
+        self._overlay_show_cb.setChecked(True)   # fires slot immediately ↑
+        layout.addWidget(self._overlay_show_cb)
+
+        # Detail toggles (indented slightly)
+        detail_frame = QFrame()
+        detail_layout = QVBoxLayout(detail_frame)
+        detail_layout.setContentsMargins(12, 2, 0, 2)
+        detail_layout.setSpacing(3)
+
+        self._overlay_bars_cb = QCheckBox("Duration Bars")
+        self._overlay_bars_cb.setChecked(True)
+        self._overlay_bars_cb.setStyleSheet(cb_style)
+        self._overlay_bars_cb.stateChanged.connect(self._on_overlay_option_changed)
+        detail_layout.addWidget(self._overlay_bars_cb)
+
+        self._overlay_conn_cb = QCheckBox("Connection Lines")
+        self._overlay_conn_cb.setChecked(True)
+        self._overlay_conn_cb.setStyleSheet(cb_style)
+        self._overlay_conn_cb.stateChanged.connect(self._on_overlay_option_changed)
+        detail_layout.addWidget(self._overlay_conn_cb)
+
+        self._overlay_exit_cb = QCheckBox("Exit Quality Dots")
+        self._overlay_exit_cb.setChecked(True)
+        self._overlay_exit_cb.setStyleSheet(cb_style)
+        self._overlay_exit_cb.stateChanged.connect(self._on_overlay_option_changed)
+        detail_layout.addWidget(self._overlay_exit_cb)
+
+        layout.addWidget(detail_frame)
+
+        # Filter mode row
+        filter_row = QHBoxLayout()
+        filter_lbl = QLabel("Show:")
+        filter_lbl.setStyleSheet("color: #8899AA; font-size: 13px;")
+        filter_row.addWidget(filter_lbl)
+
+        self._overlay_filter_combo = QComboBox()
+        self._overlay_filter_combo.addItems(["All Trades", "Open Only", "Closed Only"])
+        self._overlay_filter_combo.setStyleSheet(
+            "QComboBox { background: #131B2A; color: #E8EBF0; border: 1px solid #2A3A52; "
+            "border-radius: 4px; padding: 2px 8px; font-size: 13px; }"
+            "QComboBox QAbstractItemView { background: #131B2A; color: #E8EBF0; "
+            "selection-background-color: #1A2D4A; }"
+        )
+        self._overlay_filter_combo.setFixedHeight(28)
+        self._overlay_filter_combo.currentIndexChanged.connect(self._on_overlay_option_changed)
+        filter_row.addWidget(self._overlay_filter_combo, 1)
+        layout.addLayout(filter_row)
+
+        # Last N trades row
+        lastn_row = QHBoxLayout()
+        lastn_lbl = QLabel("Last N:")
+        lastn_lbl.setStyleSheet("color: #8899AA; font-size: 13px;")
+        lastn_row.addWidget(lastn_lbl)
+
+        self._overlay_lastn_spin = QSpinBox()
+        self._overlay_lastn_spin.setRange(0, 500)
+        self._overlay_lastn_spin.setValue(0)
+        self._overlay_lastn_spin.setSpecialValueText("All")
+        self._overlay_lastn_spin.setFixedHeight(28)
+        self._overlay_lastn_spin.setStyleSheet(
+            "QSpinBox { background: #131B2A; color: #E8EBF0; border: 1px solid #2A3A52; "
+            "border-radius: 4px; padding: 2px 6px; font-size: 13px; }"
+        )
+        self._overlay_lastn_spin.valueChanged.connect(self._on_overlay_option_changed)
+        lastn_row.addWidget(self._overlay_lastn_spin, 1)
+        layout.addLayout(lastn_row)
+
+        # Reload button
+        reload_btn = QPushButton("↺  Reload Trades")
+        reload_btn.setFixedHeight(28)
+        reload_btn.setStyleSheet(
+            "QPushButton { background: #1A2332; color: #8899AA; border: 1px solid #2A3A52; "
+            "border-radius: 4px; font-size: 13px; }"
+            "QPushButton:hover { color: #E8EBF0; border-color: #1E90FF; }"
+        )
+        reload_btn.clicked.connect(self._load_trade_data)
+        layout.addWidget(reload_btn)
+
+        return card
+
+    # ── Overlay event handlers ──────────────────────────────
+    def _on_overlay_show_changed(self, state: int):
+        visible = bool(state)
+        self._chart.set_overlay_visible(visible)
+        # When the overlay is enabled (or re-enabled after being hidden),
+        # reload trade data so open positions and any new closed trades are
+        # picked up immediately — even if the chart was loaded while the
+        # overlay was off.
+        if visible:
+            self._load_trade_data()
+
+    def _on_overlay_option_changed(self, *_):
+        filter_map = {0: "all", 1: "open", 2: "closed"}
+        self._chart.set_overlay_options(
+            show_duration_bars = self._overlay_bars_cb.isChecked(),
+            show_connections   = self._overlay_conn_cb.isChecked(),
+            show_exit_quality  = self._overlay_exit_cb.isChecked(),
+            filter_mode        = filter_map.get(self._overlay_filter_combo.currentIndex(), "all"),
+            last_n             = self._overlay_lastn_spin.value(),
+        )
+        # Reload data to apply new filter immediately
+        self._load_trade_data()
+
+    # ── Trade data loading for overlay ─────────────────────
+    def _load_trade_data(self):
+        """
+        Load closed trades from DB + open positions and push to chart overlay.
+        Only loads trades for the currently displayed symbol.
+        Non-fatal — overlay stays empty if DB/executor unavailable.
+        """
+        try:
+            closed_trades: list = []
+            # Query DB for closed paper trades for this symbol
+            from core.database.engine import get_session
+            from core.database.models import PaperTrade
+            with get_session() as session:
+                rows = (
+                    session.query(PaperTrade)
+                    .filter(PaperTrade.symbol == self._current_symbol)
+                    .order_by(PaperTrade.id)
+                    .all()
+                )
+                for row in rows:
+                    d = row.to_dict()
+                    d["id"] = row.id   # trade_overlay needs a stable unique id
+                    closed_trades.append(d)
+        except Exception as exc:
+            logger.debug("Trade overlay: DB load error: %s", exc)
+            closed_trades = []
+
+        try:
+            from core.execution.paper_executor import paper_executor as _pe
+            open_positions = _pe.get_open_positions()
+        except Exception as exc:
+            logger.debug("Trade overlay: position load error: %s", exc)
+            open_positions = []
+
+        self._chart.set_trade_data(closed_trades, open_positions)
+
     # ── Chart rendering ────────────────────────────────────
     def _refresh_chart(self):
         """Recalculate indicators and re-render chart."""
@@ -763,6 +969,9 @@ class ChartWorkspacePage(QWidget):
             if "volume" in df_with_indicators.columns:
                 vol = df_with_indicators["volume"].iloc[-1]
                 self._vol_label.setText(f"{vol:,.0f}")
+
+            # Trade overlay — push latest trade data after chart is rendered
+            self._load_trade_data()
 
         except Exception as e:
             logger.error("Chart refresh error: %s", e, exc_info=True)

@@ -163,17 +163,25 @@ class PositionSizer:
         qty       = risk_usdt / stop_distance
         size_usdt = qty * entry_price
 
-        # Cap at 25% of capital (safety ceiling)
+        # Cap at 25% of capital (structural safety ceiling)
         cap_max = capital_usdt * 0.25
         size_usdt = min(size_usdt, cap_max)
+
+        # Absolute max_size_usdt cap (e.g. demo mode $500/trade limit)
+        # This must always be applied even in risk-based mode — it is the
+        # binding constraint during demo trading.  Without this, the 25%
+        # cap alone allows $25,000 positions on a $100,000 account.
+        if self.max_size_usdt > 0:
+            size_usdt = min(size_usdt, self.max_size_usdt)
 
         # Floor
         size_usdt = max(size_usdt, self.min_size_usdt)
 
         logger.debug(
             "PositionSizer (risk-based): capital=%.2f risk_pct=%.2f%% "
-            "stop_dist=%.6f qty=%.4f size=%.2f USDT",
+            "stop_dist=%.6f qty=%.4f size=%.2f USDT (max_cap=%.2f)",
             capital_usdt, risk_pct, stop_distance, qty, size_usdt,
+            self.max_size_usdt if self.max_size_usdt > 0 else cap_max,
         )
         return round(size_usdt, 2)
 

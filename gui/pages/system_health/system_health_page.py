@@ -219,6 +219,7 @@ class SystemHealthPage(QWidget):
         super().__init__(parent)
         self._event_log: list[dict] = []
         self._start_time = time.time()
+        self._scanner_warn_last: float = 0.0  # debounce for "Scanner not running" log
         self._build()
 
         # Periodic refresh timer — updates ALL sections every 5 seconds
@@ -451,6 +452,12 @@ class SystemHealthPage(QWidget):
             name = ex.id.upper() if ex and hasattr(ex, "id") else "—"
             mode = "Testnet/Paper" if (ex and getattr(ex, "urls", {}).get("test")) else "Live/Mainnet"
 
+            # Mode: read from exchange_manager instead of guessing via URL presence
+            try:
+                mode = exchange_manager.mode  # "Live", "Demo Trading", "Testnet", "Unknown"
+            except Exception:
+                pass
+
             status_text = "Connected" if connected else "Disconnected"
             self._ex_status_lbl.setText(status_text)
             self._ex_status_lbl.setStyleSheet(
@@ -460,17 +467,24 @@ class SystemHealthPage(QWidget):
             self._ex_name_lbl.setText(name)
             self._ex_mode_lbl.setText(mode)
 
-            # Last tick time
+            # Last tick: actual time of last successful fetch_tickers() call
             try:
-                now = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                self._ex_tick_lbl.setText(now if connected else "—")
+                lfa = exchange_manager.last_fetch_at
+                if lfa > 0 and connected:
+                    tick_str = datetime.fromtimestamp(lfa, tz=timezone.utc).strftime("%m-%d %H:%M:%S UTC")
+                    self._ex_tick_lbl.setText(tick_str)
+                else:
+                    self._ex_tick_lbl.setText("No data yet" if connected else "—")
             except Exception:
                 pass
 
-            # Latency estimate
+            # Latency: measured round-trip from last fetch_tickers() call
             try:
-                if connected:
-                    self._ex_lat_lbl.setText("< 3s (REST)")
+                lat_ms = exchange_manager.last_latency_ms
+                if lat_ms > 0 and connected:
+                    self._ex_lat_lbl.setText(f"{lat_ms}ms (REST)")
+                elif connected:
+                    self._ex_lat_lbl.setText("Measuring…")
                 else:
                     self._ex_lat_lbl.setText("—")
             except Exception:
@@ -634,34 +648,37 @@ class SystemHealthPage(QWidget):
         """Refresh notification channels status."""
         try:
             from core.notifications.notification_manager import notification_manager
-            history = notification_manager.get_history(limit=20)
+            history_dict = notification_manager.get_history(limit=20)
             channel_count = notification_manager.get_channel_count()
+            # get_history() returns {"notifications": [...], "stats": {...}}
+            notifications = history_dict.get("notifications", [])
 
             self._card_notif.set_ok(
                 f"{channel_count} Channel{'s' if channel_count != 1 else ''}",
-                f"{len(history)} recent",
+                f"{len(notifications)} recent",
                 ok=channel_count > 0,
                 warn=channel_count == 0,
             )
 
-            # Build channel status table from history
+            # Build channel status table from notification history
             channels_seen: dict[str, str] = {}
-            for h in history:
+            for h in notifications:
                 for ch in h.get("channels", []):
                     if ch not in channels_seen:
-                        channels_seen[ch] = h["sent_at"]
+                        channels_seen[ch] = h.get("sent_at", "")
 
-            self._notif_table.setRowCount(len(channels_seen))
-            for r, (ch, last_sent) in enumerate(channels_seen.items()):
-                ts = last_sent.split("T")[1][:8] if "T" in last_sent else last_sent[:16]
-                cells = [(ch.title(), _LIGHT), ("Active", _GREEN), (ts, _GRAY)]
-                for c, (val, color) in enumerate(cells):
-                    item = QTableWidgetItem(val)
-                    item.setForeground(QColor(color))
-                    self._notif_table.setItem(r, c, item)
-
-            if not channels_seen:
-                self._notif_table.setRowCount(1)
+            self._notif_table.setRowCount(len(channels_seen) if channels_seen else 1)
+            if channels_seen:
+                for r, (ch, last_sent) in enumerate(channels_seen.items()):
+                    ts = last_sent.split("T")[1][:8] if "T" in last_sent else last_sent[:16]
+                    cells = [(ch.title(), _LIGHT), ("Active", _GREEN), (ts, _GRAY)]
+                    for c, (val, color) in enumerate(cells):
+                        item = QTableWidgetItem(val)
+                        item.setForeground(QColor(color))
+                        self._notif_table.setItem(r, c, item)
+            else:
+                # Span all 3 columns so the message is visible in the table
+                self._notif_table.setSpan(0, 0, 1, 3)
                 item = QTableWidgetItem("No notifications sent yet")
                 item.setForeground(QColor(_GRAY))
                 self._notif_table.setItem(0, 0, item)
@@ -702,7 +719,13 @@ class SystemHealthPage(QWidget):
         try:
             from core.scanning.scanner import scanner as _sc
             if not getattr(_sc, "_running", False):
-                self._log_event("WARN", "SCANNER", "Scanner not running — check IDSS page")
+                # Debounce: only log once per 5 minutes and not within 30s of startup
+                _now = _time.time()
+                _grace = _now - self._start_time < 30
+                _cooldown = _now - self._scanner_warn_last < 300
+                if not _grace and not _cooldown:
+                    self._log_event("WARN", "SCANNER", "Scanner not running — check IDSS page")
+                    self._scanner_warn_last = _now
                 return
 
             last_scan = getattr(_sc, "_last_scan_completed_at", None)
@@ -765,7 +788,7 @@ class SystemHealthPage(QWidget):
     # ── Event log ─────────────────────────────────────────────
 
     def _log_event(self, level: str, component: str, message: str) -> None:
-        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%m-%d %H:%M:%S")
         self._event_log.insert(0, {
             "time": now, "level": level, "component": component, "message": message
         })

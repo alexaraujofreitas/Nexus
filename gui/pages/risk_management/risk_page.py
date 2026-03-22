@@ -373,7 +373,7 @@ class RiskManagementPage(QWidget):
         self._spin_min_rr.setSingleStep(0.1)
         self._spin_min_rr.setDecimals(1)
         self._spin_min_rr.setValue(1.3)
-        pv.addLayout(_spin_row("Min Risk:Reward Ratio", self._spin_min_rr))
+        pv.addLayout(_spin_row("Min R:R Floor (EV gate)", self._spin_min_rr))
         pv.addWidget(_hsep())
 
         # Max Capital Allowed for Trading (USDT) — 0 = unlimited
@@ -587,58 +587,48 @@ class RiskManagementPage(QWidget):
         sep_corr.setStyleSheet("color:#1A2332;")
         corr_layout.addWidget(sep_corr)
 
-        # Simple 4x4 correlation grid
-        symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+        # Correlation grid — cells stored as instance attr for live refresh
+        self._corr_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+        self._corr_cells: dict[tuple[int, int], QLabel] = {}
+
         grid = QGridLayout()
         grid.setSpacing(2)
 
         # Header row
-        for j, sym in enumerate(symbols):
+        for j, sym in enumerate(self._corr_symbols):
             lbl = QLabel(sym.split("/")[0])
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet("color: #8899AA; font-size: 13px; font-weight: 700;")
             grid.addWidget(lbl, 0, j + 1)
 
-        # Data rows
-        try:
-            from core.portfolio.correlation_controller import get_pair_correlation
-        except ImportError:
-            get_pair_correlation = None
-
-        for i, sym_a in enumerate(symbols):
+        # Data rows — cells populated by _refresh_correlation_matrix() called below
+        for i, sym_a in enumerate(self._corr_symbols):
             row_lbl = QLabel(sym_a.split("/")[0])
             row_lbl.setStyleSheet("color: #8899AA; font-size: 13px; font-weight: 700;")
             grid.addWidget(row_lbl, i + 1, 0)
-            for j, sym_b in enumerate(symbols):
-                if get_pair_correlation:
-                    corr = get_pair_correlation(sym_a, sym_b)
-                else:
-                    # Fallback correlation values for demo
-                    corr = 0.85 if i == j else (0.70 + (i - j) * 0.05)
-
-                cell = QLabel(f"{corr:.2f}")
+            for j in range(len(self._corr_symbols)):
+                cell = QLabel("—")
                 cell.setAlignment(Qt.AlignCenter)
                 cell.setFixedSize(60, 28)
-                # Color code: red = high, orange = moderate, green = medium, blue = low
-                if corr >= 0.90:
-                    bg = "#7F1D1D"  # dark red
-                elif corr >= 0.75:
-                    bg = "#B45309"  # orange
-                elif corr >= 0.60:
-                    bg = "#065F46"  # green
-                else:
-                    bg = "#1E3A5F"  # blue
                 cell.setStyleSheet(
-                    f"background: {bg}; color: #E8EBF0; font-size: 13px; "
+                    "background: #1E3A5F; color: #E8EBF0; font-size: 13px; "
                     "font-weight: 700; border-radius: 4px;"
                 )
                 grid.addWidget(cell, i + 1, j + 1)
+                self._corr_cells[(i, j)] = cell
 
         corr_layout.addLayout(grid)
 
-        cap_lbl = QLabel("Red: >=0.90 (highly correlated)  Orange: >=0.75  Green: >=0.60  Blue: <0.60 (low)")
+        cap_lbl = QLabel("Red: >=0.90 (highly correlated)  Orange: >=0.75  Green: >=0.60  Blue: <0.60 (low)  ·  Updated each scan cycle")
         cap_lbl.setStyleSheet("color: #4A5568; font-size: 13px;")
         corr_layout.addWidget(cap_lbl)
+
+        # Refresh immediately and start a 60s refresh timer
+        QTimer.singleShot(800, self._refresh_correlation_matrix)
+        self._corr_timer = QTimer(self)
+        self._corr_timer.setInterval(60_000)
+        self._corr_timer.timeout.connect(self._refresh_correlation_matrix)
+        self._corr_timer.start()
 
         v.addWidget(corr_group)
 
@@ -697,14 +687,17 @@ class RiskManagementPage(QWidget):
                 max_dd     = gate.max_portfolio_drawdown_pct
                 max_pp     = gate.max_position_capital_pct * 100
                 max_spread = gate.max_spread_pct
-                min_rr     = gate.min_risk_reward
                 max_capital = getattr(gate, 'max_capital_usdt', 0.0)
+                # min_rr comes from the EV gate setting — gate.min_risk_reward is a dead attr
+                # (validate() reads settings.get("expected_value.min_rr_floor") directly)
+                from config.settings import settings as _s
+                min_rr = float(_s.get("expected_value.min_rr_floor", 1.0))
             except Exception:
                 max_pos    = 3
                 max_dd     = 15.0
                 max_pp     = 25.0
                 max_spread = 0.30
-                min_rr     = 1.3
+                min_rr     = 1.0
                 max_capital = 0.0
 
             # ── stat strip ──────────────────────────────────
@@ -783,8 +776,10 @@ class RiskManagementPage(QWidget):
             try:
                 if hasattr(_pe, "get_production_status"):
                     ps = _pe.get_production_status()
-                    cap = ps.get("capital_usdt", 0)
-                    ret = ps.get("total_return_pct", 0)
+                    # Use total_value (true equity incl. unrealized P&L) not settled cash
+                    # total_value is already computed earlier in this method
+                    init_cap = getattr(_pe, "_initial_capital", 0) or 100_000.0
+                    ret = (total_value / init_cap - 1) * 100 if init_cap > 0 else 0.0
                     dd2 = ps.get("drawdown_pct", 0)
                     cb  = ps.get("circuit_breaker_on", False)
                     ht  = ps.get("portfolio_heat_pct", 0)
@@ -792,7 +787,8 @@ class RiskManagementPage(QWidget):
                     tc  = ps.get("total_trades", 0)
                     l10 = ps.get("last_10_outcomes", [])
 
-                    self._pm_capital.setText(f"${cap:,.2f}")
+                    # Show true total equity (matches Portfolio Value strip)
+                    self._pm_capital.setText(f"${total_value:,.2f}")
                     ret_col = "#00CC77" if ret >= 0 else "#FF3355"
                     self._pm_return.setText(f"<span style='color:{ret_col};font-weight:700'>{ret:+.2f}%</span>")
                     self._pm_return.setTextFormat(Qt.RichText)
@@ -850,6 +846,44 @@ class RiskManagementPage(QWidget):
                 "color:#445566; font-size:13px; font-weight:700;"
             )
 
+    def _refresh_correlation_matrix(self) -> None:
+        """Update correlation matrix cells with current values from CorrelationController."""
+        try:
+            from core.portfolio.correlation_controller import get_pair_correlation
+        except Exception:
+            return
+
+        for (i, j), cell in self._corr_cells.items():
+            sym_a = self._corr_symbols[i]
+            sym_b = self._corr_symbols[j]
+            corr = get_pair_correlation(sym_a, sym_b)
+
+            if sym_a == sym_b:
+                # Diagonal: self-correlation = 1.0
+                cell.setText("1.00")
+                cell.setStyleSheet(
+                    "background:#1A2A3A; color:#8899AA; font-size: 12px; "
+                    "font-weight: 700; border-radius: 4px;"
+                )
+            else:
+                cell.setText(f"{corr:.2f}")
+                if corr >= 0.90:
+                    bg = "#7A1A1A"
+                    fg = "#FF6B6B"
+                elif corr >= 0.75:
+                    bg = "#5A3A0A"
+                    fg = "#FFB347"
+                elif corr >= 0.60:
+                    bg = "#1A3A1A"
+                    fg = "#66CC66"
+                else:
+                    bg = "#1A2A4A"
+                    fg = "#6699CC"
+                cell.setStyleSheet(
+                    f"background:{bg}; color:{fg}; font-size: 12px; "
+                    "font-weight: 700; border-radius: 4px;"
+                )
+
     # ── Apply risk parameters ─────────────────────────────
     @Slot()
     def _apply_risk_params(self) -> None:
@@ -871,8 +905,9 @@ class RiskManagementPage(QWidget):
             gate.max_portfolio_drawdown_pct = max_dd
             gate.max_position_capital_pct   = max_pp
             gate.max_spread_pct             = max_spread
-            gate.min_risk_reward            = min_rr
             gate.max_capital_usdt           = max_capital
+            # min_rr is enforced via expected_value.min_rr_floor in settings
+            # (gate.min_risk_reward is a dead attribute — validate() reads settings directly)
             logger.info("RiskPage: RiskGate parameters updated via UI")
         except Exception as exc:
             logger.warning("RiskPage: could not update live RiskGate: %s", exc)
@@ -884,10 +919,11 @@ class RiskManagementPage(QWidget):
                 "max_portfolio_drawdown_pct": max_dd,
                 "max_position_capital_pct": max_pp * 100.0,
                 "max_spread_pct": max_spread,
-                "min_risk_reward": min_rr,
                 "max_capital_usdt": max_capital,
             }
             settings.set("risk", risk_cfg)
+            # min_rr goes to expected_value section (actual enforcement point)
+            settings.set("expected_value.min_rr_floor", min_rr)
             logger.info("RiskPage: Risk parameters saved to settings.yaml")
         except Exception as exc:
             logger.warning("RiskPage: could not persist risk params: %s", exc)

@@ -1,0 +1,26 @@
+{
+  "time_of_day": {
+    "blocked": 0,
+    "accepted": 151,
+    "blocked_by_symbol": {},
+    "blocked_by_regime": {},
+    "accepted_score_sum": 0.0,
+    "accepted_score_count": 0,
+    "blocked_score_sum": 0.0,
+    "blocked_score_count": 0,
+    "accepted_r_sum": 0.0,
+    "accepted_r_count": 0
+  },
+  "volatility": {
+    "blocked": 0,
+    "accepted": 151,
+    "blocked_by_symbol": {},
+    "blocked_by_regime": {},
+    "accepted_score_sum": 0.0,
+    "accepted_score_count": 0,
+    "blocked_score_sum": 0.0,
+    "blocked_score_count": 0,
+    "accepted_r_sum": 0.0,
+    "accepted_r_count": 0
+  }
+}

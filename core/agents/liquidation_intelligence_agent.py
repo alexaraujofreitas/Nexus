@@ -405,3 +405,23 @@ class LiquidationIntelligenceAgent:
             v = df[name].iloc[-1]
             return float(v) if pd.notna(v) else default
         return default
+
+
+# ── Module-level singleton ──────────────────────────────────────────────────
+_liquidation_intelligence_agent: Optional[LiquidationIntelligenceAgent] = None
+_lia_lock = threading.Lock()
+
+
+def get_liquidation_intelligence_agent() -> LiquidationIntelligenceAgent:
+    """Return the module-level LiquidationIntelligenceAgent singleton.
+
+    Created on first call; subsequent calls return the same instance.
+    This matches the singleton pattern used by other agent getters and is
+    required by oi_signal.py which imports this function by name.
+    """
+    global _liquidation_intelligence_agent
+    if _liquidation_intelligence_agent is None:
+        with _lia_lock:
+            if _liquidation_intelligence_agent is None:
+                _liquidation_intelligence_agent = LiquidationIntelligenceAgent()
+    return _liquidation_intelligence_agent

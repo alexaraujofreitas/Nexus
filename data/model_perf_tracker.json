@@ -1,0 +1,79 @@
+{
+  "stats": {
+    "trend": {
+      "wins": 55,
+      "losses": 86,
+      "r_sum": -42.6454,
+      "trades": 141,
+      "r_history": [
+        0.7138,
+        -1.5397,
+        -1.342,
+        0.6983,
+        -1.5452,
+        -1.3524,
+        0.7083,
+        -1.5496,
+        -1.3433,
+        0.7084,
+        -1.5414,
+        -1.3478,
+        0.6972,
+        -1.5593,
+        -1.3555,
+        0.7109,
+        -1.5523,
+        -1.3529,
+        0.6933,
+        -1.5484,
+        -1.3498,
+        0.686,
+        -1.5551,
+        -1.3517,
+        0.719,
+        -1.5455,
+        -1.3386,
+        0.6975,
+        -1.541,
+        -1.3495,
+        0.6993,
+        -1.5392,
+        -1.3553
+      ],
+      "gross_win_r": 7.732,
+      "gross_loss_r": 31.8555
+    },
+    "momentum_breakout": {
+      "wins": 36,
+      "losses": 64,
+      "r_sum": -25.3677,
+      "trades": 100,
+      "r_history": []
+    },
+    "TrendModel": {
+      "wins": 14,
+      "losses": 0,
+      "r_sum": 9.5562,
+      "trades": 14,
+      "r_history": []
+    }
+  },
+  "regime_stats": {
+    "trend|bull_trend": {
+      "wins": 19,
+      "losses": 0
+    },
+    "trend|TRENDING_UP": {
+      "wins": 36,
+      "losses": 86
+    },
+    "momentum_breakout|TRENDING_UP": {
+      "wins": 36,
+      "losses": 64
+    },
+    "TrendModel|bull_trend": {
+      "wins": 14,
+      "losses": 0
+    }
+  }
+}

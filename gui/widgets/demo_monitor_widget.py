@@ -267,20 +267,37 @@ class DemoMonitorWidget(QWidget):
     def _refresh_stats(self) -> None:
         try:
             from core.execution.paper_executor import paper_executor as _pe
-            status = _pe.get_production_status()
-            stats  = _pe.get_stats()
+            status   = _pe.get_production_status()
+            stats    = _pe.get_stats()
+            # Fetch actual open position dicts (symbol, side, size_usdt, unrealized_pnl, …)
+            # get_production_status() only returns open_positions as an integer count —
+            # we need the full list for exposure, open strip, and true equity calculation.
+            open_pos: list[dict] = _pe.get_open_positions()
         except Exception:
             return
 
-        # ── Capital & P&L ────────────────────────────────────────
-        capital = float(status.get("capital_usdt") or stats.get("available_capital") or _START_CAPITAL)
-        pnl_usdt = capital - _START_CAPITAL
-        pnl_pct  = (pnl_usdt / _START_CAPITAL) * 100
+        # ── Capital & P&L (true total equity, matching Dashboard) ────
+        # _capital is settled cash only. True equity = free cash + MTM value of open positions.
+        try:
+            _raw_capital: float = float(_pe._capital)
+            _initial:     float = float(_pe._initial_capital) or _START_CAPITAL
+            _locked:      float = sum(p.get("size_usdt", 0.0) or 0.0 for p in open_pos)
+            _mtm_value:   float = sum(
+                (p.get("size_usdt", 0.0) or 0.0) * (1.0 + (p.get("unrealized_pnl", 0.0) or 0.0) / 100.0)
+                for p in open_pos
+            )
+            capital = (_raw_capital - _locked) + _mtm_value
+        except Exception:
+            capital = float(status.get("capital_usdt") or _START_CAPITAL)
+            _initial = _START_CAPITAL
 
-        self._val_capital.setText(f"${capital:,.0f}")
+        pnl_usdt = capital - _initial
+        pnl_pct  = (pnl_usdt / _initial) * 100 if _initial else 0.0
+
+        self._val_capital.setText(f"${capital:,.2f}")
         pnl_color = _BULL if pnl_usdt >= 0 else _BEAR
         sign = "+" if pnl_usdt >= 0 else ""
-        self._val_pnl.setText(f"{sign}${pnl_usdt:,.0f} ({sign}{pnl_pct:.1f}%)")
+        self._val_pnl.setText(f"{sign}${pnl_usdt:,.2f} ({sign}{pnl_pct:.2f}%)")
         self._val_pnl.setStyleSheet(f"color:{pnl_color}; font-size:16px; font-weight:700;")
 
         # ── Heat ─────────────────────────────────────────────────
@@ -289,18 +306,14 @@ class DemoMonitorWidget(QWidget):
         self._val_heat.setText(f"{heat:.1f}%")
         self._val_heat.setStyleSheet(f"color:{heat_color}; font-size:16px; font-weight:700;")
 
-        # ── Open trades ───────────────────────────────────────────
-        open_pos = status.get("open_positions") or []
-        n_open   = len(open_pos) if isinstance(open_pos, list) else int(status.get("open_trades", 0) or 0)
+        # ── Open trades — from actual position list ───────────────
+        n_open = len(open_pos)
         self._val_open.setText(str(n_open))
         open_color = _WARN if n_open >= 5 else _TEXT_PRI
         self._val_open.setStyleSheet(f"color:{open_color}; font-size:16px; font-weight:700;")
 
-        # ── Exposure ──────────────────────────────────────────────
-        exposure = 0.0
-        if isinstance(open_pos, list):
-            for p in open_pos:
-                exposure += float(p.get("size_usdt") or 0.0)
+        # ── Exposure — sum of locked size_usdt from actual positions
+        exposure = sum(float(p.get("size_usdt") or 0.0) for p in open_pos)
         self._val_exposure.setText(f"${exposure:,.0f}")
 
         # ── Losing streak ─────────────────────────────────────────
@@ -321,16 +334,21 @@ class DemoMonitorWidget(QWidget):
         if cb_on:
             self._val_dd.setText(f"{dd_pct:.1f}% ⛔")
 
-        # ── Open positions strip ──────────────────────────────────
-        if isinstance(open_pos, list) and open_pos:
+        # ── Open positions strip — from actual position list ───────
+        if open_pos:
             parts = []
             for p in open_pos:
                 sym  = p.get("symbol", "?")
-                side = p.get("side", "?").upper()[:1]
+                side = str(p.get("side", "?")).upper()[:1]
                 upnl = float(p.get("unrealized_pnl") or 0.0)
-                sign = "+" if upnl >= 0 else ""
-                clr  = "green" if upnl >= 0 else "red"
-                parts.append(f'<span style="color:{clr}">{sym} {side} {sign}${upnl:.1f}</span>')
+                upnl_usdt = float(p.get("size_usdt") or 0.0) * upnl / 100.0
+                sign_str = "+" if upnl >= 0 else ""
+                clr  = _BULL if upnl >= 0 else _BEAR
+                parts.append(
+                    f'<span style="color:{clr}">'
+                    f'{sym} {side} {sign_str}{upnl:.2f}% ({sign_str}${upnl_usdt:.1f})'
+                    f'</span>'
+                )
             self._open_positions_lbl.setText("  |  ".join(parts))
         else:
             self._open_positions_lbl.setText('<span style="color:#4A6A8A">No open positions</span>')
