@@ -398,6 +398,26 @@ class LiquidationIntelligenceAgent:
             return float(hl) if hl > 0 else float(df["close"].iloc[-1]) * 0.01
         return float(df["close"].iloc[-1]) * 0.01
 
+    def get_symbol_data(self, symbol: str) -> dict:
+        """Return cached liquidation data for *symbol* as a flat dict.
+
+        Called by ``oi_signal.get_liquidation_modifier()`` which needs
+        ``liq_density_long`` / ``liq_density_short`` without triggering a full
+        ``update()`` (which requires live df + ticker).
+
+        Returns the cached ``LiquidationState.to_dict()`` if a non-expired
+        entry exists, otherwise returns ``{}`` so the caller treats it as
+        ``"no_data"``.
+        """
+        with self._lock:
+            entry = self._cache.get(symbol)
+        if entry is None:
+            return {}
+        state, cache_ts = entry
+        if time.time() - cache_ts > self.CACHE_TTL_SECONDS:
+            return {}
+        return state.to_dict()
+
     @staticmethod
     def _col(df: pd.DataFrame, name: str, default: Optional[float] = None) -> Optional[float]:
         """Safe column extraction (last value)."""
