@@ -609,7 +609,7 @@ risk:
   default_stop_loss_pct: 2.0
   default_take_profit_pct: 4.0
   max_capital_usdt: 0.0
-  max_concurrent_positions: 5
+  max_concurrent_positions: 10
   max_open_positions: 10
   max_portfolio_drawdown_pct: 4.0
   max_position_capital_pct: 25.0
@@ -660,7 +660,7 @@ scanner:
   auto_execute: true
   auto_execute_cooldown_seconds: 30
   btc_only_mode: false
-  capital_usdt: 37527.0
+  capital_usdt: 96000.0
   ohlcv_bars: 300
   watchlists:
     Default:

@@ -82,9 +82,24 @@ Thumbs.db
 artifacts/
 
 # ── Additional runtime data files ─────────────────────────
+# These files store per-machine runtime state (adaptive weights, performance
+# tracking, calibration data). Each machine generates its own from live trading.
 data/trade_monitor.json
+data/filter_stats.json
+data/live_vs_backtest.json
+data/calibrator_monitor.json
+data/scale_manager.json
 data/backtest_results/
 data/archive/
+
+# ── Generated reports (machine-specific outputs) ───────────
+reports/backtest_2yr/
+reports/demo_validation/
+reports/reviews/
+
+# ── Temporary working files ────────────────────────────────
+logs/EXTRACTED_*.txt
+backtest_data/
 
 # ── Linux FUSE mount artifacts (Cowork VM) ────────────────
 # These .fuse_hidden* files appear in the Windows folder due to the
