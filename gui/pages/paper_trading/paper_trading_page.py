@@ -116,9 +116,11 @@ def _fmt_age(opened_at_iso: str) -> str:
 def _exit_reason_label(reason: str) -> tuple[str, str]:
     """Returns (display text, color) for an exit reason."""
     labels = {
-        "stop_loss":    ("Stop Loss",    "#FF3355"),
-        "take_profit":  ("Take Profit",  "#00CC77"),
-        "manual_close": ("Manual",       "#8899AA"),
+        "stop_loss":     ("Stop Loss",     "#FF3355"),
+        "take_profit":   ("Take Profit",   "#00CC77"),
+        "manual_close":  ("Manual",        "#8899AA"),
+        "partial_close": ("Partial Close", "#FFB300"),
+        "time_exit":     ("Time Exit",     "#8899AA"),
     }
     return labels.get(reason, (reason.replace("_", " ").title(), "#8899AA"))
 
@@ -160,8 +162,10 @@ class StatLabel(QWidget):
 # ─────────────────────────────────────────────────────────────
 _POS_COLS   = ["Symbol", "Side", "Entry", "Mark", "Unreal. P&L",
                "Stop", "Target", "Size", "Score", "Age"]
-_HIST_COLS  = ["Symbol", "Side", "Entry", "Exit", "P&L %", "P&L $",
-               "Exit", "Duration", "Score", "Opened At", "Closed At"]
+_HIST_COLS  = ["Symbol", "Side", "Entry", "Exit",
+               "Entry Size", "Exit Size",
+               "P&L %", "P&L $",
+               "Exit Reason", "Duration", "Score", "Opened At", "Closed At"]
 
 
 class PaperTradingPage(QWidget):
@@ -475,6 +479,18 @@ class PaperTradingPage(QWidget):
             duration_s = t.get("duration_s", 0)
             score      = t.get("score", 0.0)
 
+            # ── Position sizing transparency (Session 30) ─────────────────
+            # entry_size_usdt: original USDT deployed when the position was opened.
+            # exit_size_usdt:  USDT actually closed in this record.
+            # For full closes they are equal; for partial closes they differ.
+            # Both fall back to size_usdt for historical records written before
+            # these fields existed (backward compatible).
+            entry_sz = float(t.get("entry_size_usdt") or t.get("size_usdt") or 0.0)
+            exit_sz  = float(t.get("exit_size_usdt")  or t.get("size_usdt") or 0.0)
+            # Colour the exit size: partial closes (< entry) render amber as a
+            # visual cue, full closes render the standard grey.
+            exit_sz_color = "#FFB300" if exit_sz < entry_sz - 0.01 else "#8899AA"
+
             # Friendly opened-at and closed-at times (local clock)
             try:
                 opened_dt  = datetime.fromisoformat(t["opened_at"])
@@ -487,25 +503,44 @@ class PaperTradingPage(QWidget):
             except Exception:
                 closed_str = "—"
 
+            # col 0  Symbol
             self._hist_table.setItem(ri, 0, _ci(
                 t["symbol"], "#E8EBF0", Qt.AlignLeft | Qt.AlignVCenter
             ))
+            # col 1  Side
             self._hist_table.setItem(ri, 1, _ci(side, side_color))
+            # col 2  Entry Price
             self._hist_table.setItem(ri, 2, _ci(_fmt_price(t["entry_price"]), "#8899AA"))
+            # col 3  Exit Price
             self._hist_table.setItem(ri, 3, _ci(_fmt_price(t["exit_price"]),  "#E8EBF0"))
+            # col 4  Entry Size (USDT) ── NEW
             self._hist_table.setItem(ri, 4, _ni(
+                entry_sz, f"${entry_sz:,.2f}", "#8899AA"
+            ))
+            # col 5  Exit Size (USDT) ── NEW
+            self._hist_table.setItem(ri, 5, _ni(
+                exit_sz, f"${exit_sz:,.2f}", exit_sz_color
+            ))
+            # col 6  P&L %
+            self._hist_table.setItem(ri, 6, _ni(
                 pnl_pct, f"{pnl_pct:+.3f}%", pnl_color
             ))
-            self._hist_table.setItem(ri, 5, _ni(
+            # col 7  P&L $
+            self._hist_table.setItem(ri, 7, _ni(
                 pnl_usdt, f"${pnl_usdt:+.2f}", pnl_color
             ))
-            self._hist_table.setItem(ri, 6, _ci(reason_lbl, reason_color))
-            self._hist_table.setItem(ri, 7, _ni(
+            # col 8  Exit Reason
+            self._hist_table.setItem(ri, 8, _ci(reason_lbl, reason_color))
+            # col 9  Duration
+            self._hist_table.setItem(ri, 9, _ni(
                 duration_s, _fmt_duration(duration_s), "#8899AA"
             ))
-            self._hist_table.setItem(ri, 8, _ni(score, f"{score:.3f}", "#FFB300"))
-            self._hist_table.setItem(ri, 9, _ci(opened_str, "#4A6A8A"))
-            self._hist_table.setItem(ri, 10, _ci(closed_str, "#4A6A8A"))
+            # col 10 Score
+            self._hist_table.setItem(ri, 10, _ni(score, f"{score:.3f}", "#FFB300"))
+            # col 11 Opened At
+            self._hist_table.setItem(ri, 11, _ci(opened_str, "#4A6A8A"))
+            # col 12 Closed At
+            self._hist_table.setItem(ri, 12, _ci(closed_str, "#4A6A8A"))
 
         self._hist_table.setSortingEnabled(True)
 

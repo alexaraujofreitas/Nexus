@@ -58,6 +58,10 @@ class PaperPosition:
         self.stop_loss    = stop_loss
         self.take_profit  = take_profit
         self.size_usdt    = size_usdt
+        # entry_size_usdt is the ORIGINAL position size at open — it never changes,
+        # even if partial_close() later reduces size_usdt.  Stored so that trade
+        # records can always show the true capital that was deployed at entry.
+        self.entry_size_usdt = size_usdt
         self.score        = score
         self.rationale    = rationale
         self.regime       = regime
@@ -136,21 +140,22 @@ class PaperPosition:
 
     def to_dict(self) -> dict:
         return {
-            "symbol":         self.symbol,
-            "side":           self.side,
-            "entry_price":    self.entry_price,
-            "current_price":  self.current_price,
-            "quantity":       self.quantity,
-            "stop_loss":      self.stop_loss,
-            "take_profit":    self.take_profit,
-            "size_usdt":      self.size_usdt,
-            "unrealized_pnl": round(self.unrealized_pnl, 4),
-            "score":          self.score,
-            "rationale":      self.rationale,
-            "regime":         self.regime,
-            "models_fired":   self.models_fired,
-            "timeframe":      self.timeframe,
-            "opened_at":      self.opened_at.isoformat(),
+            "symbol":           self.symbol,
+            "side":             self.side,
+            "entry_price":      self.entry_price,
+            "current_price":    self.current_price,
+            "quantity":         self.quantity,
+            "stop_loss":        self.stop_loss,
+            "take_profit":      self.take_profit,
+            "size_usdt":        self.size_usdt,
+            "entry_size_usdt":  self.entry_size_usdt,
+            "unrealized_pnl":   round(self.unrealized_pnl, 4),
+            "score":            self.score,
+            "rationale":        self.rationale,
+            "regime":           self.regime,
+            "models_fired":     self.models_fired,
+            "timeframe":        self.timeframe,
+            "opened_at":        self.opened_at.isoformat(),
         }
 
 
@@ -239,7 +244,12 @@ class PaperExecutor:
                     timeframe    = pd.get("timeframe", ""),
                     opened_at    = opened_at_dt,
                 )
-                pos.unrealized_pnl = float(pd.get("unrealized_pnl", 0))
+                pos.unrealized_pnl   = float(pd.get("unrealized_pnl", 0))
+                # Restore entry_size_usdt — fall back to size_usdt for positions
+                # saved before this field was added (backward compatible).
+                pos.entry_size_usdt  = float(
+                    pd.get("entry_size_usdt") or pd.get("size_usdt", pos.size_usdt)
+                )
                 self._positions.setdefault(symbol, []).append(pos)
                 restored += 1
             # Always restore capital from the JSON file — it is the authoritative
@@ -697,6 +707,10 @@ class PaperExecutor:
         else:
             pnl_usdt = (pos.entry_price - close_price) * close_qty
 
+        # Capture sizing info BEFORE modifying the position
+        _orig_entry_sz = float(getattr(pos, "entry_size_usdt", None) or pos.size_usdt)
+        _close_sz_usdt = round(pos.size_usdt * reduce_pct, 2)   # USDT portion being closed
+
         # ── Update position: reduce quantity AND size_usdt proportionally ──
         # size_usdt must shrink so that available_capital, portfolio heat, and
         # drawdown_pct all reflect the smaller remaining position correctly.
@@ -710,15 +724,56 @@ class PaperExecutor:
         if self._capital > self._peak_capital:
             self._peak_capital = self._capital
 
+        # ── Record partial-close trade for full Trade History transparency ──
+        # pnl_pct is expressed relative to the CLOSED fraction only.
+        _partial_pnl_pct = round(
+            pnl_usdt / _close_sz_usdt * 100 if _close_sz_usdt > 0 else 0.0, 4
+        )
+        _partial_duration_s = int(
+            (datetime.utcnow() - pos.opened_at).total_seconds()
+        ) if pos.opened_at else 0
+
+        partial_trade = {
+            "symbol":           symbol,
+            "side":             pos.side,
+            "entry_price":      pos.entry_price,
+            "exit_price":       close_price,
+            "stop_loss":        pos.stop_loss,
+            "take_profit":      pos.take_profit,
+            "size_usdt":        _close_sz_usdt,     # size of this partial close
+            "entry_size_usdt":  round(_orig_entry_sz, 2),  # full original position
+            "exit_size_usdt":   _close_sz_usdt,            # portion closed now
+            "pnl_pct":          _partial_pnl_pct,
+            "pnl_usdt":         round(pnl_usdt, 2),
+            "exit_reason":      "partial_close",
+            "score":            pos.score,
+            "rationale":        pos.rationale,
+            "regime":           pos.regime,
+            "models_fired":     pos.models_fired,
+            "timeframe":        pos.timeframe,
+            "duration_s":       _partial_duration_s,
+            "opened_at":        pos.opened_at.isoformat() if pos.opened_at else "",
+            "closed_at":        datetime.utcnow().isoformat(),
+            "entry_expected":   getattr(pos, "entry_expected", None),
+            "expected_value":   getattr(pos, "expected_value", None),
+            "risk_amount_usdt": 0.0,
+            "expected_rr":      0.0,
+            "symbol_weight":    float(getattr(pos, "symbol_weight",  1.0) or 1.0),
+            "adjusted_score":   float(getattr(pos, "adjusted_score", pos.score or 0.0) or 0.0),
+        }
+        self._closed_trades.append(partial_trade)
+        self._save_trade_to_db(partial_trade)
+
         # Persist updated state so restart sees correct position size
         self._save_open_positions()
 
         logger.info(
-            "PaperExecutor: partial close for %s | closed %.2f%% (qty=%.8f) @ %.4f | "
+            "PaperExecutor: partial close for %s | closed %.2f%% (%.2f USDT) @ %.4f | "
             "remaining qty=%.8f | P&L=%.2f USDT | capital=%.2f",
-            symbol, reduce_pct * 100, close_qty, close_price, new_qty,
+            symbol, reduce_pct * 100, _close_sz_usdt, close_price, new_qty,
             pnl_usdt, self._capital,
         )
+        bus.publish(Topics.TRADE_CLOSED, data=partial_trade, source="paper_executor")
         bus.publish(
             Topics.POSITION_UPDATED,
             data=pos.to_dict(),
@@ -801,24 +856,26 @@ class PaperExecutor:
             from core.database.models import PaperTrade
             with get_session() as s:
                 s.add(PaperTrade(
-                    symbol       = trade["symbol"],
-                    side         = trade["side"],
-                    regime       = trade.get("regime", ""),
-                    timeframe    = trade.get("timeframe", ""),
-                    entry_price  = trade["entry_price"],
-                    exit_price   = trade["exit_price"],
-                    stop_loss    = trade.get("stop_loss"),
-                    take_profit  = trade.get("take_profit"),
-                    size_usdt    = trade["size_usdt"],
-                    pnl_usdt     = trade["pnl_usdt"],
-                    pnl_pct      = trade["pnl_pct"],
-                    score        = trade.get("score", 0.0),
-                    exit_reason  = trade.get("exit_reason", ""),
-                    models_fired = trade.get("models_fired") or [],
-                    rationale    = trade.get("rationale", ""),
-                    duration_s   = trade.get("duration_s", 0),
-                    opened_at    = trade.get("opened_at", ""),
-                    closed_at    = trade.get("closed_at", ""),
+                    symbol          = trade["symbol"],
+                    side            = trade["side"],
+                    regime          = trade.get("regime", ""),
+                    timeframe       = trade.get("timeframe", ""),
+                    entry_price     = trade["entry_price"],
+                    exit_price      = trade["exit_price"],
+                    stop_loss       = trade.get("stop_loss"),
+                    take_profit     = trade.get("take_profit"),
+                    size_usdt       = trade["size_usdt"],
+                    entry_size_usdt = trade.get("entry_size_usdt", trade["size_usdt"]),
+                    exit_size_usdt  = trade.get("exit_size_usdt",  trade["size_usdt"]),
+                    pnl_usdt        = trade["pnl_usdt"],
+                    pnl_pct         = trade["pnl_pct"],
+                    score           = trade.get("score", 0.0),
+                    exit_reason     = trade.get("exit_reason", ""),
+                    models_fired    = trade.get("models_fired") or [],
+                    rationale       = trade.get("rationale", ""),
+                    duration_s      = trade.get("duration_s", 0),
+                    opened_at       = trade.get("opened_at", ""),
+                    closed_at       = trade.get("closed_at", ""),
                 ))
         except Exception as exc:
             logger.warning("PaperExecutor: DB write failed: %s", exc)
@@ -1080,6 +1137,16 @@ class PaperExecutor:
             _r = abs(_entry_p - _sl_p); _rw = abs(_tp_p - _entry_p)
             if _r > 0: _exp_rr_pre = round(_rw / _r, 4)
 
+        # entry_size_usdt: original capital deployed when this position was opened.
+        # For full closes it equals pos.size_usdt; for positions that had a prior
+        # partial_close() call it will be larger (the original full size).
+        _entry_sz = float(getattr(pos, "entry_size_usdt", None) or pos.size_usdt)
+        # exit_size_usdt: the portion of the position actually closed in this call.
+        # For a normal full close this equals pos.size_usdt.
+        # For the "remainder" leg after a prior partial close it will be smaller
+        # than entry_size_usdt.
+        _exit_sz  = pos.size_usdt
+
         trade = {
             "symbol":           symbol,
             "side":             pos.side,
@@ -1088,6 +1155,8 @@ class PaperExecutor:
             "stop_loss":        pos.stop_loss,
             "take_profit":      pos.take_profit,
             "size_usdt":        pos.size_usdt,
+            "entry_size_usdt":  round(_entry_sz, 2),
+            "exit_size_usdt":   round(_exit_sz,  2),
             "pnl_pct":          round(pnl_pct, 4),
             "pnl_usdt":         round(pnl_usdt, 2),
             "exit_reason":      reason,

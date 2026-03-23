@@ -470,7 +470,14 @@ class PaperTrade(Base):
     exit_price:  Mapped[float]          = mapped_column(Float, nullable=False)
     stop_loss:   Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     take_profit: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    size_usdt:   Mapped[float]          = mapped_column(Float, nullable=False)
+    size_usdt:       Mapped[float]          = mapped_column(Float, nullable=False)
+    # Position-sizing transparency columns (Session 30).
+    # entry_size_usdt: original USDT deployed when the trade was opened.
+    # exit_size_usdt:  USDT actually closed in this record (< entry for partial closes).
+    # Both default to NULL so existing rows (before this schema change) are still
+    # readable; to_dict() falls back to size_usdt when they are NULL.
+    entry_size_usdt: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=None)
+    exit_size_usdt:  Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=None)
     pnl_usdt:    Mapped[float]          = mapped_column(Float, nullable=False)
     pnl_pct:     Mapped[float]          = mapped_column(Float, nullable=False)
     score:       Mapped[float]          = mapped_column(Float, default=0.0)
@@ -489,25 +496,31 @@ class PaperTrade(Base):
 
     def to_dict(self) -> dict:
         """Convert back to the trade-dict format used by PaperExecutor."""
+        # For rows written before Session 30 the two new columns are NULL —
+        # fall back to size_usdt so the UI always has a usable value.
+        _esz = self.entry_size_usdt if self.entry_size_usdt is not None else self.size_usdt
+        _xsz = self.exit_size_usdt  if self.exit_size_usdt  is not None else self.size_usdt
         return {
-            "symbol":       self.symbol,
-            "side":         self.side,
-            "regime":       self.regime,
-            "timeframe":    self.timeframe,
-            "entry_price":  self.entry_price,
-            "exit_price":   self.exit_price,
-            "stop_loss":    self.stop_loss,
-            "take_profit":  self.take_profit,
-            "size_usdt":    self.size_usdt,
-            "pnl_usdt":     self.pnl_usdt,
-            "pnl_pct":      self.pnl_pct,
-            "score":        self.score,
-            "exit_reason":  self.exit_reason,
-            "models_fired": self.models_fired or [],
-            "rationale":    self.rationale or "",
-            "duration_s":   self.duration_s,
-            "opened_at":    self.opened_at,
-            "closed_at":    self.closed_at,
+            "symbol":           self.symbol,
+            "side":             self.side,
+            "regime":           self.regime,
+            "timeframe":        self.timeframe,
+            "entry_price":      self.entry_price,
+            "exit_price":       self.exit_price,
+            "stop_loss":        self.stop_loss,
+            "take_profit":      self.take_profit,
+            "size_usdt":        self.size_usdt,
+            "entry_size_usdt":  _esz,
+            "exit_size_usdt":   _xsz,
+            "pnl_usdt":         self.pnl_usdt,
+            "pnl_pct":          self.pnl_pct,
+            "score":            self.score,
+            "exit_reason":      self.exit_reason,
+            "models_fired":     self.models_fired or [],
+            "rationale":        self.rationale or "",
+            "duration_s":       self.duration_s,
+            "opened_at":        self.opened_at,
+            "closed_at":        self.closed_at,
         }
 
 
