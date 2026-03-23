@@ -1775,3 +1775,80 @@ After 50 trades, also check:
 - Any code that calls `bus.publish()` from a background thread (QThread, asyncio, ThreadPoolExecutor) will invoke GUI subscribers cross-thread → Qt crash.
 - Pattern for safe background→main thread dispatch: use a `Signal` on a `QThread` object (whose affinity is the main thread) → AutoConnection becomes QueuedConnection → slot runs on main thread.
 - Specifically: `_pe.on_tick()` MUST only be called from the main thread.
+
+## Session 30 — Notification Audit & Trade History Transparency (2026-03-23)
+
+### Notification System Audit — 7 Bugs Fixed
+
+Full audit of all 13 `NotificationManager` event handlers. Every handler that constructed notification data was checked for key mismatches between executor dict keys and template keys.
+
+| # | Handler | Bug | Fix |
+|---|---------|-----|-----|
+| 1 | `_on_trade_closed` | `direction` always "long" — executor sends `side` ("buy"/"sell"), template reads `direction` | Added `"long" if side=="buy" else "short"` mapping |
+| 2 | `_on_trade_closed` | `pnl` was 0.00 — executor sends `pnl_usdt`, template reads `pnl` | Added `data["pnl"] = data["pnl_usdt"]` |
+| 3 | `_on_trade_closed` | `size` showed "—" — executor sends `size_usdt`, template reads `size` | Formatted `$X,XXX.XX USDT` |
+| 4 | `_on_trade_closed` | `strategy` showed "—" — executor sends `models_fired` list, template reads `strategy` | `", ".join(mf)` |
+| 5 | `_on_trade_closed` | `close_reason` always "manual" — executor sends `exit_reason`, template reads `close_reason` | Added alias |
+| 6 | `_on_trade_closed` | `duration` showed "—" — executor sends `duration_s` int, template reads `duration` string | Formatted as "Xm Ys" / "Xh Ym" |
+| 7 | `_on_order_filled` | `direction` showed "BUY"/"SELL" (raw `side`) | Added explicit "buy"→"long", "sell"→"short" mapping |
+| 8 | `_send_daily_summary` | All stats showed zero — handler only sent `date` + delivery stats, never queried paper_executor | Rebuilt to compute `total_trades`, `wins`, `daily_pnl`, `win_rate`, `equity`, `regime` from live data |
+| 9 | `_on_signal_rejected`, `_on_signal_confirmed`, `_on_candidate_approved` | Missing `confidence` and `strategy` normalization | Added `score`→`confidence` and `models_fired`→`strategy` in all three |
+
+**P&L math was already correct** in `_close_position()`: Long = `(exit−entry)/entry×100`, Short = `(entry−exit)/entry×100`. No math change needed.
+
+**File modified**: `core/notifications/notification_manager.py`
+
+**New tests**: `tests/unit/test_notification_audit.py` — 18 tests (NA-01 through NA-18) covering all 7 bugs.
+
+### Trade History Position-Sizing Transparency
+
+Every closed trade in Paper Trading → Trade History now shows two new columns: **Entry Size (USDT)** and **Exit Size (USDT)**.
+
+#### Architecture: End-to-End Data Flow
+
+```
+PaperPosition.entry_size_usdt (never changes)
+    ↓
+_close_position() → trade dict (entry_size_usdt, exit_size_usdt)
+partial_close()   → partial_trade dict (entry_size_usdt, exit_size_usdt) → _closed_trades + DB + TRADE_CLOSED event
+    ↓
+PaperTrade DB columns (nullable, backward-compat fallback to size_usdt)
+    ↓
+paper_trading_page._refresh_history_from() → "Entry Size" col (grey) + "Exit Size" col (amber if partial)
+```
+
+#### Key Changes
+
+| File | Change |
+|------|--------|
+| `core/execution/paper_executor.py` | `PaperPosition.__init__()`: `self.entry_size_usdt = size_usdt` (immutable). `to_dict()` includes `entry_size_usdt`. `_load_open_positions()` restores with backward-compat fallback. `_close_position()` adds both fields to every trade dict. `partial_close()` now creates a full `partial_trade` dict and appends to `_closed_trades`, saves to DB, publishes `TRADE_CLOSED` — **partial closes are now visible in Trade History**. |
+| `core/database/models.py` | Added `entry_size_usdt` and `exit_size_usdt` (Float, nullable, default=None) to `PaperTrade`. `to_dict()` falls back to `size_usdt` for pre-Session-30 NULL rows. `_save_trade_to_db()` passes both fields. |
+| `gui/pages/paper_trading/paper_trading_page.py` | Added "Entry Size" and "Exit Size" columns (indices 4 and 5); all subsequent column indices shifted +2. Exit size shown in amber (#FFB300) when < entry size (partial close indicator). Fixed duplicate "Exit" column header. Added `"partial_close": ("Partial Close", "#FFB300")` and `"time_exit": ("Time Exit", "#8899AA")` to `_exit_reason_label()`. |
+
+#### Design Rules
+- `entry_size_usdt` is IMMUTABLE — `partial_close()` never touches it, only `size_usdt` shrinks
+- `exit_size_usdt` = `pos.size_usdt` at close time (what was actually closed)
+- For full closes: `entry_size_usdt == exit_size_usdt`
+- For final close after prior partial(s): `entry_size_usdt > exit_size_usdt` — shows how much was still open
+- Partial close records: `exit_size_usdt` = the fraction closed in that partial
+
+### New Tests
+- `tests/unit/test_position_sizing_transparency.py` — 17 tests (PST-01 through PST-17)
+  - `TestPaperPositionAttribute` (PST-01/02/03) — immutability and to_dict
+  - `TestClosePositionTradeDict` (PST-04/05) — full and post-partial close dict fields
+  - `TestPartialCloseTrade` (PST-06/07/08/09/10) — trade record creation, sizes, reason, P&L
+  - `TestPaperTradeModel` (PST-11/12) — DB model to_dict and NULL fallback
+  - `TestSaveTradeToDB` (PST-13) — lazy import patching confirms both fields passed
+  - `TestScenarios` (PST-14/15/16) — full close, stop-loss, take-profit scenarios
+  - `TestExitReasonLabel` (PST-17) — source inspection for partial_close → amber mapping
+
+### Test Results
+- **1,516 total pass**: 1,323 unit/learning/evaluation/validation + 193 intelligence
+- 9 skipped (GPU), 0 failures
+- 65/69 UI checks pass (4 pre-existing VM environment failures)
+
+### Rules (Session 30)
+- **Notification key contract**: `_on_trade_closed()` always normalises: `side`→`direction`, `pnl_usdt`→`pnl`, `size_usdt`→`size` (formatted), `models_fired`→`strategy`, `exit_reason`→`close_reason`, `duration_s`→`duration`. Never pass raw executor dict to `notify()` without normalization.
+- **`tr.get(key, default)` None-safety rule**: If a key can be `None` in the DB (not just absent), always use `(tr.get(key) or default)` — the default only fires when the key is ABSENT, not when value is None.
+- **`entry_size_usdt` immutability**: Never assign to `pos.entry_size_usdt` after `__init__`. Only `size_usdt` changes during partial closes.
+- **Partial close visibility**: Every `partial_close()` call MUST produce a `_closed_trades` entry and a DB row. Partial closes that don't create records are invisible to performance analytics, learning loop, and notifications.
