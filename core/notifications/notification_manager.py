@@ -633,17 +633,73 @@ class NotificationManager:
         Reschedules the next daily summary.
         """
         try:
-            # Gather stats for today
-            now = datetime.now()
-            data = {
-                "date": now.strftime("%Y-%m-%d"),
-                "hour": self._daily_summary_hour,
-                "stats": dict(self._delivery_stats),
-            }
+            now     = datetime.now(timezone.utc)
+            today   = now.strftime("%Y-%m-%d")
+            data: dict = {"date": today}
+
+            # ── Collect live trading stats ────────────────────────────────────
+            try:
+                from core.execution.paper_executor import paper_executor as _pe
+                stats = _pe.get_stats()
+
+                # Filter closed trades to today only
+                today_trades = [
+                    t for t in _pe._closed_trades
+                    if isinstance(t.get("closed_at", ""), str)
+                    and t["closed_at"].startswith(today)
+                ]
+                wins   = sum(1 for t in today_trades if (t.get("pnl_pct") or 0) > 0)
+                losses = len(today_trades) - wins
+                daily_pnl = sum(float(t.get("pnl_usdt") or 0) for t in today_trades)
+
+                # Compute open equity for today P&L
+                _open_flat = [p for pos_list in _pe._positions.values() for p in pos_list]
+                _unrealized = sum(p.size_usdt * (p.unrealized_pnl / 100) for p in _open_flat)
+                daily_pnl_total = daily_pnl + _unrealized
+
+                _initial = _pe._initial_capital or _pe._capital or 1.0
+                daily_pnl_pct = round(daily_pnl_total / _initial * 100, 2)
+
+                # Current equity
+                _locked    = sum(p.size_usdt for p in _open_flat)
+                _mtm       = sum(p.size_usdt * (1 + p.unrealized_pnl / 100) for p in _open_flat)
+                equity     = round((_pe._capital - _locked) + _mtm, 2)
+
+                # Overall win rate (all time, not just today — meaningful for daily review)
+                win_rate_frac = stats.get("win_rate", 0.0) / 100.0  # get_stats returns 0-100
+
+                # Current regime (best-effort)
+                current_regime = "—"
+                try:
+                    from core.scanning.scanner import scanner as _scanner
+                    if hasattr(_scanner, "_last_regime"):
+                        current_regime = _scanner._last_regime or "—"
+                except Exception:
+                    pass
+
+                data.update({
+                    "total_trades": len(today_trades),
+                    "wins":         wins,
+                    "losses":       losses,
+                    "daily_pnl":    round(daily_pnl_total, 2),
+                    "daily_pnl_pct":daily_pnl_pct,
+                    "win_rate":     win_rate_frac,
+                    "equity":       equity,
+                    "current_regime": current_regime,
+                })
+            except Exception as _stats_exc:
+                logger.debug("NotificationManager: daily summary stats error — %s", _stats_exc)
+                data.setdefault("total_trades", 0)
+                data.setdefault("wins",         0)
+                data.setdefault("losses",       0)
+                data.setdefault("daily_pnl",    0.0)
+                data.setdefault("daily_pnl_pct",0.0)
+                data.setdefault("win_rate",     0.0)
+                data.setdefault("equity",       0.0)
+                data.setdefault("current_regime","—")
 
             # Dispatch notification
             self.notify("daily_summary", data=data, dedup_key=None)
-
             logger.info("NotificationManager: daily summary sent")
         except Exception as exc:
             logger.error("NotificationManager: daily summary failed — %s", exc)
@@ -829,10 +885,51 @@ class NotificationManager:
         )
 
     def _on_trade_closed(self, event: Event) -> None:
-        data = event.data or {}
+        data = dict(event.data or {})
         sym  = data.get("symbol", "???")
-        # Use 'exit_reason' (paper_executor key) with 'close_reason' as fallback
-        reason = data.get("exit_reason", data.get("close_reason", ""))
+
+        # ── Key normalisation ──────────────────────────────────
+        # paper_executor uses different key names than the trade_closed template expects.
+        # Populate template keys without overwriting values already present.
+
+        # "direction" → executor sends "side" ("buy"/"sell"); template uses "direction"
+        if "direction" not in data and "side" in data:
+            data["direction"] = "long" if data["side"] == "buy" else "short"
+
+        # "pnl" → template reads data.get("pnl"), executor sends "pnl_usdt"
+        if "pnl" not in data and "pnl_usdt" in data:
+            data["pnl"] = data["pnl_usdt"]
+
+        # "size" → executor sends "size_usdt"; template uses "size"
+        if "size" not in data and "size_usdt" in data:
+            usdt = data["size_usdt"]
+            data["size"] = f"${float(usdt):,.2f} USDT" if usdt else "—"
+
+        # "strategy" → executor sends "models_fired" (list); template uses "strategy"
+        if "strategy" not in data:
+            mf = data.get("models_fired") or []
+            if isinstance(mf, list) and mf:
+                data["strategy"] = ", ".join(mf)
+            elif isinstance(mf, str) and mf:
+                data["strategy"] = mf
+
+        # "close_reason" → executor sends "exit_reason"; template uses "close_reason"
+        if "close_reason" not in data and "exit_reason" in data:
+            data["close_reason"] = data["exit_reason"]
+
+        # "duration" → executor sends "duration_s" (integer seconds); template uses "duration"
+        if "duration" not in data and "duration_s" in data:
+            ds = int(data["duration_s"] or 0)
+            if ds < 60:
+                data["duration"] = f"{ds}s"
+            elif ds < 3600:
+                data["duration"] = f"{ds // 60}m {ds % 60}s"
+            else:
+                h = ds // 3600
+                m = (ds % 3600) // 60
+                data["duration"] = f"{h}h {m}m"
+
+        reason = data.get("close_reason", "")
         self.notify(
             "trade_closed", data,
             dedup_key=f"closed_{sym}_{reason}",
@@ -843,11 +940,17 @@ class NotificationManager:
         data = event.data or {}
         order_type = data.get("order_type", "")
         if "stop" in order_type.lower():
-            sym = data.get("symbol", "???")
+            sym  = data.get("symbol", "???")
+            side = data.get("side", "")
+            # Normalise "buy"/"sell" → "long"/"short" for consistent display
+            direction = "long" if side == "buy" else ("short" if side == "sell" else side or "long")
+            # loss/loss_pct: executor may send a negative realized_pnl; template expects
+            # a positive USDT amount displayed with a leading minus sign via _fmt_price.
+            # Keep as-is — _fmt_price and _fmt_pct handle sign display correctly.
             self.notify(
                 "trade_stopped", {
                     "symbol":       sym,
-                    "direction":    data.get("side", "long"),
+                    "direction":    direction,
                     "entry_price":  data.get("entry_price"),
                     "stop_price":   data.get("fill_price", data.get("price")),
                     "loss":         data.get("realized_pnl"),
@@ -857,8 +960,17 @@ class NotificationManager:
             )
 
     def _on_signal_rejected(self, event: Event) -> None:
-        data = event.data or {}
+        data = dict(event.data or {})
         sym  = data.get("symbol", "???")
+        # Normalise score → confidence and models_fired → strategy
+        if "confidence" not in data and "score" in data:
+            data["confidence"] = float(data["score"] or 0.0)
+        if "strategy" not in data:
+            mf = data.get("models_fired") or []
+            if isinstance(mf, list) and mf:
+                data["strategy"] = ", ".join(mf)
+            elif isinstance(mf, str) and mf:
+                data["strategy"] = mf
         self.notify(
             "trade_rejected", data,
             dedup_key=f"rejected_{sym}_{data.get('strategy','')}",
@@ -866,8 +978,18 @@ class NotificationManager:
 
     def _on_signal_confirmed(self, event: Event) -> None:
         """Confluence-confirmed signal — pre-trade alert."""
-        data = event.data or {}
+        data = dict(event.data or {})
         sym  = data.get("symbol", "???")
+        # Normalise score → confidence and models_fired → strategy/contributing_signals
+        if "confidence" not in data and "score" in data:
+            data["confidence"] = float(data["score"] or 0.0)
+        if "strategy" not in data:
+            mf = data.get("models_fired") or []
+            if isinstance(mf, list) and mf:
+                data["strategy"] = ", ".join(mf)
+                data.setdefault("contributing_signals", mf)
+            elif isinstance(mf, str) and mf:
+                data["strategy"] = mf
         self.notify(
             "strategy_signal", data,
             dedup_key=f"signal_{sym}_{data.get('direction','')}",
@@ -942,8 +1064,18 @@ class NotificationManager:
 
     def _on_candidate_approved(self, event: Event) -> None:
         """Scanner found a high-confidence trade candidate."""
-        data = event.data or {}
+        data = dict(event.data or {})
         sym  = data.get("symbol", "???")
+        # Normalise score → confidence and models_fired → strategy/contributing_signals
+        if "confidence" not in data and "score" in data:
+            data["confidence"] = float(data["score"] or 0.0)
+        if "strategy" not in data:
+            mf = data.get("models_fired") or []
+            if isinstance(mf, list) and mf:
+                data["strategy"] = ", ".join(mf)
+                data.setdefault("contributing_signals", mf)
+            elif isinstance(mf, str) and mf:
+                data["strategy"] = mf
         self.notify(
             "strategy_signal", data,
             dedup_key=f"candidate_{sym}_{data.get('direction','')}",
