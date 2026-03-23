@@ -292,8 +292,13 @@ class TestPositionSizeIncrease:
         from core.meta_decision.confluence_scorer import BASE_SIZE_USDT
         assert BASE_SIZE_USDT == 500.0
 
-    def test_ne09b_sizer_max_is_500(self):
-        """NE-09b: PositionSizer max_size_usdt is 500."""
+    def test_ne09b_sizer_max_is_zero(self):
+        """NE-09b: PositionSizer max_size_usdt is 0.0 (no absolute cap).
+        Session 31 fix: removed the $500 demo cap so max_capital_pct (4%)
+        governs — trades should be ~$4,053 on a $100k account, not $500.
+        """
         from core.meta_decision.confluence_scorer import ConfluenceScorer
         cs = ConfluenceScorer()
-        assert cs._sizer.max_size_usdt == 500.0
+        assert cs._sizer.max_size_usdt == 0.0, (
+            f"max_size_usdt={cs._sizer.max_size_usdt}; expected 0.0 (Session 31 fix)"
+        )

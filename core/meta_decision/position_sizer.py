@@ -163,14 +163,15 @@ class PositionSizer:
         qty       = risk_usdt / stop_distance
         size_usdt = qty * entry_price
 
-        # Cap at 25% of capital (structural safety ceiling)
-        cap_max = capital_usdt * 0.25
+        # Cap at max_capital_pct of capital (e.g. 4% hard cap).
+        # Using self.max_capital_pct instead of a hardcoded constant ensures the
+        # same concentration limit applies whether sizing_mode is "risk_based" or "kelly".
+        cap_max = capital_usdt * self.max_capital_pct
         size_usdt = min(size_usdt, cap_max)
 
-        # Absolute max_size_usdt cap (e.g. demo mode $500/trade limit)
-        # This must always be applied even in risk-based mode — it is the
-        # binding constraint during demo trading.  Without this, the 25%
-        # cap alone allows $25,000 positions on a $100,000 account.
+        # Absolute max_size_usdt cap — only applied when explicitly set (> 0).
+        # For demo trading a hard dollar limit can be configured here.
+        # With max_size_usdt=0 (default), the max_capital_pct cap above governs.
         if self.max_size_usdt > 0:
             size_usdt = min(size_usdt, self.max_size_usdt)
 
@@ -179,9 +180,11 @@ class PositionSizer:
 
         logger.debug(
             "PositionSizer (risk-based): capital=%.2f risk_pct=%.2f%% "
-            "stop_dist=%.6f qty=%.4f size=%.2f USDT (max_cap=%.2f)",
+            "stop_dist=%.6f qty=%.4f size=%.2f USDT "
+            "(max_capital_pct=%.1f%% → cap=%.2f%s)",
             capital_usdt, risk_pct, stop_distance, qty, size_usdt,
-            self.max_size_usdt if self.max_size_usdt > 0 else cap_max,
+            self.max_capital_pct * 100, cap_max,
+            f" | abs_cap={self.max_size_usdt}" if self.max_size_usdt > 0 else "",
         )
         return round(size_usdt, 2)
 

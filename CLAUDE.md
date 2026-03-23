@@ -1852,3 +1852,69 @@ paper_trading_page._refresh_history_from() → "Entry Size" col (grey) + "Exit S
 - **`tr.get(key, default)` None-safety rule**: If a key can be `None` in the DB (not just absent), always use `(tr.get(key) or default)` — the default only fires when the key is ABSENT, not when value is None.
 - **`entry_size_usdt` immutability**: Never assign to `pos.entry_size_usdt` after `__init__`. Only `size_usdt` changes during partial closes.
 - **Partial close visibility**: Every `partial_close()` call MUST produce a `_closed_trades` entry and a DB row. Partial closes that don't create records are invisible to performance analytics, learning loop, and notifications.
+
+## Session 31 — Position Sizing & Regime Classification Root-Cause Fix (2026-03-23)
+
+### Audit Trigger
+User uploaded `orders.docx` showing all 10 live trades were ~$500 USDT on a $100k capital account, and 9/10 trades were classified as regime="Uncertain". Root-cause investigation with full calculation traces was requested.
+
+### Root Cause 1 — $500 Position Size (two compounding bugs)
+
+#### Bug 1a — `max_size_usdt=500.0` in ConfluenceScorer (BINDING constraint)
+- **File**: `core/meta_decision/confluence_scorer.py`
+- **Code**: `self._sizer = PositionSizer(max_size_usdt=500.0)` — set in Session 11 as a "demo cap"
+- **Effect**: Regardless of capital, risk%, or stop distance, EVERY trade was capped at exactly $500
+- **Proof from orders.docx**: BTC trade — risk_usdt=506 → qty=0.318 → raw_size=$22,527 → capped at $500
+- **Fix**: Changed to `max_size_usdt=0.0` — no absolute dollar cap; `max_capital_pct=4%` governs
+
+#### Bug 1b — Hardcoded 25% cap in `calculate_risk_based()` (secondary bug)
+- **File**: `core/meta_decision/position_sizer.py`
+- **Code**: `cap_max = capital_usdt * 0.25` — used 25% instead of `self.max_capital_pct` (4%)
+- **Effect**: Even with bug 1a fixed, the cap formula would have allowed up to $25,000 (25% of $100k)
+- **Fix**: Changed to `cap_max = capital_usdt * self.max_capital_pct` — honours the configured 4% parameter
+- **Design contract**: `max_capital_pct` (default 0.04) is now the ONLY per-trade concentration limit
+
+#### Expected trade sizes after fix (same trades, same capital)
+| Symbol | Capital | Risk% | Stop Dist | Raw Size | Cap (4%) | Old Result | New Result |
+|--------|---------|-------|-----------|----------|----------|------------|------------|
+| BTC/USDT | $101,327 | 0.5% | $1,593 | $22,527 | $4,053 | $500 | **~$4,053** |
+| SOL/USDT | $101,327 | 0.5% | $2.89 | $16,047 | $4,053 | $500 | **~$4,053** |
+
+### Root Cause 2 — "Uncertain" Regime (two compounding bugs)
+
+#### Bug 2a — HMM state-map warmup bias (30 → 5 bars)
+- **File**: `core/regime/hmm_regime_classifier.py` → `_label_states()`
+- **Code**: `if i < 30: rule_labels.append(REGIME_UNCERTAIN)` — first 30 bars hardcoded as "uncertain"
+- **Effect**: For a 200-bar training set, 15% of all bars were forcibly labeled "uncertain". HMM states that captured the early-session dynamics (often including genuine bull/bear trends) were incorrectly mapped to "uncertain" instead of their true regime.
+- **Fix**: Reduced warmup to `_WARMUP_BARS = 5` — only the first 5 bars are excluded (insufficient for any indicator calculation)
+
+#### Bug 2b — HMM dominance over rule-based when poorly calibrated (60%/40% → adaptive)
+- **File**: `core/regime/hmm_regime_classifier.py` → `classify_combined()`
+- **Code**: Hardcoded `hmm_w, rb_w = 0.60, 0.40` regardless of HMM state-map quality
+- **Effect**: When the HMM was poorly calibrated (many states labeled "uncertain" due to bug 2a), the 60% HMM weight dominated and suppressed valid rule-based signals (e.g., bull_trend at 0.80 confidence)
+- **Fix**: Added adaptive weight block before blending:
+  - Compute `uncertain_frac = n_uncertain_states / n_total_states`
+  - If `uncertain_frac > 0.50`: use `hmm_w=0.20, rb_w=0.80` (degraded calibration)
+  - Else: keep `hmm_w=0.60, rb_w=0.40` (well-calibrated model)
+- **Log output**: `"HMMRegimeClassifier: degraded calibration (4/6 states='uncertain') — using HMM_W=0.20 RB_W=0.80"`
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `core/meta_decision/confluence_scorer.py` | `PositionSizer(max_size_usdt=500.0)` → `PositionSizer(max_size_usdt=0.0)` |
+| `core/meta_decision/position_sizer.py` | `capital_usdt * 0.25` → `capital_usdt * self.max_capital_pct` in `calculate_risk_based()` |
+| `core/regime/hmm_regime_classifier.py` | `_label_states()`: `if i < 30` → `_WARMUP_BARS = 5; if i < _WARMUP_BARS`; `classify_combined()`: fixed weight → adaptive weight based on uncertain_frac |
+| `tests/unit/test_session31_fixes.py` | NEW — 28 tests (A-01…A-07, B-01…B-04, C-01…C-08, D-01…D-05, E-01…E-04) |
+| `tests/evaluation/test_new_evaluator_checks.py` | Updated `test_ne09b_sizer_max_is_500` → `test_ne09b_sizer_max_is_zero` (reflects new value) |
+
+### Test Results
+- **1,568 total pass**: 1,375 unit/learning/evaluation/validation/integration + 193 intelligence
+- 11 skipped (GPU), 0 failures
+- 65/69 UI checks pass (4 pre-existing VM environment failures, unchanged)
+
+### Rules (Session 31)
+- **Single absolute cap rule**: `max_size_usdt` is the ONLY absolute dollar cap in the position sizing chain. Setting it to a non-zero value creates an invisible ceiling that overrides all risk-based calculations. For production, it must be `0.0` — let `max_capital_pct` govern.
+- **`max_capital_pct` must match `calculate_risk_based()`**: The `max_capital_pct` parameter is only meaningful when `calculate_risk_based()` uses `self.max_capital_pct` (not a hardcoded constant). These two must always move together.
+- **HMM warmup rule**: `_WARMUP_BARS` in `_label_states()` is the ONLY warmup gate. Never use a hardcoded integer. Value of 5 is calibrated to the minimum bars needed for any indicator to produce a valid value.
+- **Adaptive HMM weight rule**: `classify_combined()` must check `uncertain_frac > 0.50` before every blend. If > 50% of states are labeled "uncertain", the model is poorly calibrated — use `hmm_w=0.20, rb_w=0.80`. This is a runtime check (per classification call), not a static flag.
+- **Two HMM files rule**: `hmm_classifier.py` and `hmm_regime_classifier.py` are two separate files used in different code paths. Any change to HMM configuration (covariance type, warmup bars, weight schedule) must be applied to BOTH files.

@@ -99,10 +99,9 @@ MODEL_WEIGHTS: dict[str, float] = {
 # The OrchestratorEngine can raise this dynamically in uncertain environments
 SCORE_THRESHOLD = 0.55
 
-# Default position size base (USDT) — adjusted by score below.
-# Raised from $100 to $500 so that P&L data points are large enough
-# to be statistically meaningful against a $100k account.
-# The PositionSizer's Kelly/cap logic still applies as a safety net.
+# BASE_SIZE_USDT is only used as the Kelly fallback input, NOT as a hard cap.
+# Actual sizing is governed by risk_pct_per_trade × capital / stop_distance,
+# capped at PositionSizer.max_capital_pct (4% of capital).
 BASE_SIZE_USDT = 500.0
 
 
@@ -238,7 +237,7 @@ class ConfluenceScorer:
         # OrchestratorEngine integration — lazily fetched
         self._orchestrator  = None
         # Position sizer for Kelly-based sizing
-        self._sizer         = PositionSizer(max_size_usdt=500.0)  # Demo cap: $500/trade
+        self._sizer         = PositionSizer(max_size_usdt=0.0)  # 0 = no absolute cap; max_capital_pct (4%) governs
 
         # Zero RL ensemble if disabled
         try:

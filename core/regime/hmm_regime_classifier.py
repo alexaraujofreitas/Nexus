@@ -217,8 +217,18 @@ class HMMRegimeClassifier:
     def classify_combined(self, df: pd.DataFrame) -> tuple[str, float, dict[str, float]]:
         """
         Ensemble: combine HMM probabilities with rule-based classification.
-        Weights: HMM=0.60, rule-based=0.40 when HMM is fitted.
-        Falls back to pure rule-based when HMM is not fitted.
+
+        Weights are adaptive based on HMM calibration quality:
+          - Well-calibrated  (≤ 50% states map to 'uncertain'): HMM=0.60, RB=0.40
+          - Poorly calibrated (> 50% states map to 'uncertain'): HMM=0.20, RB=0.80
+
+        Falls back to pure rule-based (HMM=0.0, RB=1.0) when HMM is not fitted.
+
+        Calibration quality degrades when the HMM was trained on data where many
+        bars are labelled 'uncertain' by the rule-based classifier (e.g. early
+        startup data, sparse candles).  This causes multiple HMM states to inherit
+        the 'uncertain' label, and the resulting high 'uncertain' probability mass
+        suppresses valid bull/bear/ranging signals from the rule-based classifier.
         """
         hmm_label, hmm_conf, hmm_probs = self.classify(df)
         rb_label,  rb_conf, _          = self._fallback.classify(df)
@@ -226,13 +236,33 @@ class HMMRegimeClassifier:
         if not self._is_fitted:
             return rb_label, rb_conf, self._one_hot_probs(rb_label, rb_conf)
 
-        # Blend probabilities
+        # ── Adaptive HMM weight based on calibration quality ────────────────
+        # Count what fraction of HMM state-map entries are 'uncertain'.
+        # If > 50%, the model is poorly calibrated: weight rule-based higher.
+        with self._lock:
+            state_map = dict(self._state_map)
+
+        n_states        = max(1, len(state_map))
+        n_uncertain     = sum(1 for v in state_map.values() if v == REGIME_UNCERTAIN)
+        uncertain_frac  = n_uncertain / n_states
+
+        if uncertain_frac > 0.50:
+            hmm_w, rb_w = 0.20, 0.80
+            logger.debug(
+                "HMMRegimeClassifier: degraded calibration "
+                "(%d/%d states='uncertain') — using HMM_W=0.20 RB_W=0.80",
+                n_uncertain, n_states,
+            )
+        else:
+            hmm_w, rb_w = 0.60, 0.40
+
+        # ── Blend probabilities ──────────────────────────────────────────────
         rb_probs = self._one_hot_probs(rb_label, rb_conf)
         blended: dict[str, float] = {}
         for regime in ALL_REGIMES:
             blended[regime] = (
-                hmm_probs.get(regime, 0.0) * 0.60 +
-                rb_probs.get(regime,  0.0) * 0.40
+                hmm_probs.get(regime, 0.0) * hmm_w +
+                rb_probs.get(regime,  0.0) * rb_w
             )
 
         best_regime = max(blended, key=lambda k: blended[k])
@@ -304,9 +334,13 @@ class HMMRegimeClassifier:
         """
         try:
             rule_labels: list[str] = []
-            batch = 50  # classify in batches to keep it fast
+            # Only skip the very first 5 bars (insufficient for any indicator).
+            # Previously hardcoded to 30, which biased many HMM states toward
+            # REGIME_UNCERTAIN — states capturing early-bar behaviour inherited
+            # the 'uncertain' label regardless of actual market conditions.
+            _WARMUP_BARS = 5
             for i in range(len(df)):
-                if i < 30:
+                if i < _WARMUP_BARS:
                     rule_labels.append(REGIME_UNCERTAIN)
                     continue
                 sub = df.iloc[max(0, i - 50): i + 1]
