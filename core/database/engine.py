@@ -84,6 +84,12 @@ def _migrate_schema():
         ("trading_rules", "status",         "VARCHAR(20) DEFAULT 'draft'"),
         ("trading_rules", "runs_completed", "INTEGER DEFAULT 0"),
         ("exchanges",     "demo_mode",      "BOOLEAN DEFAULT 0"),
+        # Session 30: position-sizing transparency columns.
+        # entry_size_usdt = original USDT deployed when trade opened.
+        # exit_size_usdt  = USDT actually closed (< entry for partial closes).
+        # Both nullable — pre-Session-30 rows fall back to size_usdt in to_dict().
+        ("paper_trades",  "entry_size_usdt", "REAL"),
+        ("paper_trades",  "exit_size_usdt",  "REAL"),
     ]
     with engine.connect() as conn:
         for table, column, definition in migrations:

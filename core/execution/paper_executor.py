@@ -366,7 +366,7 @@ class PaperExecutor:
                 dd, _dd_limit,
             )
             bus.publish(
-                Topics.SYSTEM_WARNING,
+                Topics.SYSTEM_ALERT,
                 data={"type": "drawdown_circuit_breaker", "drawdown_pct": round(dd, 2),
                       "limit_pct": _dd_limit, "symbol": candidate.symbol},
                 source="paper_executor",
@@ -391,7 +391,7 @@ class PaperExecutor:
                     _rag.pause_reason,
                 )
                 bus.publish(
-                    Topics.SYSTEM_WARNING,
+                    Topics.SYSTEM_ALERT,
                     data={"type":         "performance_pause_recommended",
                           "pause_reason": _rag.pause_reason,
                           "symbol":       candidate.symbol},
@@ -421,7 +421,7 @@ class PaperExecutor:
                         candidate.symbol,
                     )
                     bus.publish(
-                        Topics.SYSTEM_WARNING,
+                        Topics.SYSTEM_ALERT,
                         data={"type":    "performance_intermediate_block",
                               "pf":      _pf_val,
                               "wr":      _wr_val,
@@ -446,7 +446,7 @@ class PaperExecutor:
                         candidate.symbol,
                     )
                     bus.publish(
-                        Topics.SYSTEM_WARNING,
+                        Topics.SYSTEM_ALERT,
                         data={"type":    "performance_hard_block",
                               "pf":      _pf_val,
                               "wr":      _wr_val,
@@ -811,7 +811,7 @@ class PaperExecutor:
         try:
             from core.monitoring.trade_monitor import get_trade_monitor
             tm = get_trade_monitor()
-            tm._trades.clear()
+            tm._recent_trades.clear()
             tm._save()
             logger.info("PaperExecutor reset: cleared trade_monitor.json")
         except Exception as exc:

@@ -1918,3 +1918,52 @@ User uploaded `orders.docx` showing all 10 live trades were ~$500 USDT on a $100
 - **HMM warmup rule**: `_WARMUP_BARS` in `_label_states()` is the ONLY warmup gate. Never use a hardcoded integer. Value of 5 is calibrated to the minimum bars needed for any indicator to produce a valid value.
 - **Adaptive HMM weight rule**: `classify_combined()` must check `uncertain_frac > 0.50` before every blend. If > 50% of states are labeled "uncertain", the model is poorly calibrated — use `hmm_w=0.20, rb_w=0.80`. This is a runtime check (per classification call), not a static flag.
 - **Two HMM files rule**: `hmm_classifier.py` and `hmm_regime_classifier.py` are two separate files used in different code paths. Any change to HMM configuration (covariance type, warmup bars, weight schedule) must be applied to BOTH files.
+
+## Session 32 — Post-Restart Audit & Infrastructure Bug Fixes (2026-03-23)
+
+### Audit Trigger
+Post-restart validation of 18:24:34 startup log. Session 31 fixes (position sizing, HMM regime) confirmed working. Four infrastructure bugs identified and fixed.
+
+### Bug 1 — DB Schema Migration Missing Session 30 Columns (Critical)
+- **Symptom**: `(sqlite3.OperationalError) no such column: paper_trades.entry_size_usdt` in log at every startup → `_load_history()` fails completely → Performance Analytics, Learning Loop, Demo Monitor show no trade history
+- **Root cause**: Session 30 added `entry_size_usdt` and `exit_size_usdt` to the `PaperTrade` ORM model but never added them to `_migrate_schema()`. SQLAlchemy's `create_all()` only creates NEW tables, not new columns in existing tables. User's DB was created before Session 30 → columns missing.
+- **Fix**: Added both columns to `_migrate_schema()` migrations list in `core/database/engine.py`
+- **File**: `core/database/engine.py`
+
+### Bug 2 — `Topics.SYSTEM_WARNING` Does Not Exist (Critical — all 4 performance alerts silently fail)
+- **Symptom**: `type object 'Topics' has no attribute 'SYSTEM_WARNING'` — caught silently by outer `except Exception` block. All 4 performance monitoring event publishes (drawdown circuit breaker, performance pause advisory, intermediate hard block, final hard block) never reached the event bus.
+- **Root cause**: `event_bus.py` defines `Topics.SYSTEM_ALERT = "system.alert"` but no `SYSTEM_WARNING`. Every `bus.publish(Topics.SYSTEM_WARNING, ...)` call in `paper_executor.py` raised `AttributeError` silently.
+- **Fix**: Changed all 4 occurrences of `Topics.SYSTEM_WARNING` → `Topics.SYSTEM_ALERT` in `core/execution/paper_executor.py` (replace_all=True)
+- **File**: `core/execution/paper_executor.py`
+
+### Bug 3 — Thread Watchdog False-Positives (Low — log noise every 30s)
+- **Symptom**: `Scanner WATCHDOG: high thread count: 51 active threads` fires every 30 seconds despite the system being perfectly healthy
+- **Root cause**: Threshold was `> 50`. Baseline thread count at startup is 51+ (23 agents × ~2 threads + Qt main thread + data feed thread + watchdog timer thread). System was never actually exceeding its normal operating ceiling — the warning was always a false positive.
+- **Fix**: Changed threshold from `> 50` to `> 75` in `core/scanning/scanner.py` line 1057
+- **File**: `core/scanning/scanner.py`
+
+### Bug 4 — `TradeMonitor._trades` AttributeError (Low — reset silently skipped)
+- **Symptom**: `PaperExecutor reset: trade_monitor clear skipped: 'TradeMonitor' object has no attribute '_trades'` — capital reset did not clear trade monitor state
+- **Root cause**: `TradeMonitor` stores recent trades in `_recent_trades` (deque), not `_trades`. The reset code in `paper_executor.reset_paper_trading()` used the wrong attribute name.
+- **Fix**: Changed `tm._trades.clear()` → `tm._recent_trades.clear()` in `core/execution/paper_executor.py`
+- **File**: `core/execution/paper_executor.py`
+
+### Session 31 Fixes Confirmed Working in Log
+- ✅ `ConfluenceScorer: BTC/USDT risk-based size=4033.08 USDT (capital=100827, risk=0.50%)` — position sizing no longer capped at $500
+- ✅ `HMMRegimeClassifier: degraded calibration (4/6 states='uncertain') — using HMM_W=0.20 RB_W=0.80` — adaptive HMM weighting active
+
+### Previous Session Thread Leak Assessment
+- Previous session (log.1): thread count grew 59→73 over ~10 hours (~14 leaked threads)
+- Current session: thread count stable at 51 throughout — no leak detected
+- Root cause of previous session's leak not fully isolated (likely MTF ThreadPoolExecutor accumulation or agent worker cycling on repeated API failures)
+- Monitoring recommendation: watch thread count trend over next 10+ hour session; if count grows again, add per-cycle thread snapshot logging to `_check_worker_health()`
+
+### Test Results
+- **1,351 pass** (unit/learning/evaluation/validation), 9 skipped (GPU), 0 failures
+- Note: Intelligence tests (193) not run in this session; last full run was 1,568 total (all pass)
+
+### Rules (Session 32)
+- **Schema migration contract**: Every new column added to any ORM model in `core/database/models.py` MUST simultaneously be added to `_migrate_schema()` in `engine.py`. If omitted, any existing DB that predates the change will fail with `no such column` on every restart.
+- **Topics enum contract**: All `bus.publish()` calls must use `Topics.SYSTEM_ALERT` (not `Topics.SYSTEM_WARNING` — that attribute does not exist). Before adding any new `bus.publish()` call, verify the Topics attribute exists in `event_bus.py`.
+- **Thread watchdog calibration**: The warning threshold must be set above the baseline thread count measured on a clean startup. Current baseline is ~51. Threshold of 75 provides 24-thread headroom before alerting. Recalibrate if agents are added or removed.
+- **TradeMonitor attribute rule**: `TradeMonitor` stores trades in `_recent_trades` (last 20 entries). Never reference `_trades` — that attribute does not exist.

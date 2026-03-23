@@ -1054,7 +1054,7 @@ class AssetScanner(QObject):
 
         # ── 0b. Thread count monitoring ──────────────────────────────
         thread_count = _threading.active_count()
-        if thread_count > 50:
+        if thread_count > 75:
             logger.warning(
                 "Scanner WATCHDOG: high thread count: %d active threads", thread_count
             )
