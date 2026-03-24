@@ -252,7 +252,7 @@ class PositionSizer:
                 entry_price - stop_distance_proxy if side in ("buy", "long")
                 else entry_price + stop_distance_proxy
             )
-            risk_pct = float(_s.get("risk_engine.risk_pct_per_trade", 0.75))
+            risk_pct = float(_s.get("risk_engine.risk_pct_per_trade", 0.5))
             return self.calculate_risk_based(
                 capital_usdt  = available_capital_usdt,
                 entry_price   = entry_price,

@@ -278,7 +278,7 @@ class RegimeClassifier:
         # Hysteresis to prevent single-candle regime flips
         self._regime_buffer: list = []
         self._hysteresis_bars: int = 3
-        self._committed_regime: str = "uncertain"
+        self._committed_regime: str = ""  # empty = no prior commitment (not "uncertain")
 
     def classify(self, df: pd.DataFrame) -> tuple[str, float, dict]:
         """
@@ -317,8 +317,13 @@ class RegimeClassifier:
             if len(self._regime_buffer) == self._hysteresis_bars and all(r == self._regime_buffer[0] for r in self._regime_buffer):
                 self._committed_regime = new_regime
                 return new_regime, confidence
-            else:
-                return self._committed_regime, confidence * 0.8  # Penalize confidence when using committed regime
+
+            # Fix: no committed regime yet (startup) — return raw signal with slight
+            # confidence penalty rather than forcing "uncertain" for the first 2 calls.
+            if not self._committed_regime:
+                return new_regime, round(confidence * 0.9, 3)
+
+            return self._committed_regime, confidence * 0.8  # Penalize confidence when using committed regime
 
         # ── Extract last-row indicator values ─────────────────
         adx_col      = "adx"     if "adx"     in df.columns else None
@@ -462,29 +467,47 @@ class RegimeClassifier:
                         confidence = min(1.0, (adx - self.adx_trend_threshold) / 20.0 + 0.5)
                         regime, conf = _apply_hysteresis(REGIME_BEAR_TREND, confidence)
                         return regime, round(conf, 3), features
+                else:
+                    # Fix: EMA column unavailable with strong ADX — direction unknown.
+                    # Fall back to RANGING rather than letting control fall to 'uncertain'.
+                    confidence = 0.45
+                    regime, conf = _apply_hysteresis(REGIME_RANGING, confidence)
+                    return regime, round(conf, 3), features
 
-            if adx < self.adx_ranging_threshold:
+            elif adx < self.adx_trend_threshold:
                 # Priority 3: Accumulation vs Distribution vs Ranging
-                # Accumulation: ranging + rising volume + RSI recovering
-                if (vol_trend is not None and vol_trend > 10.0 and
-                        rsi is not None and 30 <= rsi <= 55):
-                    confidence = min(1.0, 0.50 + vol_trend / 100.0)
-                    regime, conf = _apply_hysteresis(REGIME_ACCUMULATION, confidence)
+                # Split: adx < adx_ranging_threshold (< 20) gets full sub-regime logic;
+                # adx_ranging_threshold ≤ adx < adx_trend_threshold (20–25 dead zone)
+                # maps directly to RANGING.
+                if adx < self.adx_ranging_threshold:
+                    # Accumulation: ranging + rising volume + RSI recovering
+                    if (vol_trend is not None and vol_trend > 10.0 and
+                            rsi is not None and 30 <= rsi <= 55):
+                        confidence = min(1.0, 0.50 + vol_trend / 100.0)
+                        regime, conf = _apply_hysteresis(REGIME_ACCUMULATION, confidence)
+                        return regime, round(conf, 3), features
+
+                    # Distribution: ranging + declining volume + RSI diverging near top
+                    if (vol_trend is not None and vol_trend < -10.0 and
+                            rsi is not None and rsi >= 60 and
+                            price_from_high is not None and price_from_high > -5.0):
+                        confidence = min(1.0, 0.50 + abs(vol_trend) / 100.0)
+                        regime, conf = _apply_hysteresis(REGIME_DISTRIBUTION, confidence)
+                        return regime, round(conf, 3), features
+
+                    confidence = min(1.0, (self.adx_ranging_threshold - adx) / self.adx_ranging_threshold + 0.4)
+                    regime, conf = _apply_hysteresis(REGIME_RANGING, confidence)
+                    return regime, round(conf, 3), features
+                else:
+                    # Fix: ADX dead zone (adx_ranging_threshold ≤ adx < adx_trend_threshold).
+                    # Neither trend nor ranging fired — classify as RANGING with moderate
+                    # confidence scaled by how close ADX is to the trend threshold.
+                    dead_zone_width = self.adx_trend_threshold - self.adx_ranging_threshold
+                    confidence = min(1.0, 0.40 + (adx - self.adx_ranging_threshold) / dead_zone_width * 0.15)
+                    regime, conf = _apply_hysteresis(REGIME_RANGING, confidence)
                     return regime, round(conf, 3), features
 
-                # Distribution: ranging + declining volume + RSI diverging near top
-                if (vol_trend is not None and vol_trend < -10.0 and
-                        rsi is not None and rsi >= 60 and
-                        price_from_high is not None and price_from_high > -5.0):
-                    confidence = min(1.0, 0.50 + abs(vol_trend) / 100.0)
-                    regime, conf = _apply_hysteresis(REGIME_DISTRIBUTION, confidence)
-                    return regime, round(conf, 3), features
-
-                confidence = min(1.0, (self.adx_ranging_threshold - adx) / self.adx_ranging_threshold + 0.4)
-                regime, conf = _apply_hysteresis(REGIME_RANGING, confidence)
-                return regime, round(conf, 3), features
-
-        # Fallback: uncertain
+        # Fallback: uncertain (only reached when adx is None/NaN)
         confidence = 0.3
         regime, conf = _apply_hysteresis(REGIME_UNCERTAIN, confidence)
         return regime, round(conf, 3), features

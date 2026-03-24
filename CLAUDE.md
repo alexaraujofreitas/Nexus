@@ -83,9 +83,8 @@ scale_manager:
 ### API Keys (encrypted in vault)
 - CryptoPanic, Coinglass, Reddit Client ID+Secret — all set
 
-### Test Suite (latest full run)
-- **1,351 pass**, 9 skipped (GPU), 0 failures — unit / learning / evaluation / validation
-- Intelligence tests: 193 pass (last full count: 1,568 total all passing)
+### Test Suite (latest full run — Session 33, 2026-03-23)
+- **1,611 passed**, 11 skipped (GPU), 0 failures — unit / intelligence / learning / evaluation / backtesting / validation
 
 ---
 
@@ -198,6 +197,13 @@ OHLCV (1h, 300 bars) → HMM+RuleBased Regime → SignalGenerator (5 models)
 - `_seconds_to_next_candle(timeframe, buffer_s=30)` computes delay via `epoch_s % interval_s` in UTC. Works for any TF divisor of a day.
 - `_htf_alignment_pending` / `_ltf_alignment_pending` flags prevent watchdog from restarting timers during alignment window.
 
+### Regime Classifier (Session 33 fixes)
+- **ADX dead zone fixed**: `adx_ranging_threshold (20) ≤ ADX < adx_trend_threshold (25)` now maps to `RANGING` (not `UNCERTAIN`). The fix changed the second ADX check from `if adx < adx_ranging_threshold` → `elif adx < adx_trend_threshold` with an inner split for the dead zone.
+- **ema_slope=None with high ADX fixed**: When `adx >= adx_trend_threshold` but `ema_20` column is missing, code now returns `RANGING` (direction unknown) instead of falling through to `UNCERTAIN`.
+- **Hysteresis init fixed**: `_committed_regime` is now initialized to `""` (empty string, not `"uncertain"`). `_apply_hysteresis()` returns the raw signal (confidence × 0.9) on startup until the 3-bar commitment window fills — prevents all early calls from being forced to `"uncertain"`.
+- **risk_pct default fixed**: Both `confluence_scorer.py` and `position_sizer.py` now default `risk_pct_per_trade` to `0.5` (was `0.75`). If `config.yaml` cannot be read at runtime, the fallback now matches production config instead of over-sizing by 50%.
+- **Reproduction tests**: `tests/unit/test_session33_regime_fixes.py` — 31 tests, all must pass. Run after any regime/sizing change.
+
 ### Misc
 - **OrderBook TF gate**: Never fires at 1h+ because `min_confidence/tf_weight = 0.60/0.55 = 1.09 > 1.0`. This is structural, not a bug.
 - **VWAP reset**: Session-reset via UTC midnight cumsum. Rolling fallback for tz-naive data.
@@ -250,6 +256,7 @@ Pause conditions: Portfolio RED → `should_pause=True`; OR 2+ models RED → `s
 ## Pre-Session Checklist
 Before each Bybit Demo session:
 ```bash
-pytest tests/intelligence/ -v -m "not slow"   # 193 tests, 0 failures required
-python scripts/run_ui_checks.py --no-screenshots  # 69 checks, 0 failures required
+pytest tests/intelligence/ -v -m "not slow"           # 193 tests, 0 failures required
+pytest tests/unit/test_session33_regime_fixes.py -v   # 31 tests, 0 failures required
+python scripts/run_ui_checks.py --no-screenshots      # 69 checks, 0 failures required
 ```

@@ -605,7 +605,7 @@ class ConfluenceScorer:
         except Exception:
             _capital = float(_s.get("scanner.capital_usdt", 100_000.0))
 
-        risk_pct = float(_s.get("risk_engine.risk_pct_per_trade", 0.75))
+        risk_pct = float(_s.get("risk_engine.risk_pct_per_trade", 0.5))
 
         try:
             from config.settings import settings as _s2
