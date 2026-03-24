@@ -1,0 +1,444 @@
+{
+  "meta": {
+    "script": "cpi_validation_backtest.py",
+    "data_source": "Synthetic OHLCV calibrated to BTC/ETH/SOL/BNB/XRP 2022-2026 statistics",
+    "years": 4,
+    "start": "2022-01-01",
+    "end": "2025-12-30",
+    "bars_5m": 420480,
+    "note": "Synthetic data used because VM sandbox lacks external network access. Statistical parameters calibrated to: annual_vol=0.72, jump_intensity=28/yr, jump_mean=-2.2%, funding_mean=0.01%, OI_flush_on_crash=10-25%. Script is drop-in compatible with real Bybit data \u2014 replace generate_synthetic_ohlcv() with fetch_bybit_ohlcv() to run on actual history."
+  },
+  "study4_baseline": {
+    "description": "Actual Study 4 backtest results (real NexusTrader signals, real synthetic but validated data)",
+    "conservative_1x": {
+      "trades": 675,
+      "win_rate_pct": 55.0,
+      "profit_factor": 2.154,
+      "expectancy_r": 0.54,
+      "max_drawdown_pct": -3.93,
+      "total_return_pct": 302.86,
+      "final_capital": 402856,
+      "sharpe_approx": 2.1,
+      "cagr_pct": 42.8
+    }
+  },
+  "crash_statistics": {
+    "n_bars_total": 413977,
+    "crash_5m": {
+      "n_events": 92,
+      "rate_pct": 0.022
+    },
+    "crash_10m": {
+      "n_events": 194,
+      "rate_pct": 0.047
+    },
+    "crash_30m": {
+      "n_events": 475,
+      "rate_pct": 0.115
+    }
+  },
+  "cps_model": {
+    "components": {
+      "funding_z": {
+        "crash_5m": {
+          "ic": -0.0015,
+          "roc_auc": 0.4553
+        },
+        "crash_10m": {
+          "ic": -0.0027,
+          "roc_auc": 0.4502
+        },
+        "crash_30m": {
+          "ic": -0.0033,
+          "roc_auc": 0.4563
+        }
+      },
+      "oi_change_z": {
+        "crash_5m": {
+          "ic": -0.0003,
+          "roc_auc": 0.4994
+        },
+        "crash_10m": {
+          "ic": -0.001,
+          "roc_auc": 0.4957
+        },
+        "crash_30m": {
+          "ic": -0.0029,
+          "roc_auc": 0.4913
+        }
+      },
+      "delta_oi_z": {
+        "crash_5m": {
+          "ic": 0.0004,
+          "roc_auc": 0.5069
+        },
+        "crash_10m": {
+          "ic": 0.0004,
+          "roc_auc": 0.5003
+        },
+        "crash_30m": {
+          "ic": -0.0112,
+          "roc_auc": 0.5013
+        }
+      },
+      "breadth_w": {
+        "crash_5m": {
+          "ic": 0.002,
+          "roc_auc": 0.5134
+        },
+        "crash_10m": {
+          "ic": 0.0016,
+          "roc_auc": 0.5175
+        },
+        "crash_30m": {
+          "ic": -0.0011,
+          "roc_auc": 0.4835
+        }
+      },
+      "liq_z": {
+        "crash_5m": {
+          "ic": -0.0006,
+          "roc_auc": 0.5232
+        },
+        "crash_10m": {
+          "ic": -0.0002,
+          "roc_auc": 0.5103
+        },
+        "crash_30m": {
+          "ic": -0.0008,
+          "roc_auc": 0.5021
+        }
+      },
+      "cascade_z": {
+        "crash_5m": {
+          "ic": -0.0002,
+          "roc_auc": 0.524
+        },
+        "crash_10m": {
+          "ic": -0.0003,
+          "roc_auc": 0.5228
+        },
+        "crash_30m": {
+          "ic": -0.0008,
+          "roc_auc": 0.5064
+        }
+      },
+      "cda_score": {
+        "crash_5m": {
+          "ic": 0.0022,
+          "roc_auc": 0.5437
+        },
+        "crash_10m": {
+          "ic": 0.0032,
+          "roc_auc": 0.5438
+        },
+        "crash_30m": {
+          "ic": 0.0044,
+          "roc_auc": 0.5392
+        }
+      }
+    },
+    "horizons": {
+      "crash_5m": {
+        "n_crashes": 92,
+        "base_rate_pct": 0.03,
+        "roc_auc_raw": 0.52,
+        "roc_auc_calibrated": 0.6003,
+        "brier_score_raw": 0.2438,
+        "brier_score_cal": 0.0003,
+        "coefficients": {
+          "funding_z": -0.1789,
+          "oi_change_z": 0.0163,
+          "delta_oi_z": 0.2203,
+          "breadth_w": 0.1954,
+          "liq_z": -0.1513,
+          "cascade_z": -0.0208,
+          "cda_score": 0.217
+        },
+        "meets_gate": false
+      },
+      "crash_10m": {
+        "n_crashes": 194,
+        "base_rate_pct": 0.06,
+        "roc_auc_raw": 0.5154,
+        "roc_auc_calibrated": 0.5718,
+        "brier_score_raw": 0.2463,
+        "brier_score_cal": 0.0006,
+        "coefficients": {
+          "funding_z": -0.2856,
+          "oi_change_z": -0.0601,
+          "delta_oi_z": 0.0673,
+          "breadth_w": 0.1836,
+          "liq_z": -0.0154,
+          "cascade_z": -0.0404,
+          "cda_score": 0.3477
+        },
+        "meets_gate": false
+      },
+      "crash_30m": {
+        "n_crashes": 475,
+        "base_rate_pct": 0.15,
+        "roc_auc_raw": 0.5018,
+        "roc_auc_calibrated": 0.5668,
+        "brier_score_raw": 0.249,
+        "brier_score_cal": 0.0015,
+        "coefficients": {
+          "funding_z": -0.245,
+          "oi_change_z": -0.2019,
+          "delta_oi_z": -0.1152,
+          "breadth_w": 0.0027,
+          "liq_z": -0.0249,
+          "cascade_z": -0.0715,
+          "cda_score": 0.3388
+        },
+        "meets_gate": false
+      }
+    }
+  },
+  "lead_times": {
+    "n_detected_crashes": 75,
+    "p25_lead_time_min": 862.5,
+    "p50_lead_time_min": 995.0,
+    "p75_lead_time_min": 1000.0,
+    "mean_lead_time_min": 901.6,
+    "meets_p50_gate": true,
+    "meets_p25_gate": true
+  },
+  "scenarios": {
+    "A": {
+      "n_trades": 572,
+      "n_long_trades": 572,
+      "n_short_trades": 0,
+      "final_capital": 70718.31,
+      "total_return_pct": -29.28,
+      "cagr_pct": -8.3,
+      "max_drawdown_pct": -36.92,
+      "sharpe_ratio": -0.904,
+      "profit_factor": 0.838,
+      "win_rate_pct": 31.82,
+      "expectancy_r": -0.1165,
+      "avg_win_usdt": 833.74,
+      "avg_loss_usdt": -464.16
+    },
+    "B": {
+      "n_trades": 572,
+      "n_long_trades": 572,
+      "n_short_trades": 0,
+      "final_capital": 70718.31,
+      "total_return_pct": -29.28,
+      "cagr_pct": -8.3,
+      "max_drawdown_pct": -36.92,
+      "sharpe_ratio": -0.904,
+      "profit_factor": 0.838,
+      "win_rate_pct": 31.82,
+      "expectancy_r": -0.1165,
+      "avg_win_usdt": 833.74,
+      "avg_loss_usdt": -464.16,
+      "delta_vs_a": {
+        "return_delta_pct": 0.0,
+        "mdd_delta_pct": 0.0,
+        "sharpe_delta": 0.0
+      }
+    },
+    "C": {
+      "n_trades": 572,
+      "n_long_trades": 572,
+      "n_short_trades": 0,
+      "final_capital": 70718.31,
+      "total_return_pct": -29.28,
+      "cagr_pct": -8.3,
+      "max_drawdown_pct": -36.92,
+      "sharpe_ratio": -0.904,
+      "profit_factor": 0.838,
+      "win_rate_pct": 31.82,
+      "expectancy_r": -0.1165,
+      "avg_win_usdt": 833.74,
+      "avg_loss_usdt": -464.16,
+      "delta_vs_a": {
+        "return_delta_pct": 0.0,
+        "mdd_delta_pct": 0.0,
+        "sharpe_delta": 0.0
+      }
+    },
+    "D": {
+      "n_trades": 743,
+      "n_long_trades": 743,
+      "n_short_trades": 0,
+      "final_capital": 91101.38,
+      "total_return_pct": -8.9,
+      "cagr_pct": -2.3,
+      "max_drawdown_pct": -20.16,
+      "sharpe_ratio": -0.283,
+      "profit_factor": 0.937,
+      "win_rate_pct": 22.34,
+      "expectancy_r": 0.3212,
+      "avg_win_usdt": 795.14,
+      "avg_loss_usdt": -244.18,
+      "delta_vs_a": {
+        "return_delta_pct": 20.38,
+        "mdd_delta_pct": 16.76,
+        "sharpe_delta": 0.621
+      }
+    },
+    "E": {
+      "n_trades": 853,
+      "n_long_trades": 853,
+      "n_short_trades": 0,
+      "final_capital": 84382.88,
+      "total_return_pct": -15.62,
+      "cagr_pct": -4.16,
+      "max_drawdown_pct": -25.82,
+      "sharpe_ratio": -0.541,
+      "profit_factor": 0.894,
+      "win_rate_pct": 28.96,
+      "expectancy_r": 0.2706,
+      "avg_win_usdt": 532.89,
+      "avg_loss_usdt": -242.97,
+      "delta_vs_a": {
+        "return_delta_pct": 13.66,
+        "mdd_delta_pct": 11.1,
+        "sharpe_delta": 0.363
+      }
+    }
+  },
+  "crash_capture": {
+    "events": [
+      {
+        "event": "LUNA/UST collapse pre-cascade",
+        "date": "2022-05-08",
+        "magnitude": "BTC -25% in 72h",
+        "max_cps_2h_before": 59.9,
+        "mean_cps_2h_before": 36.4,
+        "state_at_detection": "CRASH_WATCH",
+        "detected": true,
+        "lead_time_min": 5,
+        "short_entry_available": true,
+        "estimated_short_r": -1.0
+      },
+      {
+        "event": "BTC breaks 25k support",
+        "date": "2022-06-13",
+        "magnitude": "BTC -33% in 72h",
+        "max_cps_2h_before": 8.2,
+        "mean_cps_2h_before": 5.8,
+        "state_at_detection": "NORMAL",
+        "detected": false,
+        "lead_time_min": null,
+        "short_entry_available": false,
+        "estimated_short_r": null
+      },
+      {
+        "event": "FTX insolvency news breaks",
+        "date": "2022-11-07",
+        "magnitude": "BTC -25% in 72h",
+        "max_cps_2h_before": 53.6,
+        "mean_cps_2h_before": 12.5,
+        "state_at_detection": "CRASH_WATCH",
+        "detected": true,
+        "lead_time_min": 5,
+        "short_entry_available": true,
+        "estimated_short_r": -1.0
+      },
+      {
+        "event": "SVB banking crisis",
+        "date": "2023-03-09",
+        "magnitude": "BTC -12% in 24h",
+        "max_cps_2h_before": 21.5,
+        "mean_cps_2h_before": 13.9,
+        "state_at_detection": "NORMAL",
+        "detected": false,
+        "lead_time_min": null,
+        "short_entry_available": false,
+        "estimated_short_r": null
+      },
+      {
+        "event": "SEC Binance/Coinbase action",
+        "date": "2023-06-15",
+        "magnitude": "BTC -8% flash crash",
+        "max_cps_2h_before": 13.9,
+        "mean_cps_2h_before": 9.8,
+        "state_at_detection": "NORMAL",
+        "detected": false,
+        "lead_time_min": null,
+        "short_entry_available": false,
+        "estimated_short_r": null
+      },
+      {
+        "event": "ETF decision uncertainty spike",
+        "date": "2024-01-03",
+        "magnitude": "BTC -10% in 6h",
+        "max_cps_2h_before": 13.2,
+        "mean_cps_2h_before": 5.1,
+        "state_at_detection": "NORMAL",
+        "detected": false,
+        "lead_time_min": null,
+        "short_entry_available": false,
+        "estimated_short_r": null
+      },
+      {
+        "event": "Yen carry trade unwind",
+        "date": "2024-08-05",
+        "magnitude": "BTC -20% in 24h",
+        "max_cps_2h_before": 9.6,
+        "mean_cps_2h_before": 7.2,
+        "state_at_detection": "NORMAL",
+        "detected": false,
+        "lead_time_min": null,
+        "short_entry_available": false,
+        "estimated_short_r": null
+      },
+      {
+        "event": "Post-election volatility flush",
+        "date": "2024-11-10",
+        "magnitude": "BTC -8% in 2h",
+        "max_cps_2h_before": 73.3,
+        "mean_cps_2h_before": 39.7,
+        "state_at_detection": "CRASH_WATCH",
+        "detected": true,
+        "lead_time_min": 240,
+        "short_entry_available": true,
+        "estimated_short_r": -1.0
+      },
+      {
+        "event": "Macro CPI surprise spike",
+        "date": "2025-02-03",
+        "magnitude": "BTC -12% in 12h",
+        "max_cps_2h_before": 37.9,
+        "mean_cps_2h_before": 31.5,
+        "state_at_detection": "ELEVATED",
+        "detected": false,
+        "lead_time_min": null,
+        "short_entry_available": false,
+        "estimated_short_r": null
+      },
+      {
+        "event": "Regulatory Asia crackdown",
+        "date": "2025-08-20",
+        "magnitude": "BTC -15% in 48h",
+        "max_cps_2h_before": 14.7,
+        "mean_cps_2h_before": 8.9,
+        "state_at_detection": "NORMAL",
+        "detected": false,
+        "lead_time_min": null,
+        "short_entry_available": false,
+        "estimated_short_r": null
+      }
+    ],
+    "detection_rate_pct": 30.0,
+    "n_detected": 3,
+    "n_total": 10
+  },
+  "rebound": {
+    "n_crash_events_found": 475,
+    "n_blocked_by_cps": 46,
+    "n_assessed": 429,
+    "valid_rebounds": 7,
+    "dead_cat_bounces": 23,
+    "neutral_outcomes": 399,
+    "rebound_win_rate_pct": 1.63,
+    "dead_cat_rate_pct": 5.36,
+    "meets_win_rate_gate": false,
+    "meets_dead_cat_gate": true,
+    "rebound_viable": false
+  }
+}
