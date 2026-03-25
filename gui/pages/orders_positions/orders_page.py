@@ -476,6 +476,7 @@ class OrdersPositionsPage(QWidget):
 
         for ri, p in enumerate(positions):
             side       = p["side"].upper()
+            side_label = "LONG" if side == "BUY" else "SHORT"
             side_c     = "#00CC77" if side == "BUY" else "#FF3355"
             upnl       = p.get("unrealized_pnl", 0.0)
             upnl_c     = "#00CC77" if upnl >= 0 else "#FF3355"
@@ -486,7 +487,7 @@ class OrdersPositionsPage(QWidget):
             models     = p.get("models_fired", [])
 
             self._pos_table.setItem(ri, 0,  _ci(p["symbol"], "#E8EBF0", Qt.AlignLeft | Qt.AlignVCenter))
-            self._pos_table.setItem(ri, 1,  _ci(side, side_c))
+            self._pos_table.setItem(ri, 1,  _ci(side_label, side_c))
             self._pos_table.setItem(ri, 2,  _ci(reg_label, reg_color))
             self._pos_table.setItem(ri, 3,  _ci(p.get("timeframe", "—"), "#C8D0E0"))
             self._pos_table.setItem(ri, 4,  _ci(_fmt_price(p["entry_price"]), "#C8D0E0"))
@@ -563,6 +564,7 @@ class OrdersPositionsPage(QWidget):
 
         for ri, t in enumerate(trades):
             side      = t["side"].upper()
+            side_label = "LONG" if side == "BUY" else "SHORT"
             side_c    = "#00CC77" if side == "BUY" else "#FF3355"
             pnl_pct   = t.get("pnl_pct", 0.0)
             pnl_usdt  = t.get("pnl_usdt", 0.0)
@@ -583,13 +585,13 @@ class OrdersPositionsPage(QWidget):
                 closed_str = "—"
 
             self._jour_table.setItem(ri, 0,  _ci(t["symbol"], "#E8EBF0", Qt.AlignLeft | Qt.AlignVCenter))
-            self._jour_table.setItem(ri, 1,  _ci(side, side_c))
+            self._jour_table.setItem(ri, 1,  _ci(side_label, side_c))
             self._jour_table.setItem(ri, 2,  _ci(reg_label, reg_color))
             self._jour_table.setItem(ri, 3,  _ci(t.get("timeframe", "—"), "#C8D0E0"))
             self._jour_table.setItem(ri, 4,  _ci(_fmt_price(t["entry_price"]), "#C8D0E0"))
             self._jour_table.setItem(ri, 5,  _ci(_fmt_price(t["exit_price"]),  "#E8EBF0"))
             self._jour_table.setItem(ri, 6,  _ni(pnl_pct,  f"{pnl_pct:+.3f}%",  pnl_c))
-            self._jour_table.setItem(ri, 7,  _ni(pnl_usdt, f"${pnl_usdt:+.2f}", pnl_c))
+            self._jour_table.setItem(ri, 7,  _ni(pnl_usdt, f"{'+'if pnl_usdt>=0 else'-'}${abs(pnl_usdt):.2f}", pnl_c))
             self._jour_table.setItem(ri, 8,  _ci(reason,   reason_c))
             self._jour_table.setItem(ri, 9,  _ni(score,    f"{score:.3f}", _score_color(score)))
             self._jour_table.setItem(ri, 10, _ci(_models_text(models), "#C8D0E0"))
@@ -627,7 +629,7 @@ class OrdersPositionsPage(QWidget):
         self._s_wins.set(str(wins), "#00CC77")
         self._s_losses.set(str(losses), "#FF3355")
         self._s_winrate.set(f"{win_rate:.1f}%", wr_c)
-        self._s_pnl.set(f"${total_pnl:+.2f}", pnl_c)
+        self._s_pnl.set(f"{'+'if total_pnl>=0 else'-'}${abs(total_pnl):.2f}", pnl_c)
         self._s_avg_dur.set(_fmt_dur(avg_dur))
         self._s_best.set(f"{best:+.2f}%", "#00CC77")
         self._s_worst.set(f"{worst:+.2f}%", "#FF3355")
@@ -656,7 +658,7 @@ class OrdersPositionsPage(QWidget):
         age       = _fmt_age(p.get("opened_at", ""))
 
         lines = [
-            f"▸  {p['symbol']}  •  {p['side'].upper()}  •  {regime}  •  TF: {p.get('timeframe','—')}",
+            f"▸  {p['symbol']}  •  {'LONG' if p['side'].upper()=='BUY' else 'SHORT'}  •  {regime}  •  TF: {p.get('timeframe','—')}",
             f"   Score: {p.get('score', 0):.3f}   |   Models: {models}   |   Age: {age}",
             f"   Entry: {_fmt_price(p['entry_price'])}   "
             f"Mark: {_fmt_price(p['current_price'])}   "
@@ -686,11 +688,11 @@ class OrdersPositionsPage(QWidget):
             closed_str = "—"
 
         lines = [
-            f"▸  {t['symbol']}  •  {t['side'].upper()}  •  {regime}  •  TF: {t.get('timeframe','—')}",
+            f"▸  {t['symbol']}  •  {'LONG' if t['side'].upper()=='BUY' else 'SHORT'}  •  {regime}  •  TF: {t.get('timeframe','—')}",
             f"   Score: {t.get('score', 0):.3f}   |   Models: {models}",
             f"   Entry: {_fmt_price(t['entry_price'])}   "
             f"Exit: {_fmt_price(t['exit_price'])}   "
-            f"P&L: {pnl_pct:+.3f}%  (${pnl_usd:+.2f})",
+            f"P&L: {pnl_pct:+.3f}%  ({'+'if pnl_usd>=0 else'-'}${abs(pnl_usd):.2f})",
             f"   Stop: {_fmt_price(t.get('stop_loss', 0))}   "
             f"Target: {_fmt_price(t.get('take_profit', 0))}   "
             f"Size: ${t.get('size_usdt', 0):.0f}",

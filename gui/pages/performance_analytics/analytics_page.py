@@ -377,8 +377,8 @@ class _RegimeTab(QWidget):
             self._table.setItem(row, 2, _ni(float(wins),   str(wins),   _C_GREEN))
             self._table.setItem(row, 3, _ni(float(losses), str(losses), _C_RED if losses else _C_MUTED))
             self._table.setItem(row, 4, _ni(wr,    f"{wr:.1f}%",            wr_col))
-            self._table.setItem(row, 5, _ni(total, f"${total:+.2f}",        _pnl_color(total)))
-            self._table.setItem(row, 6, _ni(avg,   f"${avg:+.2f}",          _pnl_color(avg)))
+            self._table.setItem(row, 5, _ni(total, f"{'+'if total>=0 else'-'}${abs(total):.2f}",        _pnl_color(total)))
+            self._table.setItem(row, 6, _ni(avg,   f"{'+'if avg>=0 else'-'}${abs(avg):.2f}",          _pnl_color(avg)))
             self._table.setItem(row, 7, _ni(avg_d, _fmt_duration(int(avg_d))))
 
         self._table.setSortingEnabled(True)
@@ -460,8 +460,8 @@ class _ModelTab(QWidget):
             self._table.setItem(row, 1, _ni(float(n),    str(n)))
             self._table.setItem(row, 2, _ni(float(wins), str(wins), _C_GREEN))
             self._table.setItem(row, 3, _ni(wr,    f"{wr:.1f}%",   wr_col))
-            self._table.setItem(row, 4, _ni(total, f"${total:+.2f}", _pnl_color(total)))
-            self._table.setItem(row, 5, _ni(avg,   f"${avg:+.2f}",   _pnl_color(avg)))
+            self._table.setItem(row, 4, _ni(total, f"{'+'if total>=0 else'-'}${abs(total):.2f}", _pnl_color(total)))
+            self._table.setItem(row, 5, _ni(avg,   f"{'+'if avg>=0 else'-'}${abs(avg):.2f}",   _pnl_color(avg)))
             self._table.setItem(row, 6, _ni(avg_s, f"{avg_s:.3f}"))
             self._table.setItem(row, 7, _ci(adj_txt, adj_col))
 
@@ -524,8 +524,8 @@ class _AssetTab(QWidget):
             self._table.setItem(row, 2, _ni(float(wins),   str(wins),   _C_GREEN))
             self._table.setItem(row, 3, _ni(float(losses), str(losses), _C_RED if losses else _C_MUTED))
             self._table.setItem(row, 4, _ni(wr,    f"{wr:.1f}%",   wr_col))
-            self._table.setItem(row, 5, _ni(total, f"${total:+.2f}", _pnl_color(total)))
-            self._table.setItem(row, 6, _ni(avg,   f"${avg:+.2f}",   _pnl_color(avg)))
+            self._table.setItem(row, 5, _ni(total, f"{'+'if total>=0 else'-'}${abs(total):.2f}", _pnl_color(total)))
+            self._table.setItem(row, 6, _ni(avg,   f"{'+'if avg>=0 else'-'}${abs(avg):.2f}",   _pnl_color(avg)))
             self._table.setItem(row, 7, _ni(avg_rr, f"{avg_rr:.2f}",
                                            _C_GREEN if avg_rr >= 1 else _C_YELLOW))
             self._table.setItem(row, 8, _ni(share, f"{share:.1f}%"))
@@ -592,8 +592,8 @@ class _SideTab(QWidget):
             self._table.setItem(row, 2, _ni(float(wins),   str(wins),   _C_GREEN))
             self._table.setItem(row, 3, _ni(float(losses), str(losses), _C_RED if losses else _C_MUTED))
             self._table.setItem(row, 4, _ni(wr,   f"{wr:.1f}%",  wr_col))
-            self._table.setItem(row, 5, _ni(total, f"${total:+.2f}", _pnl_color(total)))
-            self._table.setItem(row, 6, _ni(avg,  f"${avg:+.2f}",  _pnl_color(avg)))
+            self._table.setItem(row, 5, _ni(total, f"{'+'if total>=0 else'-'}${abs(total):.2f}", _pnl_color(total)))
+            self._table.setItem(row, 6, _ni(avg,  f"{'+'if avg>=0 else'-'}${abs(avg):.2f}",  _pnl_color(avg)))
             self._table.setItem(row, 7, _ni(avg_rr, f"{avg_rr:.2f}",
                                            _C_GREEN if avg_rr >= 1 else _C_YELLOW))
             self._table.setItem(row, 8, _ni(pf, f"{pf:.2f}" if pf < 900 else "∞",
@@ -913,7 +913,7 @@ class _LearningTab(QWidget):
             pnl  = tr.get("pnl_pct", 0)
             mods = ", ".join(tr.get("models_fired") or []) or "—"
             ts   = tr.get("closed_at", "")[:16] if tr.get("closed_at") else ""
-            lines.append(f"{icon} {ts}  {sym} {side.upper()}  {pnl:+.2f}%  [{mods}]")
+            lines.append(f"{icon} {ts}  {sym} {'LONG' if side.upper()=='BUY' else 'SHORT'}  {pnl:+.2f}%  [{mods}]")
         self._log.setPlainText("\n".join(lines) if lines else "No closed trades yet.")
 
     def _refresh_l2_regime(self):
@@ -1291,7 +1291,7 @@ class _ReadinessTab(QWidget):
             ("Trade count",           str(met.get("trade_count", "—"))),
             ("Win rate",              f"{met.get('win_rate_pct', 0):.1f}%"),
             ("Profit factor",         f"{met.get('profit_factor', 0):.2f}"),
-            ("Total P&L",             f"${met.get('total_pnl_usdt', 0):+.2f}"),
+            ("Total P&L",             f"{'+'if met.get('total_pnl_usdt',0)>=0 else'-'}${abs(met.get('total_pnl_usdt',0)):.2f}"),
             ("Avg R:R",               f"{met.get('avg_rr', 0):.2f}"),
             ("Max drawdown",          f"{met.get('max_drawdown_pct', 0):.2f}%"),
             ("Rolling drawdown",      f"{met.get('rolling_dd_pct', 0):.2f}%"),
@@ -2062,7 +2062,7 @@ class _ValidationTab(QWidget):
             self._regime_tbl.setItem(r, 0, _ci(reg, _C_TEXT, Qt.AlignLeft))
             self._regime_tbl.setItem(r, 1, _ci(str(trades)))
             self._regime_tbl.setItem(r, 2, _ci(f"{wr:.0%}", wr_col))
-            self._regime_tbl.setItem(r, 3, _ci(f"${pnl:+,.2f}", pnl_col))
+            self._regime_tbl.setItem(r, 3, _ci(f"{'+'if pnl>=0 else'-'}${abs(pnl):,.2f}", pnl_col))
 
     def _refresh_filter_table(self) -> None:
         try:
@@ -2285,12 +2285,12 @@ class PerformanceAnalyticsPage(QWidget):
             self._s_winrate.set(f"{wr:.1f}%" if n else "—", wr_col)
 
             self._s_pnl.set(
-                f"${combined_pnl:+,.2f}" if (n or n_open) else "+$0.00",
+                f"{'+'if combined_pnl>=0 else'-'}${abs(combined_pnl):,.2f}" if (n or n_open) else "+$0.00",
                 _C_GREEN if combined_pnl >= 0 else _C_RED,
             )
             if n_open:
                 self._s_pnl.set_sub(
-                    f"${pnl:+.2f} realized · ${unrealized_usdt:+.2f} open"
+                    f"{'+'if pnl>=0 else'-'}${abs(pnl):.2f} realized · {'+'if unrealized_usdt>=0 else'-'}${abs(unrealized_usdt):.2f} open"
                 )
             else:
                 self._s_pnl.set_sub("realized only" if n else "")
@@ -2303,11 +2303,11 @@ class PerformanceAnalyticsPage(QWidget):
                 _C_GREEN if rr >= 1 else (_C_YELLOW if rr >= 0.8 else (_C_RED if n else _C_TEXT)),
             )
             self._s_best.set(
-                f"${best:+,.2f}" if n else "—",
+                f"{'+'if best>=0 else'-'}${abs(best):,.2f}" if n else "—",
                 _C_GREEN if best >= 0 else _C_RED,
             )
             self._s_worst.set(
-                f"${worst:+,.2f}" if n else "—",
+                f"{'+'if worst>=0 else'-'}${abs(worst):,.2f}" if n else "—",
                 _C_RED if worst < 0 else _C_GREEN,
             )
             self._s_avgdur.set(_fmt_duration(dur) if n else "—")

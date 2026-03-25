@@ -549,7 +549,7 @@ class TradeTooltip(QLabel):
         r_c     = "#00CC77" if (r or 0) > 0 else ("#FF3366" if (r or 0) < 0 else "#8899AA")
 
         pnl_u   = trade.get("pnl_usdt")
-        pnl_str = f"${float(pnl_u):+,.2f}" if pnl_u is not None else "—"
+        pnl_str = (f"{'+'if float(pnl_u)>=0 else'-'}${abs(float(pnl_u)):,.2f}") if pnl_u is not None else "—"
         pnl_c   = "#00CC77" if (pnl_u or 0) >= 0 else "#FF3366"
 
         dur_s   = int(trade.get("duration_s") or 0)

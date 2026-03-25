@@ -428,6 +428,7 @@ class PaperTradingPage(QWidget):
 
         for ri, p in enumerate(positions):
             side       = p["side"].upper()
+            side_label = "LONG" if side == "BUY" else "SHORT"
             side_color = "#00CC77" if side == "BUY" else "#FF3355"
             upnl       = p.get("unrealized_pnl", 0.0)
             upnl_color = "#00CC77" if upnl >= 0 else "#FF3355"
@@ -436,7 +437,7 @@ class PaperTradingPage(QWidget):
             self._pos_table.setItem(ri, 0, _ci(
                 p["symbol"], "#E8EBF0", Qt.AlignLeft | Qt.AlignVCenter
             ))
-            self._pos_table.setItem(ri, 1, _ci(side, side_color))
+            self._pos_table.setItem(ri, 1, _ci(side_label, side_color))
             self._pos_table.setItem(ri, 2, _ci(_fmt_price(p["entry_price"]), "#8899AA"))
             self._pos_table.setItem(ri, 3, _ci(_fmt_price(p["current_price"]), "#E8EBF0"))
             self._pos_table.setItem(ri, 4, _ni(
@@ -471,6 +472,7 @@ class PaperTradingPage(QWidget):
 
         for ri, t in enumerate(trades):
             side       = t["side"].upper()
+            side_label = "LONG" if side == "BUY" else "SHORT"
             side_color = "#00CC77" if side == "BUY" else "#FF3355"
             pnl_pct    = t.get("pnl_pct", 0.0)
             pnl_usdt   = t.get("pnl_usdt", 0.0)
@@ -508,7 +510,7 @@ class PaperTradingPage(QWidget):
                 t["symbol"], "#E8EBF0", Qt.AlignLeft | Qt.AlignVCenter
             ))
             # col 1  Side
-            self._hist_table.setItem(ri, 1, _ci(side, side_color))
+            self._hist_table.setItem(ri, 1, _ci(side_label, side_color))
             # col 2  Entry Price
             self._hist_table.setItem(ri, 2, _ci(_fmt_price(t["entry_price"]), "#8899AA"))
             # col 3  Exit Price
@@ -527,7 +529,7 @@ class PaperTradingPage(QWidget):
             ))
             # col 7  P&L $
             self._hist_table.setItem(ri, 7, _ni(
-                pnl_usdt, f"${pnl_usdt:+.2f}", pnl_color
+                pnl_usdt, f"{'+'if pnl_usdt>=0 else'-'}${abs(pnl_usdt):.2f}", pnl_color
             ))
             # col 8  Exit Reason
             self._hist_table.setItem(ri, 8, _ci(reason_lbl, reason_color))

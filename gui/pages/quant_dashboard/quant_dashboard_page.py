@@ -99,9 +99,9 @@ def _badge(text: str, bg: str, fg: str) -> QLabel:
 
 def _side_badge(side: str) -> QLabel:
     if side.upper() in ("LONG", "BUY"):
-        return _badge(side.upper(), "#003322", _BULL)
+        return _badge("LONG", "#003322", _BULL)
     elif side.upper() in ("SHORT", "SELL"):
-        return _badge(side.upper(), "#330011", _BEAR)
+        return _badge("SHORT", "#330011", _BEAR)
     return _badge(side.upper(), "#1a2840", _BLUE)
 
 
@@ -967,7 +967,7 @@ class PositionsPanel(QFrame):
 
             items = [
                 (sym,                           _TEXT_PRI),
-                (side.upper(),                  _BULL if side.upper() in ("LONG", "BUY") else _BEAR),
+                ("LONG" if side.upper() in ("LONG","BUY") else "SHORT",  _BULL if side.upper() in ("LONG", "BUY") else _BEAR),
                 (f"${entry:,.2f}" if entry > 1 else f"${entry:.6f}",        _TEXT_MUT),
                 (f"${mark:,.2f}" if mark > 1 else f"${mark:.6f}",         _TEXT_PRI),
                 (f"{upnl_pct:+.3f}%",           _BULL if upnl_pct >= 0 else _BEAR),
@@ -1129,7 +1129,7 @@ class PortfolioPanel(QFrame):
 
         # Day P&L and Open P&L - set to placeholder for now (no real-time day tracking yet)
         self._metric_labels["DAY P&L"][0].setText("—")
-        self._metric_labels["OPEN P&L"][0].setText(f"${open_pnl:+,.0f}")
+        self._metric_labels["OPEN P&L"][0].setText(f"{'+'if open_pnl>=0 else'-'}${abs(open_pnl):,.0f}")
 
         # Drawdown
         dd = _pe.drawdown_pct
@@ -1257,11 +1257,11 @@ class TradeHistoryPanel(QFrame):
 
             items = [
                 (sym,                               _TEXT_PRI),
-                (side.upper(),                      _BULL if side.upper() in ("LONG", "BUY") else _BEAR),
+                ("LONG" if side.upper() in ("LONG","BUY") else "SHORT",      _BULL if side.upper() in ("LONG", "BUY") else _BEAR),
                 (f"${entry:,.2f}" if entry > 1 else f"${entry:.6f}",       _TEXT_MUT),
                 (f"${exit_p:,.2f}" if exit_p > 1 else f"${exit_p:.6f}",      _TEXT_PRI),
                 (f"{pnl_pct:+.2f}%",                _BULL if pnl_pct >= 0 else _BEAR),
-                (f"${pnl_usd:+.2f}",                _BULL if pnl_usd >= 0 else _BEAR),
+                (f"{'+'if pnl_usd>=0 else'-'}${abs(pnl_usd):.2f}",                _BULL if pnl_usd >= 0 else _BEAR),
                 (dur_str,                           _TEXT_MUT),
                 (date_str,                          _TEXT_DIM),
             ]
