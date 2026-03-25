@@ -46,7 +46,7 @@ When user says "Nexus Trader restarted", run full validation automatically. No s
 
 ---
 
-## Current System State (v1.0 — 2026-03-23)
+## Current System State (v1.0 — 2026-03-24)
 
 ### Production Config (`config.yaml` — runtime only, NOT `config/settings.yaml`)
 ```yaml
@@ -79,6 +79,7 @@ scale_manager:
 | MomentumBreakout | 63.5% | 4.17 | +1.21 | ✅ Active |
 | MeanReversion | 32.2% | 0.21 | — | ❌ Disabled |
 | LiquiditySweep | 19.3% | 0.28 | — | ❌ Disabled |
+| VWAPReversion | — | 0.28 | — | ❌ Disabled (Study 4 PF 0.28 — below 1.0 threshold; added to disabled_models 2026-03-24) |
 
 ### API Keys (encrypted in vault)
 - CryptoPanic, Coinglass, Reddit Client ID+Secret — all set
