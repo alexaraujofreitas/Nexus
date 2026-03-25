@@ -29,6 +29,12 @@ from core.event_bus import bus, Topics
 # File used to persist open positions across restarts
 _OPEN_POSITIONS_FILE = Path(__file__).parent.parent.parent / "data" / "open_positions.json"
 
+# CDA observability log — append-only JSONL; one record per opened trade.
+# Each record: ts, symbol, side, base_position_size_usdt, cda_multiplier,
+#              adjusted_position_size_usdt, cda_tier, regime, score.
+# This file is read by the CPS validation script and the v0.4 report generator.
+_CDA_OBS_FILE = Path(__file__).parent.parent.parent / "data" / "cda_observations.jsonl"
+
 logger = logging.getLogger(__name__)
 
 
@@ -495,6 +501,40 @@ class PaperExecutor:
         logger.debug("PaperExecutor: slippage %.6f → fill %.6f (cost=%.4f USDT/unit)",
                      entry_price, fill_price, slippage_cost)
 
+        # ── Zero-stop-distance guard ─────────────────────────────────────────
+        # Root cause of Trade #2 bug: market price moved to the model's stop
+        # level between the HTF scan and LTF execution. _do_auto_execute_one()
+        # uses live ticker["last"] as fill price, which can equal stop_loss_price
+        # when the market has already breached the stop level. Without this guard
+        # the trade opens and closes in the same tick (pnl ≈ $0 loss from spread),
+        # and position sizing produces infinite qty (risk_usdt / 0).
+        _MIN_STOP_PCT = 0.001  # 0.1% — minimum meaningful stop distance
+        _sl_guard = candidate.stop_loss_price
+        if _sl_guard and fill_price > 0:
+            _stop_dist_pct = abs(fill_price - _sl_guard) / fill_price
+            if _stop_dist_pct < _MIN_STOP_PCT:
+                logger.warning(
+                    "PaperExecutor: REJECTED %s %s — stop distance %.6f%% < minimum %.3f%% "
+                    "(fill=%.6f, stop=%.6f). Market moved to stop level since signal scan. "
+                    "Candidate discarded — next scan will re-evaluate.",
+                    candidate.side, candidate.symbol,
+                    _stop_dist_pct * 100, _MIN_STOP_PCT * 100,
+                    fill_price, _sl_guard,
+                )
+                bus.publish(
+                    Topics.SYSTEM_ALERT,
+                    data={
+                        "type":           "zero_stop_rejected",
+                        "symbol":         candidate.symbol,
+                        "side":           candidate.side,
+                        "fill_price":     fill_price,
+                        "stop_price":     _sl_guard,
+                        "stop_dist_pct":  round(_stop_dist_pct * 100, 6),
+                    },
+                    source="paper_executor",
+                )
+                return False
+
         quantity = size_usdt / fill_price
 
         pos = PaperPosition(
@@ -546,6 +586,39 @@ class PaperExecutor:
             list(getattr(candidate, "models_fired", [])),
         )
         bus.publish(Topics.TRADE_OPENED, data=pos.to_dict(), source="paper_executor")
+
+        # ── Phase 1B observability: log CDA metadata per trade ───────────────
+        # Reads fields stamped by RiskGate — zero logic impact.
+        # Written to cda_observations.jsonl for offline CPS validation.
+        try:
+            _cda_mult  = float(getattr(candidate, "cda_multiplier", 1.0) or 1.0)
+            _cda_tier  = str(getattr(candidate, "cda_tier",  "NORMAL") or "NORMAL")
+            _base_sz   = float(getattr(candidate, "base_position_size_usdt", size_usdt) or size_usdt)
+            if _cda_mult < 1.0:
+                logger.info(
+                    "PaperExecutor[CDA]: %s %s | base=%.2f USDT → adjusted=%.2f USDT "
+                    "(mult=%.2f, tier=%s)",
+                    candidate.side, candidate.symbol,
+                    _base_sz, size_usdt, _cda_mult, _cda_tier,
+                )
+            _obs = {
+                "ts":                          datetime.utcnow().isoformat(),
+                "symbol":                      candidate.symbol,
+                "side":                        candidate.side,
+                "base_position_size_usdt":     round(_base_sz, 4),
+                "cda_multiplier":              round(_cda_mult, 4),
+                "adjusted_position_size_usdt": round(size_usdt, 4),
+                "cda_tier":                    _cda_tier,
+                "regime":                      getattr(candidate, "regime", ""),
+                "score":                       round(float(candidate.score or 0), 4),
+                "entry_price":                 round(float(fill_price or 0), 4),
+            }
+            _CDA_OBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(_CDA_OBS_FILE, "a") as _fh:
+                _fh.write(json.dumps(_obs) + "\n")
+        except Exception as _obs_exc:
+            logger.debug("PaperExecutor: CDA obs write failed (non-fatal): %s", _obs_exc)
+
         self._save_open_positions()
         return True
 
