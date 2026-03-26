@@ -62,6 +62,15 @@ class OrderCandidate:
     higher_tf_regime:   str              = ""       # regime on the next-higher timeframe (for MTF check)
     expected_value:     float            = 0.0      # EV score = win_prob * reward - loss_prob * risk
 
+    # ── CDA metadata: stamped by RiskGate, available to downstream components ──
+    # These fields do NOT affect any logic — they exist purely for analytics.
+    # base_position_size_usdt: size the PositionSizer computed, before CDA cap.
+    # cda_multiplier:          multiplier RiskGate applied (1.0 = no reduction).
+    # cda_tier:                CDA crash tier at the time of the risk check.
+    base_position_size_usdt: float       = 0.0      # pre-CDA reduction size (USDT)
+    cda_multiplier:          float       = 1.0      # CDA scaling factor (0.0 – 1.0)
+    cda_tier:                str         = ""       # "NORMAL" | "DEFENSIVE" | … | "SYSTEMIC"
+
     def __post_init__(self):
         if self.entry_price and self.entry_price > 0:
             risk   = abs(self.entry_price - self.stop_loss_price)

@@ -46,7 +46,7 @@ When user says "Nexus Trader restarted", run full validation automatically. No s
 
 ---
 
-## Current System State (v1.0 — 2026-03-24)
+## Current System State (v1.1 — 2026-03-26)
 
 ### Production Config (`config.yaml` — runtime only, NOT `config/settings.yaml`)
 ```yaml
