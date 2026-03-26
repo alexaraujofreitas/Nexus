@@ -133,14 +133,50 @@ class RiskGate:
             candidate.approved = False
             return candidate
 
-        max_size = available_capital_usdt * self.max_position_capital_pct
+        # ── CrashDetectionAgent position-size multiplier ──────────────────
+        # Scales max_position_capital_pct by the crash-defense tier multiplier
+        # (NORMAL=1.00, DEFENSIVE=0.65, HIGH_ALERT=0.35, EMERGENCY=0.10,
+        # SYSTEMIC=0.00).  Does not affect existing open positions, take-profit
+        # levels, or stop-loss distances.
+        # Stale CDA data → multiplier returns 1.0 (fail-safe, no penalty).
+        _cda_multiplier = 1.0
+        _cda_tier_obs   = "NORMAL"   # observability capture — no effect on logic
+        try:
+            import core.agents.crash_detection_agent as _cda_mod
+            _cda_agent = _cda_mod.crash_detection_agent
+            if _cda_agent is not None:
+                _cda_multiplier = _cda_agent.get_position_size_multiplier()
+                _cda_tier_obs   = _cda_agent.get_crash_state().get("tier", "NORMAL")
+                if _cda_multiplier < 1.0:
+                    logger.info(
+                        "RiskGate: CDA multiplier %.2f applied (tier=%s) — "
+                        "max_capital_pct %.4f → %.4f for %s",
+                        _cda_multiplier,
+                        _cda_tier_obs,
+                        self.max_position_capital_pct,
+                        self.max_position_capital_pct * _cda_multiplier,
+                        candidate.symbol,
+                    )
+        except Exception as _cda_exc:
+            logger.debug("RiskGate: CDA multiplier lookup failed (non-fatal): %s", _cda_exc)
+
+        # Stamp CDA state onto candidate for downstream logging.
+        candidate.base_position_size_usdt = candidate.position_size_usdt
+        candidate.cda_multiplier          = _cda_multiplier
+        candidate.cda_tier                = _cda_tier_obs
+
+        _effective_capital_pct = self.max_position_capital_pct * _cda_multiplier
+
+        max_size = available_capital_usdt * _effective_capital_pct
         if candidate.position_size_usdt > max_size:
             # Reduce size rather than reject outright
             original_size = candidate.position_size_usdt
             candidate.position_size_usdt = round(max_size, 2)
             logger.info(
-                "RiskGate: reduced %s size from %.2f to %.2f USDT (capital limit)",
+                "RiskGate: reduced %s size from %.2f to %.2f USDT "
+                "(capital limit; CDA mult=%.2f)",
                 candidate.symbol, original_size, candidate.position_size_usdt,
+                _cda_multiplier,
             )
 
         # ── Max capital gate ──────────────────────────────────

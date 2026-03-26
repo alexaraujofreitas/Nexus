@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ============================================================
 # NEXUS TRADER — Application Entry Point
-# Institutional-Grade AI Trading Platform v1.0
+# Institutional-Grade AI Trading Platform v1.1
 #
 # Launch modes:
 #   python main.py              — normal interactive mode
@@ -246,7 +246,7 @@ def main():
     app.processEvents()
 
     logger.info("=" * 60)
-    logger.info("  NEXUS TRADER v1.0 — Starting Up")
+    logger.info("  NEXUS TRADER v1.1 — Starting Up")
     logger.info("=" * 60)
 
     # ── Initialize Database ───────────────────────────────────

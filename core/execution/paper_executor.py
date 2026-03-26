@@ -29,12 +29,6 @@ from core.event_bus import bus, Topics
 # File used to persist open positions across restarts
 _OPEN_POSITIONS_FILE = Path(__file__).parent.parent.parent / "data" / "open_positions.json"
 
-# CDA observability log — append-only JSONL; one record per opened trade.
-# Each record: ts, symbol, side, base_position_size_usdt, cda_multiplier,
-#              adjusted_position_size_usdt, cda_tier, regime, score.
-# This file is read by the CPS validation script and the v0.4 report generator.
-_CDA_OBS_FILE = Path(__file__).parent.parent.parent / "data" / "cda_observations.jsonl"
-
 logger = logging.getLogger(__name__)
 
 
@@ -587,38 +581,6 @@ class PaperExecutor:
         )
         bus.publish(Topics.TRADE_OPENED, data=pos.to_dict(), source="paper_executor")
 
-        # ── Phase 1B observability: log CDA metadata per trade ───────────────
-        # Reads fields stamped by RiskGate — zero logic impact.
-        # Written to cda_observations.jsonl for offline CPS validation.
-        try:
-            _cda_mult  = float(getattr(candidate, "cda_multiplier", 1.0) or 1.0)
-            _cda_tier  = str(getattr(candidate, "cda_tier",  "NORMAL") or "NORMAL")
-            _base_sz   = float(getattr(candidate, "base_position_size_usdt", size_usdt) or size_usdt)
-            if _cda_mult < 1.0:
-                logger.info(
-                    "PaperExecutor[CDA]: %s %s | base=%.2f USDT → adjusted=%.2f USDT "
-                    "(mult=%.2f, tier=%s)",
-                    candidate.side, candidate.symbol,
-                    _base_sz, size_usdt, _cda_mult, _cda_tier,
-                )
-            _obs = {
-                "ts":                          datetime.utcnow().isoformat(),
-                "symbol":                      candidate.symbol,
-                "side":                        candidate.side,
-                "base_position_size_usdt":     round(_base_sz, 4),
-                "cda_multiplier":              round(_cda_mult, 4),
-                "adjusted_position_size_usdt": round(size_usdt, 4),
-                "cda_tier":                    _cda_tier,
-                "regime":                      getattr(candidate, "regime", ""),
-                "score":                       round(float(candidate.score or 0), 4),
-                "entry_price":                 round(float(fill_price or 0), 4),
-            }
-            _CDA_OBS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(_CDA_OBS_FILE, "a") as _fh:
-                _fh.write(json.dumps(_obs) + "\n")
-        except Exception as _obs_exc:
-            logger.debug("PaperExecutor: CDA obs write failed (non-fatal): %s", _obs_exc)
-
         self._save_open_positions()
         return True
 
@@ -840,11 +802,30 @@ class PaperExecutor:
         # Persist updated state so restart sees correct position size
         self._save_open_positions()
 
+        # ── Filter stats outcome enrichment (Phase 5) ──────────────────────
+        # Record realized R for this partial close so FilterStatsTracker builds
+        # an accurate quality proxy.  R = pnl / (initial_risk_per_unit * qty).
+        # Each partial close is an independent observation; the final close will
+        # record its own R for the remaining portion — no double counting.
+        _initial_risk_pc = getattr(pos, "_initial_risk", 0.0)
+        _risk_usdt_pc    = _initial_risk_pc * close_qty
+        _partial_r       = round(pnl_usdt / _risk_usdt_pc, 4) if _risk_usdt_pc > 0 else 0.0
+        try:
+            from core.analytics.filter_stats import get_filter_stats_tracker
+            _fst_pc = get_filter_stats_tracker()
+            for _fn_pc in ("time_of_day", "volatility"):
+                _fst_pc.record_trade_outcome(_fn_pc, _partial_r)
+        except Exception as _fst_pc_exc:
+            logger.debug(
+                "PaperExecutor: partial_close filter stats record failed (non-fatal): %s",
+                _fst_pc_exc,
+            )
+
         logger.info(
             "PaperExecutor: partial close for %s | closed %.2f%% (%.2f USDT) @ %.4f | "
-            "remaining qty=%.8f | P&L=%.2f USDT | capital=%.2f",
+            "remaining qty=%.8f | P&L=%.2f USDT | R=%.2f | capital=%.2f",
             symbol, reduce_pct * 100, _close_sz_usdt, close_price, new_qty,
-            pnl_usdt, self._capital,
+            pnl_usdt, _partial_r, self._capital,
         )
         bus.publish(Topics.TRADE_CLOSED, data=partial_trade, source="paper_executor")
         bus.publish(
@@ -1360,6 +1341,18 @@ class PaperExecutor:
             get_live_vs_backtest_tracker().record(trade)
         except Exception as _lvb_exc:
             logger.debug("PaperExecutor: live_vs_backtest record failed (non-fatal): %s", _lvb_exc)
+
+        # ── Filter stats outcome enrichment (Phase 3) ──
+        try:
+            from core.analytics.filter_stats import get_filter_stats_tracker
+            _fst = get_filter_stats_tracker()
+            _r_val = _realized_r if _realized_r is not None else 0.0
+            # All executed trades passed both scanner filters — record outcome
+            # so the tracker can build a quality proxy for accepted candidates.
+            for _fn in ("time_of_day", "volatility"):
+                _fst.record_trade_outcome(_fn, _r_val)
+        except Exception as _fst_exc:
+            logger.debug("PaperExecutor: filter stats record failed (non-fatal): %s", _fst_exc)
 
         logger.info(
             "PaperExecutor: CLOSED %s @ %.4f | reason=%s | PnL=%.2f%%  (%.2f USDT) | R=%.2f",
