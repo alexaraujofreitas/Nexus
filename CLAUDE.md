@@ -46,7 +46,7 @@ When user says "Nexus Trader restarted", run full validation automatically. No s
 
 ---
 
-## Current System State (v1.1 — 2026-03-26)
+## Current System State (v1.2 — 2026-03-26)
 
 ### Production Config (`config.yaml` — runtime only, NOT `config/settings.yaml`)
 ```yaml
@@ -56,6 +56,7 @@ ai:
   active_provider: Local (Ollama)   # deepseek-r1:14b via http://localhost:11434/v1
 data:
   websocket_enabled: false   # Reliable REST polling (WS crashes Qt at 10Hz without throttle)
+  default_timeframe: 30m     # v1.2: Phase 5 primary TF (was 1h)
 idss:
   min_confluence_score: 0.45
 scanner:
@@ -64,22 +65,40 @@ disabled_models:
   - mean_reversion            # Disabled: backtest PF 0.21, -$18k (Study 4)
   - liquidity_sweep           # Disabled: backtest PF 0.28, -$15k (Study 4)
 multi_tf:
-  confirmation_required: true
+  confirmation_required: true  # v1.2: 30m primary → 4h HTF gate (Phase 5 winning)
 risk_engine:
   risk_pct_per_trade: 0.5    # Phase 1 demo (0.5%)
   max_capital_pct: 0.04      # 4% per-trade hard cap
 scale_manager:
   current_phase: 1
+# v1.2 exit logic (Phase 5 winning: partial 33% at 1R + breakeven SL)
+exit:
+  mode: partial
+  partial_pct: 0.33
+  partial_r_trigger: 1.0
+models:
+  trend:
+    adx_min: 31.0            # v1.2: Phase 5 lever 2 (was 25.0, +42% trade count)
 ```
 
-### Active Models & Backtest Baselines (Study 4, 13 months)
+### Active Models & Backtest Baselines (Study 4, 13 months; Phase 5 combined PF = 2.976)
 | Model | WR | PF | Avg R | Status |
 |-------|----|----|-------|--------|
 | TrendModel | 50.3% | 1.47 | +0.22 | ✅ Active |
 | MomentumBreakout | 63.5% | 4.17 | +1.21 | ✅ Active |
-| MeanReversion | 32.2% | 0.21 | — | ❌ Disabled |
-| LiquiditySweep | 19.3% | 0.28 | — | ❌ Disabled |
-| VWAPReversion | — | 0.28 | — | ❌ Disabled (Study 4 PF 0.28 — below 1.0 threshold; added to disabled_models 2026-03-24) |
+| FundingRateModel | — | — | — | ✅ Active (context enrichment, low weight) |
+| SentimentModel | — | — | — | ✅ Active (FinBERT/VADER, low weight) |
+| MeanReversion | 32.2% | 0.21 | — | ❌ Archived v1.2 (−$18k Study 4) |
+| LiquiditySweep | 19.3% | 0.28 | — | ❌ Archived v1.2 (−$15k Study 4) |
+| VWAPReversion | — | 0.28 | — | ❌ Archived v1.2 (below 1.0 threshold, 2026-03-24) |
+| OrderBook | — | ≤1.0 | — | ❌ Archived v1.2 (structural 1h+ TF gate) |
+
+### v1.2 Phase 5 Exit Performance Comparison
+| Exit Mode | PF | Max DD | WR |
+|-----------|-----|--------|-----|
+| Full exit (v1.1) | 1.825 | 8.2R | 51.3% |
+| Partial 33% at 1R (v1.2) | 2.634 | 4.7R | 53.8% |
+| **Combined best (30m+4h MTF)** | **2.976** | **4.1R** | **57.1%** |
 
 ### API Keys (encrypted in vault)
 - CryptoPanic, Coinglass, Reddit Client ID+Secret — all set
@@ -161,11 +180,14 @@ OHLCV (1h, 300 bars) → HMM+RuleBased Regime → SignalGenerator (5 models)
 
 ### Notifications
 - **Key normalisation in `_on_trade_closed()`**: Always map `side`→`direction`, `pnl_usdt`→`pnl`, `size_usdt`→`size` (formatted), `models_fired`→`strategy`, `exit_reason`→`close_reason`, `duration_s`→`duration`. Never pass raw executor dict to `notify()`.
+- **Partial exit routing (v1.2)**: In `_on_trade_closed()`, check `data.get("exit_reason") == "partial_close"` FIRST and route to `_on_partial_exit()` instead of the full-close template. Failure to gate this causes partial closes to appear as completed trades in notifications.
+- **`partial_exit` TEMPLATES entry**: Always present in `TEMPLATES` registry. Never remove or rename — `notification_manager._on_partial_exit()` calls `self.notify("partial_exit", ...)` by name.
 
 ### Monitoring & Reset
 - **TradeMonitor attribute**: `_recent_trades` (last 20 entries). `_trades` does NOT exist.
 - **Thread watchdog threshold**: 75. Baseline at startup is ~51 threads. Recalibrate if agents added/removed.
 - **`partial_close()` rule**: Must create a `_closed_trades` entry + DB row + publish `TRADE_CLOSED`. Partial closes not creating records are invisible to analytics.
+- **`_auto_partial_applied` flag (v1.2)**: Boolean on `PaperPosition`. Set to `True` when auto-partial triggers in `on_tick()`. Serialised to `open_positions.json` via `to_dict()` and restored in `_load_open_positions()`. If this flag is missing or not restored, every restart will re-trigger the partial close on already-partially-closed positions.
 - **`entry_size_usdt` immutability**: Never assign after `__init__`. Only `size_usdt` changes during partials.
 
 ### Exchange & API
@@ -260,4 +282,5 @@ Before each Bybit Demo session:
 pytest tests/intelligence/ -v -m "not slow"           # 193 tests, 0 failures required
 pytest tests/unit/test_session33_regime_fixes.py -v   # 31 tests, 0 failures required
 python scripts/run_ui_checks.py --no-screenshots      # 69 checks, 0 failures required
+python scripts/validate_v1_2_parity.py                # v1.2: all PASS required before session
 ```
