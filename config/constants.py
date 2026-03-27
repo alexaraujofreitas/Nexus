@@ -6,7 +6,7 @@ from pathlib import Path
 
 # --- Application ---
 APP_NAME = "Nexus Trader"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.2.0"
 APP_DESCRIPTION = "Institutional-Grade AI Trading Platform"
 
 # --- Paths ---

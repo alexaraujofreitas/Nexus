@@ -1,6 +1,14 @@
 # ============================================================
 # NEXUS TRADER — Mean Reversion Model (Sub-Model 2)
 #
+# ⚠️  ARCHIVED — v1.2  (2026-03-26)
+# Reason : Study 4 backtest — PF 0.21 (-$18k), WR 32.2% over 13 months.
+#           Disabled in production via config.yaml `disabled_models` list.
+# Status : Code retained for test compatibility and historical analysis only.
+#           DO NOT re-enable without OOS validation on ≥75 live demo trades.
+#           Re-enable path: remove "mean_reversion" from disabled_models in
+#           config.yaml after out-of-sample confirmation.
+#
 # Active in: ranging
 # Long:  Price near BB lower, RSI14 < 35, StochRSI %K < 25
 # Short: Price near BB upper, RSI14 > 65, StochRSI %K > 75

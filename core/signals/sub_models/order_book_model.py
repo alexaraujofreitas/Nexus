@@ -1,6 +1,16 @@
 # ============================================================
 # NEXUS TRADER — Order Book Sub-Model  (Sprint 2)
 #
+# ⚠️  ARCHIVED — v1.2  (2026-03-26)
+# Reason : Structural timeframe gate — PF ≤ 1.0 at 1h+ timeframes.
+#           At 1h, min_confidence / tf_weight = 0.60 / 0.55 = 1.09 > 1.0,
+#           meaning this model structurally cannot fire in the production TF.
+#           Disabled in production via config.yaml `disabled_models` list.
+# Status : Code retained for test compatibility and historical analysis only.
+#           DO NOT re-enable at 1h+ without architectural revision.
+#           Re-enable path: remove "order_book" from disabled_models in
+#           config.yaml only for sub-1h timeframe configurations.
+#
 # Reads cached order book imbalance from the OrderBookAgent.
 # Fires only when imbalance signal is strong and confidence is high.
 #

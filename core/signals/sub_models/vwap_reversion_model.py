@@ -1,6 +1,14 @@
 # ============================================================
 # NEXUS TRADER — VWAP Mean-Reversion Model (Phase 1c)
 #
+# ⚠️  ARCHIVED — v1.2  (2026-03-26)
+# Reason : Study 4 backtest — PF 0.28, below 1.0 viability threshold.
+#           Added to disabled_models in config.yaml on 2026-03-24.
+# Status : Code retained for test compatibility and historical analysis only.
+#           DO NOT re-enable without OOS validation on ≥75 live demo trades.
+#           Re-enable path: remove "vwap_reversion" from disabled_models in
+#           config.yaml after out-of-sample confirmation.
+#
 # Active in: ranging, accumulation, volatility_compression, recovery
 # Trades mean reversion around VWAP with z-score and RSI confirmation.
 #
