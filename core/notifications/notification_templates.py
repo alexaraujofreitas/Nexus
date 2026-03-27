@@ -12,6 +12,7 @@
 # ============================================================
 from __future__ import annotations
 
+import html as _html_mod
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -57,9 +58,10 @@ def _dir(direction: str) -> str:
 
 def trade_opened(data: dict) -> dict[str, str]:
     """
-    Returns {'subject': ..., 'body': ..., 'short': ...}
+    Returns {'subject': ..., 'body': ..., 'short': ..., 'html_body': ...}
     data keys: symbol, direction, entry_price, size, stop_loss, take_profit,
                strategy, confidence, rationale, timeframe, regime
+               + optional analysis_* keys from TradeAnalysisService
     """
     sym       = data.get("symbol", "???")
     direction = data.get("direction", "long")
@@ -73,6 +75,25 @@ def trade_opened(data: dict) -> dict[str, str]:
     tf        = data.get("timeframe", "—")
     regime    = data.get("regime", "—")
     reg_emoji = _REG_EMOJI.get(regime, "◈")
+
+    # ── Analysis enrichment ───────────────────────────────────
+    a_overall  = data.get("analysis_overall", "")
+    a_setup    = data.get("analysis_setup", "")
+    a_risk     = data.get("analysis_risk", "")
+    a_rr       = data.get("analysis_rr", "—")
+    a_cls      = data.get("analysis_classification", "")
+    a_emoji    = data.get("analysis_emoji", "")
+    a_rc       = data.get("analysis_root_causes", "")
+
+    analysis_block = ""
+    if a_overall:
+        analysis_block = (
+            f"{'─'*42}\n"
+            f"  AI ANALYSIS:  {a_emoji} {a_cls}  (Overall: {a_overall}/100)\n"
+            f"  Setup: {a_setup}  Risk: {a_risk}  R:R: {a_rr}\n"
+        )
+        if a_rc and a_rc != "None identified":
+            analysis_block += f"  Watch: {a_rc}\n"
 
     subject = f"🚀 Trade Opened — {sym} {direction.upper()}"
 
@@ -94,6 +115,7 @@ def trade_opened(data: dict) -> dict[str, str]:
         f"{'─'*42}\n"
         f"  Rationale:\n"
         f"  {rationale}\n"
+        f"{analysis_block}"
         f"{'─'*42}\n"
         f"  Time:        {_now_utc()}\n"
         f"{'='*42}"
@@ -104,14 +126,25 @@ def trade_opened(data: dict) -> dict[str, str]:
         f"SL: {sl} | TP: {tp}\n"
         f"Strategy: {strategy} | Conf: {conf:.0%}"
     )
+    if a_emoji and a_cls:
+        short += f"\nQuality: {a_emoji} {a_cls} ({a_overall}/100)"
 
-    return {"subject": subject, "body": body, "short": short}
+    result: dict = {"subject": subject, "body": body, "short": short}
+
+    # ── Rich HTML email body ───────────────────────────────────
+    try:
+        result["html_body"] = _build_trade_opened_html(data)
+    except Exception:
+        pass  # graceful fallback — email will use <pre> wrapper
+
+    return result
 
 
 def trade_closed(data: dict) -> dict[str, str]:
     """
     data keys: symbol, direction, entry_price, exit_price, pnl, pnl_pct,
                size, strategy, close_reason, duration
+               + optional analysis_* keys from TradeAnalysisService
     """
     sym        = data.get("symbol", "???")
     direction  = data.get("direction", "long")
@@ -127,7 +160,34 @@ def trade_closed(data: dict) -> dict[str, str]:
     pnl_sign  = "✅" if float(pnl or 0) >= 0 else "❌"
     pnl_str   = f"{pnl_sign} {_fmt_pct(pnl_pct)} ({'+' if float(pnl or 0)>=0 else ''}{_fmt_price(pnl, 2)} USDT)"
 
+    # ── Analysis enrichment ───────────────────────────────────
+    a_overall  = data.get("analysis_overall", "")
+    a_setup    = data.get("analysis_setup", "")
+    a_risk     = data.get("analysis_risk", "")
+    a_exec     = data.get("analysis_execution", "")
+    a_decision = data.get("analysis_decision", "")
+    a_rr       = data.get("analysis_rr", "—")
+    a_cls      = data.get("analysis_classification", "")
+    a_emoji    = data.get("analysis_emoji", "")
+    a_rc       = data.get("analysis_root_causes", "")
+    a_rec      = data.get("analysis_recommendation", "")
+
+    analysis_block = ""
+    if a_overall:
+        analysis_block = (
+            f"{'─'*42}\n"
+            f"  AI ANALYSIS:  {a_emoji} {a_cls}  (Overall: {a_overall}/100)\n"
+            f"  Setup: {a_setup}  Risk: {a_risk}  Exec: {a_exec}  Decision: {a_decision}\n"
+            f"  R:R: {a_rr}\n"
+        )
+        if a_rc and a_rc != "None identified":
+            analysis_block += f"  Root Causes: {a_rc}\n"
+        if a_rec and a_rec != "No specific recommendations.":
+            analysis_block += f"  Recommendation: {a_rec}\n"
+
     subject = f"{pnl_sign} Trade Closed — {sym} | {_fmt_pct(pnl_pct)}"
+    if a_emoji and a_cls:
+        subject += f" | {a_emoji} {a_cls}"
 
     body = (
         f"{'='*42}\n"
@@ -143,6 +203,7 @@ def trade_closed(data: dict) -> dict[str, str]:
         f"  Strategy:    {strategy}\n"
         f"  Closed By:   {reason}\n"
         f"  Duration:    {duration}\n"
+        f"{analysis_block}"
         f"{'─'*42}\n"
         f"  Time:        {_now_utc()}\n"
         f"{'='*42}"
@@ -153,8 +214,18 @@ def trade_closed(data: dict) -> dict[str, str]:
         f"Entry: {entry} | P&L: {pnl_str}\n"
         f"Reason: {reason}"
     )
+    if a_emoji and a_cls:
+        short += f"\nQuality: {a_emoji} {a_cls} ({a_overall}/100)"
 
-    return {"subject": subject, "body": body, "short": short}
+    result: dict = {"subject": subject, "body": body, "short": short}
+
+    # ── Rich HTML email body ───────────────────────────────────
+    try:
+        result["html_body"] = _build_trade_closed_html(data)
+    except Exception:
+        pass
+
+    return result
 
 
 def trade_stopped(data: dict) -> dict[str, str]:
@@ -541,16 +612,443 @@ def crash_systemic(data: dict) -> dict[str, str]:
     return {"subject": subject, "body": body, "short": short}
 
 
+def _build_health_html(data: dict) -> str:
+    """
+    Generate a dark-themed, rich HTML email body for health check notifications.
+    Uses table-based layout for maximum email client compatibility (Gmail, Outlook, Apple Mail).
+    All user-supplied string values are HTML-escaped.
+    """
+
+    # ── HTML escape helper ─────────────────────────────────────────────
+    def _e(v) -> str:
+        return _html_mod.escape(str(v)) if v is not None else ""
+
+    # ── Status indicator (coloured dot) ────────────────────────────────
+    def _sdot(s: str) -> str:
+        sl = (s or "").lower()
+        if any(w in sl for w in ("running", "active", "connected", "ok", "online")):
+            return '<span style="color:#10B981;font-size:14px">●</span>'
+        if any(w in sl for w in ("error", "fail", "down", "inactive", "disconnected", "stopped")):
+            return '<span style="color:#EF4444;font-size:14px">●</span>'
+        return '<span style="color:#F59E0B;font-size:14px">●</span>'
+
+    # ── P&L helpers ────────────────────────────────────────────────────
+    def _pnl_color(v: float) -> str:
+        return "#10B981" if v >= 0 else "#EF4444"
+
+    def _pfx(v: float) -> str:
+        return "+" if v >= 0 else ""
+
+    # ── Badge helpers ──────────────────────────────────────────────────
+    def _side_badge(side: str) -> str:
+        is_long = (side or "").lower() in ("buy", "long")
+        bg = "#064E3B" if is_long else "#7F1D1D"
+        fg = "#34D399" if is_long else "#FCA5A5"
+        label = "LONG" if is_long else "SHORT"
+        return (
+            f'<span style="background:{bg};color:{fg};font-size:10px;font-weight:700;'
+            f'padding:2px 7px;border-radius:3px;letter-spacing:1px">{label}</span>'
+        )
+
+    def _tf_badge(tf) -> str:
+        return (
+            f'<span style="background:#1E3A5F;color:#93C5FD;font-size:10px;font-weight:600;'
+            f'padding:2px 5px;border-radius:3px">{_e(tf or "?")}</span>'
+        )
+
+    def _result_badge(won: bool) -> str:
+        bg = "#064E3B" if won else "#7F1D1D"
+        fg = "#34D399" if won else "#FCA5A5"
+        label = "WIN" if won else "LOSS"
+        return (
+            f'<span style="background:{bg};color:{fg};font-size:10px;font-weight:700;'
+            f'padding:2px 6px;border-radius:3px">{label}</span>'
+        )
+
+    # ── Format helpers ─────────────────────────────────────────────────
+    def _fmt_models(mf) -> str:
+        if not mf:
+            return "—"
+        if isinstance(mf, list):
+            return _e(", ".join(str(m) for m in mf)) if mf else "—"
+        return _e(str(mf))
+
+    def _fmt_dur(s) -> str:
+        try:
+            s = int(s or 0)
+        except Exception:
+            return "—"
+        if s <= 0:
+            return "—"
+        if s < 60:
+            return f"{s}s"
+        if s < 3600:
+            return f"{s // 60}m {s % 60}s"
+        h = s // 3600
+        m = (s % 3600) // 60
+        return f"{h}h {m}m"
+
+    def _fmt_dt(iso_str) -> str:
+        """Return 'YYYY-MM-DD HH:MM UTC' or '—'."""
+        try:
+            return str(iso_str)[:16].replace("T", " ") + " UTC"
+        except Exception:
+            return "—"
+
+    def _fmt_p(v, dec: int = 2) -> str:
+        """Format a price value."""
+        try:
+            return f"{float(v):,.{dec}f}"
+        except Exception:
+            return "—"
+
+    def _price_dec(v: float) -> int:
+        """Auto-select decimal places: 2 for large prices (>$100), 4 for small."""
+        return 2 if v > 100 else 4
+
+    # ── Data extraction ────────────────────────────────────────────────
+    scanner      = data.get("scanner_status", "Unknown")
+    last_scan    = data.get("last_scan_ago",  "Unknown")
+    exchange     = data.get("exchange_status","Unknown")
+    feed         = data.get("feed_status",    "Unknown")
+    ai_status    = data.get("ai_status",      "Unknown")
+    portfolio    = float(data.get("portfolio_value") or 0.0)
+    cash         = float(data.get("available_cash")  or 0.0)
+    today_pnl    = float(data.get("today_pnl")       or 0.0)
+    today_pnl_pct= float(data.get("today_pnl_pct")   or 0.0)
+    win_rate     = float(data.get("win_rate")         or 0.0)
+    total_trades = int(  data.get("total_trades")     or 0)
+    open_count   = int(  data.get("open_positions")   or 0)
+    ts           = _now_utc()
+
+    open_trades   = data.get("open_trades_detail")   or []
+    closed_trades = data.get("closed_trades_detail") or []
+
+    # ── Open position card ─────────────────────────────────────────────
+    def _open_card(p: dict) -> str:
+        sym     = _e(p.get("symbol", "???"))
+        side    = p.get("side", "")
+        tf      = p.get("timeframe", "?")
+        ep      = float(p.get("entry_price")   or 0)
+        cp      = float(p.get("current_price") or 0)
+        upnl_p  = float(p.get("unrealized_pnl") or 0)   # already a percentage
+        sz      = float(p.get("size_usdt")     or 0)
+        upnl_u  = sz * upnl_p / 100                      # USDT P&L
+        sl      = float(p.get("stop_loss")     or 0)
+        tp      = float(p.get("take_profit")   or 0)
+        score   = float(p.get("score")         or 0)
+        regime  = _e(p.get("regime")           or "—")
+        models  = _fmt_models(p.get("models_fired"))
+        opened  = _fmt_dt(p.get("opened_at",   ""))
+        bars    = p.get("bars_held")
+        bars_str= f" &nbsp;·&nbsp; {bars} bars" if bars is not None else ""
+
+        pc      = _pnl_color(upnl_p)
+        dp      = _price_dec(ep)
+
+        return (
+            f'<tr><td style="padding:8px 0 0 0">'
+            f'<div style="background:#0D1117;border:1px solid #1E2D40;'
+            f'border-left:3px solid {pc};border-radius:6px;padding:14px 16px">'
+
+            # ── Card header: symbol + badges + P&L ──────────────────
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px">'
+            f'<tr>'
+            f'<td style="vertical-align:middle">'
+            f'<span style="color:#E2E8F0;font-size:14px;font-weight:700">{sym}</span>'
+            f'&nbsp;&nbsp;{_side_badge(side)}&nbsp;{_tf_badge(tf)}'
+            f'</td>'
+            f'<td align="right" style="vertical-align:middle">'
+            f'<span style="color:{pc};font-size:14px;font-weight:700">'
+            f'{_pfx(upnl_p)}{upnl_p:.2f}%&nbsp;({_pfx(upnl_u)}${abs(upnl_u):,.2f})'
+            f'</span>'
+            f'</td>'
+            f'</tr>'
+            f'</table>'
+
+            # ── Card body: field grid ────────────────────────────────
+            f'<table width="100%" cellpadding="0" cellspacing="4" style="font-size:12px;color:#6B7280">'
+            f'<tr>'
+            f'<td width="50%" style="padding-bottom:4px">'
+            f'Entry &nbsp;<span style="color:#C8D0E0">${_fmt_p(ep, dp)}</span></td>'
+            f'<td width="50%" style="padding-bottom:4px">'
+            f'Current &nbsp;<span style="color:#C8D0E0">${_fmt_p(cp, dp)}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td style="padding-bottom:4px">'
+            f'Size &nbsp;<span style="color:#C8D0E0">${sz:,.2f} USDT</span></td>'
+            f'<td style="padding-bottom:4px">'
+            f'Score &nbsp;<span style="color:#C8D0E0">{score:.2f}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td style="padding-bottom:4px">'
+            f'SL &nbsp;<span style="color:#EF4444">${_fmt_p(sl, dp)}</span></td>'
+            f'<td style="padding-bottom:4px">'
+            f'TP &nbsp;<span style="color:#10B981">${_fmt_p(tp, dp)}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td colspan="2" style="padding-bottom:4px">'
+            f'Regime &nbsp;<span style="color:#93C5FD">{regime}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td colspan="2" style="padding-bottom:4px">'
+            f'Models &nbsp;<span style="color:#C8D0E0">{models}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td colspan="2">'
+            f'Opened &nbsp;<span style="color:#C8D0E0">{_e(opened)}{bars_str}</span></td>'
+            f'</tr>'
+            f'</table>'
+            f'</div>'
+            f'</td></tr>'
+        )
+
+    # ── Closed trade card ──────────────────────────────────────────────
+    def _closed_card(t: dict) -> str:
+        sym    = _e(t.get("symbol", "???"))
+        side   = t.get("side", "")
+        tf     = t.get("timeframe", "?")
+        ep     = float(t.get("entry_price") or 0)
+        xp     = float(t.get("exit_price")  or 0)
+        pnl_u  = float(t.get("pnl_usdt")   or 0)
+        pnl_p  = float(t.get("pnl_pct")    or 0)
+        exit_r = _e((t.get("exit_reason") or "—").replace("_", " "))
+        score  = float(t.get("score")       or 0)
+        regime = _e(t.get("regime")         or "—")
+        models = _fmt_models(t.get("models_fired"))
+        dur    = _fmt_dur(t.get("duration_s"))
+        closed = _fmt_dt(t.get("closed_at", ""))
+        won    = pnl_u >= 0
+        pc     = _pnl_color(pnl_u)
+        dp_ep  = _price_dec(ep)
+        dp_xp  = _price_dec(xp)
+
+        return (
+            f'<tr><td style="padding:8px 0 0 0">'
+            f'<div style="background:#0D1117;border:1px solid #1E2D40;'
+            f'border-left:3px solid {pc};border-radius:6px;padding:14px 16px">'
+
+            # ── Card header ──────────────────────────────────────────
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px">'
+            f'<tr>'
+            f'<td style="vertical-align:middle">'
+            f'<span style="color:#E2E8F0;font-size:14px;font-weight:700">{sym}</span>'
+            f'&nbsp;&nbsp;{_side_badge(side)}&nbsp;{_tf_badge(tf)}'
+            f'&nbsp;&nbsp;{_result_badge(won)}'
+            f'</td>'
+            f'<td align="right" style="vertical-align:middle">'
+            f'<span style="color:{pc};font-size:14px;font-weight:700">'
+            f'{_pfx(pnl_u)}${abs(pnl_u):,.2f}&nbsp;({_pfx(pnl_p)}{pnl_p:.2f}%)'
+            f'</span>'
+            f'</td>'
+            f'</tr>'
+            f'</table>'
+
+            # ── Card body ────────────────────────────────────────────
+            f'<table width="100%" cellpadding="0" cellspacing="4" style="font-size:12px;color:#6B7280">'
+            f'<tr>'
+            f'<td width="50%" style="padding-bottom:4px">'
+            f'Entry &nbsp;<span style="color:#C8D0E0">${_fmt_p(ep, dp_ep)}</span></td>'
+            f'<td width="50%" style="padding-bottom:4px">'
+            f'Exit &nbsp;<span style="color:#C8D0E0">${_fmt_p(xp, dp_xp)}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td style="padding-bottom:4px">'
+            f'Duration &nbsp;<span style="color:#C8D0E0">{_e(dur)}</span></td>'
+            f'<td style="padding-bottom:4px">'
+            f'Score &nbsp;<span style="color:#C8D0E0">{score:.2f}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td style="padding-bottom:4px">'
+            f'Exit Reason &nbsp;<span style="color:#C8D0E0">{exit_r}</span></td>'
+            f'<td style="padding-bottom:4px">'
+            f'Regime &nbsp;<span style="color:#93C5FD">{regime}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td colspan="2" style="padding-bottom:4px">'
+            f'Models &nbsp;<span style="color:#C8D0E0">{models}</span></td>'
+            f'</tr>'
+            f'<tr>'
+            f'<td colspan="2">'
+            f'Closed &nbsp;<span style="color:#C8D0E0">{_e(closed)}</span></td>'
+            f'</tr>'
+            f'</table>'
+            f'</div>'
+            f'</td></tr>'
+        )
+
+    # ── System status rows ─────────────────────────────────────────────
+    status_rows = ""
+    for lbl, val in [
+        ("IDSS Scanner", f"{scanner} (last: {last_scan})"),
+        ("Exchange",     exchange),
+        ("Data Feed",    feed),
+        ("AI Provider",  ai_status),
+    ]:
+        status_rows += (
+            f'<tr>'
+            f'<td style="color:#6B7280;font-size:12px;padding:5px 0;width:30%">{_e(lbl)}</td>'
+            f'<td style="font-size:12px;padding:5px 0">{_sdot(val)}'
+            f'&nbsp;<span style="color:#C8D0E0">{_e(val)}</span></td>'
+            f'</tr>'
+        )
+
+    # ── Portfolio metrics ──────────────────────────────────────────────
+    pc_pnl  = _pnl_color(today_pnl)
+    pfx_pnl = _pfx(today_pnl)
+    wr_lbl  = f"{win_rate:.1f}%" if total_trades > 0 else "—"
+
+    def _metric_cell(label: str, value: str, sub: str = "", color: str = "#E2E8F0") -> str:
+        sub_html = f'<div style="color:{color};font-size:10px;margin-top:2px">{sub}</div>' if sub else ""
+        return (
+            f'<td style="text-align:center;padding:10px 8px;background:#111827;border-radius:4px">'
+            f'<div style="color:#6B7280;font-size:10px;margin-bottom:4px;letter-spacing:0.5px">'
+            f'{_e(label)}</div>'
+            f'<div style="color:{color};font-size:15px;font-weight:700">{value}</div>'
+            f'{sub_html}'
+            f'</td>'
+        )
+
+    # ── Open positions section ─────────────────────────────────────────
+    if open_trades:
+        open_cards_html = "".join(_open_card(p) for p in open_trades)
+        open_section = (
+            f'<tr><td style="padding-top:20px">'
+            f'<div style="color:#6B7280;font-size:10px;font-weight:700;letter-spacing:1.5px;'
+            f'margin-bottom:6px">OPEN POSITIONS ({len(open_trades)})</div>'
+            f'<table width="100%" cellpadding="0" cellspacing="0">'
+            f'{open_cards_html}'
+            f'</table>'
+            f'</td></tr>'
+        )
+    else:
+        open_section = (
+            f'<tr><td style="padding-top:20px">'
+            f'<div style="color:#6B7280;font-size:10px;font-weight:700;letter-spacing:1.5px;'
+            f'margin-bottom:8px">OPEN POSITIONS</div>'
+            f'<div style="background:#0D1117;border:1px dashed #1E2D40;border-radius:6px;'
+            f'padding:20px;text-align:center;color:#6B7280;font-size:12px">'
+            f'No open positions</div>'
+            f'</td></tr>'
+        )
+
+    # ── Closed trades section (most-recent first) ──────────────────────
+    n_closed_shown = min(len(closed_trades), 10)
+    if closed_trades:
+        closed_cards_html = "".join(_closed_card(t) for t in reversed(closed_trades))
+        closed_section = (
+            f'<tr><td style="padding-top:20px">'
+            f'<div style="color:#6B7280;font-size:10px;font-weight:700;letter-spacing:1.5px;'
+            f'margin-bottom:6px">'
+            f'RECENT CLOSED TRADES ({n_closed_shown} of {total_trades})</div>'
+            f'<table width="100%" cellpadding="0" cellspacing="0">'
+            f'{closed_cards_html}'
+            f'</table>'
+            f'</td></tr>'
+        )
+    else:
+        closed_section = (
+            f'<tr><td style="padding-top:20px">'
+            f'<div style="color:#6B7280;font-size:10px;font-weight:700;letter-spacing:1.5px;'
+            f'margin-bottom:8px">RECENT CLOSED TRADES</div>'
+            f'<div style="background:#0D1117;border:1px dashed #1E2D40;border-radius:6px;'
+            f'padding:20px;text-align:center;color:#6B7280;font-size:12px">'
+            f'No closed trades yet</div>'
+            f'</td></tr>'
+        )
+
+    # ── Separator between spacer cells ────────────────────────────────
+    _GAP = '<td style="width:8px"></td>'
+
+    # ── Assemble full HTML ─────────────────────────────────────────────
+    return (
+        '<!DOCTYPE html>'
+        '<html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0">'
+        '</head>'
+        '<body style="margin:0;padding:0;background:#0A0E1A;'
+        'font-family:Arial,Helvetica,sans-serif">'
+        '<table width="100%" cellpadding="0" cellspacing="0" style="background:#0A0E1A">'
+        '<tr><td align="center">'
+        '<table width="680" cellpadding="0" cellspacing="0" '
+        'style="max-width:680px;width:100%;padding:24px">'
+
+        # Header ────────────────────────────────────────────────────────
+        '<tr><td style="padding-bottom:20px">'
+        '<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+        '<td style="border-left:4px solid #3B82F6;padding-left:12px;vertical-align:top">'
+        '<div style="color:#3B82F6;font-size:10px;font-weight:700;letter-spacing:2px">NEXUSTRADER</div>'
+        '<div style="color:#E2E8F0;font-size:20px;font-weight:700;margin-top:2px">System Health Check</div>'
+        f'<div style="color:#6B7280;font-size:12px;margin-top:4px">{_e(ts)}</div>'
+        '</td>'
+        '<td align="right" style="vertical-align:top">'
+        '<div style="background:#1E2D40;border-radius:6px;padding:10px 16px;display:inline-block;text-align:center">'
+        '<div style="color:#6B7280;font-size:10px;margin-bottom:2px">TOTAL EQUITY</div>'
+        f'<div style="color:#E2E8F0;font-size:20px;font-weight:700">${portfolio:,.2f}</div>'
+        '<div style="color:#6B7280;font-size:10px">USDT (incl. open P&amp;L)</div>'
+        '</div>'
+        '</td>'
+        '</tr></table>'
+        '</td></tr>'
+
+        # System Status ─────────────────────────────────────────────────
+        '<tr><td>'
+        '<div style="background:#0D1117;border:1px solid #1E2D40;border-radius:6px;padding:16px">'
+        '<div style="color:#6B7280;font-size:10px;font-weight:700;letter-spacing:1.5px;'
+        'margin-bottom:10px">SYSTEM STATUS</div>'
+        f'<table width="100%" cellpadding="0" cellspacing="0">{status_rows}</table>'
+        '</div>'
+        '</td></tr>'
+
+        # Portfolio Metrics ──────────────────────────────────────────────
+        '<tr><td style="padding-top:12px">'
+        '<div style="background:#0D1117;border:1px solid #1E2D40;border-radius:6px;padding:16px">'
+        '<div style="color:#6B7280;font-size:10px;font-weight:700;letter-spacing:1.5px;'
+        'margin-bottom:12px">PORTFOLIO</div>'
+        '<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+        + _metric_cell("EQUITY", f"${portfolio:,.2f}", "USDT")
+        + _GAP
+        + _metric_cell("AVAILABLE", f"${cash:,.2f}", "USDT")
+        + _GAP
+        + _metric_cell("TODAY P&amp;L",
+                        f"{pfx_pnl}${abs(today_pnl):,.2f}",
+                        f"{pfx_pnl}{today_pnl_pct:.2f}%",
+                        color=pc_pnl)
+        + _GAP
+        + _metric_cell("WIN RATE", wr_lbl, f"{total_trades} closed")
+        + '</tr></table>'
+        '</div>'
+        '</td></tr>'
+
+        # Open Positions + Closed Trades ────────────────────────────────
+        + open_section
+        + closed_section
+
+        # Footer ────────────────────────────────────────────────────────
+        + '<tr><td style="padding-top:24px;text-align:center">'
+        '<div style="color:#374151;font-size:10px;border-top:1px solid #1E2D40;'
+        'padding-top:16px">NexusTrader — Demo Mode &nbsp;·&nbsp; Paper Trading Only</div>'
+        '</td></tr>'
+
+        '</table>'
+        '</td></tr></table>'
+        '</body></html>'
+    )
+
+
 def health_check(data: dict) -> dict[str, str]:
     """
     System health check notification.
     data keys: scanner_status, last_scan_ago, exchange_status, feed_status,
                ai_status, portfolio_value, available_cash, today_pnl,
-               today_pnl_pct, win_rate, total_trades, open_positions, timestamp
+               today_pnl_pct, win_rate, total_trades, open_positions,
+               open_trades_detail, closed_trades_detail, timestamp
 
-    portfolio_value = total equity (free cash + mark-to-market value of open positions)
-    today_pnl       = realised P&L closed today + current unrealized P&L on open positions
-    total_trades    = closed trades only (open positions are shown separately)
+    portfolio_value      = total equity (free cash + mark-to-market value of open positions)
+    today_pnl            = realised P&L closed today + current unrealized P&L on open positions
+    total_trades         = closed trades only (open positions are shown separately)
+    open_trades_detail   = list[dict] from PaperPosition.to_dict() + augmented fields
+    closed_trades_detail = list[dict] — last 10 closed trade dicts from _closed_trades
     """
     scanner      = data.get("scanner_status",  "Unknown")
     last_scan    = data.get("last_scan_ago",    "Unknown")
@@ -564,6 +1062,8 @@ def health_check(data: dict) -> dict[str, str]:
     win_rate     = data.get("win_rate", 0.0)
     trades       = data.get("total_trades", 0)
     open_pos     = data.get("open_positions", 0)
+    open_detail  = data.get("open_trades_detail")  or []
+    closed_detail= data.get("closed_trades_detail") or []
 
     def _status_icon(s: str) -> str:
         s_lower = s.lower()
@@ -582,6 +1082,38 @@ def health_check(data: dict) -> dict[str, str]:
     wr_label     = f"{win_rate:.1f}%" if trades > 0 else "n/a (no closed trades)"
 
     subject = f"💊 Health Check — Portfolio: {portfolio} USDT | P&L: {_fmt_pct(t_pnl_pct)}"
+
+    # ── Plain-text body ────────────────────────────────────────────────
+    # Open positions compact summary
+    open_lines = ""
+    if open_detail:
+        open_lines = f"\n{'─'*42}\n  OPEN POSITIONS ({len(open_detail)})\n{'─'*42}\n"
+        for p in open_detail:
+            sym  = p.get("symbol", "???")
+            side = ("LONG" if (p.get("side") or "").lower() in ("buy","long") else "SHORT")
+            tf   = p.get("timeframe", "?")
+            ep   = float(p.get("entry_price")   or 0)
+            up   = float(p.get("unrealized_pnl") or 0)
+            sz   = float(p.get("size_usdt")     or 0)
+            uu   = sz * up / 100
+            pfx  = "+" if up >= 0 else ""
+            open_lines += f"  {sym} {side} {tf}  |  P&L: {pfx}{up:.2f}% ({pfx}${uu:,.2f})  |  Entry: ${ep:,.2f}  |  Size: ${sz:,.2f}\n"
+
+    # Closed trades compact summary (most recent first, up to 5)
+    closed_lines = ""
+    recent_closed = list(reversed(closed_detail))[:5]
+    if recent_closed:
+        closed_lines = f"\n{'─'*42}\n  RECENT CLOSED TRADES\n{'─'*42}\n"
+        for t in recent_closed:
+            sym   = t.get("symbol", "???")
+            side  = ("LONG" if (t.get("side") or "").lower() in ("buy","long") else "SHORT")
+            tf    = t.get("timeframe", "?")
+            pu    = float(t.get("pnl_usdt") or 0)
+            pp    = float(t.get("pnl_pct")  or 0)
+            xr    = (t.get("exit_reason") or "—").replace("_", " ")
+            icon  = "✅" if pu >= 0 else "❌"
+            pfx   = "+" if pu >= 0 else ""
+            closed_lines += f"  {icon} {sym} {side} {tf}  |  {pfx}${pu:,.2f} ({pfx}{pp:.2f}%)  |  {xr}\n"
 
     body = (
         f"{'='*42}\n"
@@ -607,7 +1139,9 @@ def health_check(data: dict) -> dict[str, str]:
         f"  Today P&L:     {pnl_str}  (realised + unrealised)\n"
         f"  Win Rate:      {wr_label}\n"
         f"  Closed Trades: {closed_label}\n"
-        f"{'='*42}"
+        + open_lines
+        + closed_lines
+        + f"{'='*42}"
     )
 
     short = (
@@ -619,7 +1153,16 @@ def health_check(data: dict) -> dict[str, str]:
         f"P&L: {pnl_str} | WR: {wr_label} | Closed: {closed_label}"
     )
 
-    return {"subject": subject, "body": body, "short": short}
+    # ── Rich HTML body (email channels) ───────────────────────────────
+    try:
+        html_body = _build_health_html(data)
+    except Exception:
+        html_body = None
+
+    result = {"subject": subject, "body": body, "short": short}
+    if html_body:
+        result["html_body"] = html_body
+    return result
 
 
 def daily_summary(data: dict) -> dict[str, str]:
@@ -663,10 +1206,377 @@ def daily_summary(data: dict) -> dict[str, str]:
     return {"subject": subject, "body": body, "short": short}
 
 
+# ── HTML builders for trade notifications (Session 35) ────────
+
+_TRADE_HTML_CSS = """
+body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;
+     background:#080C16;color:#C8D0E0;}
+.wrap{max-width:620px;margin:0 auto;padding:20px 16px;}
+.card{background:#0D1320;border:1px solid #1A2332;border-radius:8px;
+      margin-bottom:14px;overflow:hidden;}
+.card-header{padding:12px 16px;border-bottom:1px solid #1A2332;}
+.card-body{padding:14px 16px;}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;
+       font-size:11px;font-weight:700;letter-spacing:0.5px;}
+.row{display:flex;justify-content:space-between;margin-bottom:6px;
+     font-size:13px;}
+.lbl{color:#8899AA;}
+.val{color:#E8EBF0;font-weight:600;}
+.green{color:#00CC77;}.red{color:#FF3355;}.amber{color:#FFB300;}
+.blue{color:#1E90FF;}.muted{color:#8899AA;}
+.score-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.score-bar-wrap{flex:1;height:6px;background:#141E2E;border-radius:3px;}
+.score-bar{height:6px;border-radius:3px;}
+.footer{text-align:center;font-size:11px;color:#4A6A8A;
+        padding:10px 0 0;border-top:1px solid #1A2332;}
+"""
+
+
+def _score_bar_color(s: float) -> str:
+    return "#00CC77" if s >= 75 else ("#FFB300" if s >= 55 else "#FF3355")
+
+
+def _classification_badge_style(cls_: str) -> str:
+    return {
+        "GOOD":    "background:#0A3320;color:#00CC77;border:1px solid #00CC77;",
+        "BAD":     "background:#3A0A14;color:#FF3355;border:1px solid #FF3355;",
+        "NEUTRAL": "background:#1A2030;color:#FFB300;border:1px solid #FFB300;",
+    }.get(cls_, "background:#1A2030;color:#8899AA;border:1px solid #8899AA;")
+
+
+def _score_row_html(label: str, score: float) -> str:
+    pct    = max(0, min(100, score))
+    color  = _score_bar_color(pct)
+    return (
+        f'<div class="score-row">'
+        f'<span class="lbl" style="min-width:80px;font-size:12px;">{_html_mod.escape(label)}</span>'
+        f'<div class="score-bar-wrap">'
+        f'<div class="score-bar" style="width:{pct:.0f}%;background:{color};"></div>'
+        f'</div>'
+        f'<span style="font-size:12px;font-weight:700;color:{color};min-width:40px;text-align:right;">'
+        f'{score:.0f}</span>'
+        f'</div>'
+    )
+
+
+def _build_trade_opened_html(data: dict) -> str:
+    """Rich HTML body for trade_opened email."""
+    e = _html_mod.escape
+    sym       = e(data.get("symbol",    "???"))
+    direction = (data.get("direction",  "long") or "long").upper()
+    entry     = e(_fmt_price(data.get("entry_price")))
+    size      = e(str(data.get("size", "—")))
+    sl        = e(_fmt_price(data.get("stop_loss")))
+    tp        = e(_fmt_price(data.get("take_profit")))
+    strategy  = e(str(data.get("strategy", "—")))
+    conf      = data.get("confidence", 0.0)
+    tf        = e(str(data.get("timeframe", "—")))
+    regime    = e(str(data.get("regime", "—")))
+    rationale = e(str(data.get("rationale", "—")))
+    timestamp = e(_now_utc())
+
+    dir_color = "#00CC77" if direction in ("BUY", "LONG") else "#FF3355"
+
+    # Analysis section
+    a_overall  = data.get("analysis_overall", "")
+    a_setup    = float(data.get("analysis_setup", 0) or 0)
+    a_risk     = float(data.get("analysis_risk", 0) or 0)
+    a_rr       = e(str(data.get("analysis_rr", "—")))
+    a_cls      = data.get("analysis_classification", "")
+    a_emoji    = data.get("analysis_emoji", "")
+    a_rc       = e(str(data.get("analysis_root_causes", "") or ""))
+
+    analysis_html = ""
+    if a_overall:
+        badge_style = _classification_badge_style(a_cls)
+        analysis_html = f"""
+        <div class="card">
+          <div class="card-header">
+            <span style="font-weight:700;font-size:13px;">🤖 AI Entry Quality</span>
+            <span class="badge" style="{badge_style};float:right;">
+              {e(a_emoji)} {e(a_cls)} &nbsp; {e(a_overall)}/100
+            </span>
+          </div>
+          <div class="card-body">
+            {_score_row_html("Setup", a_setup)}
+            {_score_row_html("Risk", a_risk)}
+            <div class="row" style="margin-top:8px;">
+              <span class="lbl">R:R Ratio</span>
+              <span class="val">{a_rr}</span>
+            </div>
+            {"<div class='row'><span class='lbl'>Watch</span>"
+             f"<span class='val amber' style='max-width:320px;text-align:right;'>{a_rc}</span></div>"
+             if a_rc and a_rc != "None identified" else ""}
+          </div>
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>{_TRADE_HTML_CSS}</style></head>
+<body><div class="wrap">
+
+<div class="card">
+  <div class="card-header" style="background:#0A1830;">
+    <span style="font-size:16px;font-weight:700;color:#E8EBF0;">🚀 Trade Opened</span>
+    <span style="float:right;color:{dir_color};font-weight:700;">{sym} {direction}</span>
+  </div>
+  <div class="card-body">
+    <div class="row"><span class="lbl">Entry Price</span><span class="val">{entry}</span></div>
+    <div class="row"><span class="lbl">Position Size</span><span class="val">{size}</span></div>
+    <div class="row"><span class="lbl">Stop Loss</span>
+      <span class="val red">{sl}</span></div>
+    <div class="row"><span class="lbl">Take Profit</span>
+      <span class="val green">{tp}</span></div>
+    <div class="row"><span class="lbl">Strategy</span><span class="val">{strategy}</span></div>
+    <div class="row"><span class="lbl">Confluence</span>
+      <span class="val">{conf:.0%}</span></div>
+    <div class="row"><span class="lbl">Timeframe</span><span class="val">{tf}</span></div>
+    <div class="row"><span class="lbl">Regime</span><span class="val">{regime}</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span style="font-weight:700;font-size:13px;">📝 Rationale</span>
+  </div>
+  <div class="card-body" style="font-size:13px;line-height:1.6;">{rationale}</div>
+</div>
+
+{analysis_html}
+
+<div class="footer">NexusTrader • {timestamp}</div>
+</div></body></html>"""
+
+    return html
+
+
+def _build_trade_closed_html(data: dict) -> str:
+    """Rich HTML body for trade_closed email including full AI quality scorecard."""
+    e = _html_mod.escape
+    sym       = e(data.get("symbol",    "???"))
+    direction = (data.get("direction",  "long") or "long").upper()
+    entry     = e(_fmt_price(data.get("entry_price")))
+    exit_p    = e(_fmt_price(data.get("exit_price")))
+    size      = e(str(data.get("size", "—")))
+    strategy  = e(str(data.get("strategy", "—")))
+    reason    = e(str(data.get("close_reason", "—")))
+    duration  = e(str(data.get("duration", "—")))
+    timestamp = e(_now_utc())
+
+    pnl       = float(data.get("pnl", 0.0) or 0.0)
+    pnl_pct   = float(data.get("pnl_pct", 0.0) or 0.0)
+    pnl_color = "#00CC77" if pnl >= 0 else "#FF3355"
+    pnl_sign  = "+" if pnl >= 0 else ""
+    pnl_str   = f"{pnl_sign}{pnl_pct:+.3f}% ({pnl_sign}${abs(pnl):.2f} USDT)"
+
+    dir_color = "#00CC77" if direction in ("BUY", "LONG") else "#FF3355"
+
+    # Analysis
+    a_overall  = data.get("analysis_overall", "")
+    a_setup    = float(data.get("analysis_setup",    0) or 0)
+    a_risk     = float(data.get("analysis_risk",     0) or 0)
+    a_exec     = float(data.get("analysis_execution",0) or 0)
+    a_decision = float(data.get("analysis_decision", 0) or 0)
+    a_rr       = e(str(data.get("analysis_rr", "—")))
+    a_cls      = data.get("analysis_classification", "")
+    a_emoji    = data.get("analysis_emoji", "")
+    a_rc       = e(str(data.get("analysis_root_causes",    "") or ""))
+    a_rec      = e(str(data.get("analysis_recommendation", "") or ""))
+
+    analysis_html = ""
+    if a_overall:
+        badge_style = _classification_badge_style(a_cls)
+        a_overall_f = float(a_overall)
+        overall_color = _score_bar_color(a_overall_f)
+
+        rc_row = ""
+        if a_rc and a_rc != "None identified":
+            rc_row = (f"<div class='row' style='margin-top:8px;'>"
+                      f"<span class='lbl'>Root Causes</span>"
+                      f"<span class='val amber' style='max-width:320px;text-align:right;'>"
+                      f"{a_rc}</span></div>")
+        rec_row = ""
+        if a_rec and a_rec != "No specific recommendations.":
+            rec_row = (f"<div style='margin-top:10px;padding:10px;background:#0A1020;"
+                       f"border-left:3px solid #1E90FF;border-radius:4px;"
+                       f"font-size:12px;line-height:1.5;color:#C8D0E0;'>"
+                       f"<span style='color:#8899AA;'>💡 Recommendation: </span>{a_rec}"
+                       f"</div>")
+
+        analysis_html = f"""
+        <div class="card">
+          <div class="card-header">
+            <span style="font-weight:700;font-size:13px;">🤖 AI Trade Quality Scorecard</span>
+            <span class="badge" style="{badge_style};float:right;">
+              {e(a_emoji)} {e(a_cls)} &nbsp; {e(a_overall)}/100
+            </span>
+          </div>
+          <div class="card-body">
+            <div style="text-align:center;margin-bottom:14px;">
+              <div style="font-size:32px;font-weight:700;color:{overall_color};">{e(a_overall)}</div>
+              <div style="font-size:11px;color:#8899AA;">Overall Score</div>
+            </div>
+            {_score_row_html("Setup Quality",     a_setup)}
+            {_score_row_html("Risk Management",   a_risk)}
+            {_score_row_html("Execution Quality", a_exec)}
+            {_score_row_html("Decision Quality",  a_decision)}
+            <div class="row" style="margin-top:8px;">
+              <span class="lbl">R:R Ratio</span>
+              <span class="val">{a_rr}</span>
+            </div>
+            {rc_row}
+            {rec_row}
+          </div>
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>{_TRADE_HTML_CSS}</style></head>
+<body><div class="wrap">
+
+<div class="card">
+  <div class="card-header" style="background:#0A1830;">
+    <span style="font-size:16px;font-weight:700;color:#E8EBF0;">
+      {"✅" if pnl >= 0 else "❌"} Trade Closed
+    </span>
+    <span style="float:right;color:{dir_color};font-weight:700;">{sym} {direction}</span>
+  </div>
+  <div class="card-body">
+    <div class="row"><span class="lbl">Entry / Exit</span>
+      <span class="val">{entry} → {exit_p}</span></div>
+    <div class="row"><span class="lbl">P&amp;L</span>
+      <span class="val" style="color:{pnl_color};font-size:15px;">{e(pnl_str)}</span></div>
+    <div class="row"><span class="lbl">Size</span><span class="val">{size}</span></div>
+    <div class="row"><span class="lbl">Strategy</span><span class="val">{strategy}</span></div>
+    <div class="row"><span class="lbl">Exit Reason</span><span class="val">{reason}</span></div>
+    <div class="row"><span class="lbl">Duration</span><span class="val">{duration}</span></div>
+  </div>
+</div>
+
+{analysis_html}
+
+<div class="footer">NexusTrader • {timestamp}</div>
+</div></body></html>"""
+
+    return html
+
+
+# ── v1.2 Partial Exit Template ────────────────────────────────
+
+def partial_exit(data: dict) -> dict[str, str]:
+    """
+    v1.2 notification: 33% partial close at +1R with SL moved to breakeven.
+    """
+    sym       = data.get("symbol", "???")
+    direction = (data.get("direction", "LONG") or "LONG").upper()
+    tf        = data.get("timeframe", "30m")
+    regime    = data.get("regime", "—")
+    entry     = _fmt_price(data.get("entry_price"))
+    exit_p    = _fmt_price(data.get("exit_price"))
+    pnl       = float(data.get("pnl_usdt", 0.0) or 0.0)
+    pnl_sign  = "+" if pnl >= 0 else ""
+    closed_sz = float(data.get("closed_size_usdt", 0.0) or 0.0)
+    remaining = float(data.get("remaining_size_usdt", 0.0) or 0.0)
+    close_pct = int(data.get("close_pct", 33))
+    strategy  = data.get("strategy", "—")
+    timestamp = _now_utc()
+
+    subject = f"📉 NexusTrader | Partial Exit {sym} {direction} ({close_pct}%)"
+    body = (
+        f"{'='*46}\n"
+        f"  NEXUS TRADER — PARTIAL EXIT\n"
+        f"{'─'*46}\n"
+        f"  Symbol    : {sym} {direction}\n"
+        f"  Timeframe : {tf}  |  Regime: {regime}\n"
+        f"  Entry     : {entry}  →  Exit: {exit_p}\n"
+        f"  Closed    : {close_pct}% (${closed_sz:,.2f} USDT)\n"
+        f"  P&L       : {pnl_sign}${abs(pnl):.2f} USDT\n"
+        f"  Remaining : ${remaining:,.2f} USDT  (SL → breakeven)\n"
+        f"  Strategy  : {strategy}\n"
+        f"  Time      : {timestamp}\n"
+        f"{'='*46}"
+    )
+    short = (
+        f"📉 *Partial Exit* {sym} {direction} ({close_pct}%)\n"
+        f"Exit: {exit_p} | P&L: {pnl_sign}${abs(pnl):.2f}\n"
+        f"Remaining: ${remaining:,.2f} | SL→Breakeven ✅"
+    )
+    result: dict[str, str] = {"subject": subject, "body": body, "short": short}
+
+    # Rich HTML body for email
+    try:
+        result["html_body"] = _build_partial_exit_html(data)
+    except Exception:
+        pass
+    return result
+
+
+def _build_partial_exit_html(data: dict) -> str:
+    """Rich HTML body for partial_exit email (v1.2)."""
+    import html as _html_mod
+    e = _html_mod.escape
+    sym       = e(data.get("symbol",    "???"))
+    direction = (data.get("direction",  "LONG") or "LONG").upper()
+    tf        = e(str(data.get("timeframe",  "30m")))
+    regime    = e(str(data.get("regime",     "—")))
+    entry     = e(_fmt_price(data.get("entry_price")))
+    exit_p    = e(_fmt_price(data.get("exit_price")))
+    pnl       = float(data.get("pnl_usdt", 0.0) or 0.0)
+    pnl_sign  = "+" if pnl >= 0 else ""
+    pnl_color = "#00CC77" if pnl >= 0 else "#FF3355"
+    closed_sz = float(data.get("closed_size_usdt", 0.0) or 0.0)
+    remaining = float(data.get("remaining_size_usdt", 0.0) or 0.0)
+    close_pct = int(data.get("close_pct", 33))
+    strategy  = e(str(data.get("strategy", "—")))
+    timestamp = e(_now_utc())
+
+    dir_color = "#00CC77" if direction in ("BUY", "LONG") else "#FF3355"
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>{_TRADE_HTML_CSS}</style></head>
+<body><div class="wrap">
+
+<div class="card">
+  <div class="card-header" style="background:#0D1F0D;">
+    <span style="font-size:16px;font-weight:700;color:#E8EBF0;">📉 Partial Exit ({close_pct}%)</span>
+    <span style="float:right;color:{dir_color};font-weight:700;">{sym} {e(direction)}</span>
+  </div>
+  <div class="card-body">
+    <div class="row"><span class="lbl">Entry → Exit</span>
+      <span class="val">{entry} → {exit_p}</span></div>
+    <div class="row"><span class="lbl">Realized P&amp;L</span>
+      <span class="val" style="color:{pnl_color};font-size:15px;">{e(pnl_sign)}${abs(pnl):.2f} USDT</span></div>
+    <div class="row"><span class="lbl">Closed Portion</span>
+      <span class="val">{close_pct}% (${closed_sz:,.2f} USDT)</span></div>
+    <div class="row"><span class="lbl">Remaining Size</span>
+      <span class="val">${remaining:,.2f} USDT</span></div>
+    <div class="row"><span class="lbl">Stop Loss</span>
+      <span class="val green">✅ Moved to Breakeven</span></div>
+    <div class="row"><span class="lbl">Strategy</span><span class="val">{strategy}</span></div>
+    <div class="row"><span class="lbl">Timeframe</span><span class="val">{tf}</span></div>
+    <div class="row"><span class="lbl">Regime</span><span class="val">{regime}</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body" style="font-size:12px;color:#8899AA;line-height:1.6;">
+    <strong style="color:#C8D0E0;">v1.2 Exit Logic:</strong> 33% of position closed at +1R target.
+    Stop-loss has been moved to breakeven on the remaining 67%.
+    The trade is now risk-free — worst case is breakeven on the remainder.
+  </div>
+</div>
+
+<div class="footer">NexusTrader v1.2 • {timestamp}</div>
+</div></body></html>"""
+    return html
+
+
 # ── Template registry ─────────────────────────────────────────
 TEMPLATES = {
     "trade_opened":     trade_opened,
     "trade_closed":     trade_closed,
+    "partial_exit":     partial_exit,
     "trade_stopped":    trade_stopped,
     "trade_rejected":   trade_rejected,
     "trade_modified":   trade_modified,

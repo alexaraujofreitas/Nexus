@@ -490,7 +490,11 @@ class NotificationManager:
                 body = content.get("body", "")
             subject = content.get("subject", "NexusTrader Notification")
 
-            ok = channel.send(body, subject=subject)
+            # Email-capable channels receive a rich HTML body when available
+            if channel.name in ("email", "gemini") and content.get("html_body"):
+                ok = channel.send(body, subject=subject, html_body=content["html_body"])
+            else:
+                ok = channel.send(body, subject=subject)
             # Update record (thread-safe via GIL for these simple operations)
             if ok:
                 record.success = True
@@ -845,6 +849,36 @@ class NotificationManager:
             data.setdefault("today_pnl",       0.0)
             data.setdefault("today_pnl_pct",   0.0)
 
+        # ── Open Trades Detail ─────────────────────────────────
+        try:
+            from core.execution.paper_executor import paper_executor as _pe_open
+            _all_open = [
+                p for pos_list in _pe_open._positions.values() for p in pos_list
+            ]
+            open_detail = []
+            for pos in _all_open:
+                d = pos.to_dict()
+                # Augment with live fields not in to_dict()
+                d["trailing_stop_pct"] = getattr(pos, "trailing_stop_pct", None)
+                d["bars_held"]         = getattr(pos, "bars_held", None)
+                d["highest_price"]     = getattr(pos, "highest_price", None)
+                d["lowest_price"]      = getattr(pos, "lowest_price", None)
+                open_detail.append(d)
+            data["open_trades_detail"] = open_detail
+        except Exception as exc:
+            logger.debug("NotificationManager: open trades detail error — %s", exc)
+            data.setdefault("open_trades_detail", [])
+
+        # ── Recent Closed Trades Detail (last 10) ──────────────
+        try:
+            from core.execution.paper_executor import paper_executor as _pe_closed
+            data["closed_trades_detail"] = [
+                dict(t) for t in list(_pe_closed._closed_trades)[-10:]
+            ]
+        except Exception as exc:
+            logger.debug("NotificationManager: closed trades detail error — %s", exc)
+            data.setdefault("closed_trades_detail", [])
+
         return data
 
     # ── EventBus handlers ─────────────────────────────────────
@@ -878,6 +912,25 @@ class NotificationManager:
             elif isinstance(mf, str) and mf:
                 data["strategy"] = mf
 
+        # ── AI Analysis enrichment (entry quality only) ────────
+        try:
+            from core.analysis.trade_analysis_service import trade_analysis_service
+            analysis = trade_analysis_service.build_trade_analysis(data)
+            payload  = trade_analysis_service.generate_notification_payload(data, analysis)
+            data.update(payload)
+        except Exception as exc:
+            logger.debug("NotificationManager: analysis enrichment failed — %s", exc)
+
+        # Phase 2: use canonical renderer for notification
+        try:
+            from core.analysis.canonical_renderer import render_for_channel, MODE_NOTIF_OPEN
+            rendered = render_for_channel(analysis, mode=MODE_NOTIF_OPEN, trade=data)
+            data.update(payload)
+            data["analysis_notification_lines"] = rendered.get("text_lines", [])
+            data["analysis_summary_line"] = rendered.get("summary_line", "")
+        except Exception as exc2:
+            logger.debug("canonical_renderer open failed: %s", exc2)
+
         direction = data.get("direction", "long")
         self.notify(
             "trade_opened", data,
@@ -887,6 +940,14 @@ class NotificationManager:
     def _on_trade_closed(self, event: Event) -> None:
         data = dict(event.data or {})
         sym  = data.get("symbol", "???")
+
+        # ── v1.2: Route partial_close to dedicated notification ───────────
+        # partial_close events have exit_reason="partial_close".  They are
+        # structurally different from a full close (no AI scorecard, different
+        # message fields) and need a dedicated template so the email is clear.
+        if data.get("exit_reason") == "partial_close":
+            self._on_partial_exit(data)
+            return
 
         # ── Key normalisation ──────────────────────────────────
         # paper_executor uses different key names than the trade_closed template expects.
@@ -929,10 +990,78 @@ class NotificationManager:
                 m = (ds % 3600) // 60
                 data["duration"] = f"{h}h {m}m"
 
+        # ── AI Analysis enrichment (full 4-score analysis on closed trade) ──
+        analysis = None
+        try:
+            from core.analysis.trade_analysis_service import trade_analysis_service
+            analysis = trade_analysis_service.build_trade_analysis(data)
+            payload  = trade_analysis_service.generate_notification_payload(data, analysis)
+            data.update(payload)
+            # Persist feedback + trigger async AI explanation
+            trade_analysis_service.on_trade_closed(data, analysis=analysis)
+        except Exception as exc:
+            logger.debug("NotificationManager: analysis enrichment (closed) failed — %s", exc)
+
+        # Phase 2: use canonical renderer for notification
+        try:
+            from core.analysis.canonical_renderer import render_for_channel, MODE_NOTIF_CLOSED
+            rendered = render_for_channel(analysis, mode=MODE_NOTIF_CLOSED, trade=data)
+            data["analysis_notification_lines"] = rendered.get("text_lines", [])
+            data["analysis_summary_line"] = rendered.get("summary_line", "")
+        except Exception as exc2:
+            logger.debug("canonical_renderer closed failed: %s", exc2)
+
         reason = data.get("close_reason", "")
         self.notify(
             "trade_closed", data,
             dedup_key=f"closed_{sym}_{reason}",
+        )
+
+    # ── v1.2 Partial exit notification ───────────────────────────────────
+
+    def _on_partial_exit(self, data: dict) -> None:
+        """
+        Send a dedicated notification for a partial-close event (v1.2 exit logic).
+        Called from _on_trade_closed() when exit_reason == "partial_close".
+
+        Fields from paper_executor.partial_close():
+          symbol, side, entry_price, exit_price, pnl_usdt, size_usdt (closed portion),
+          entry_size_usdt (original), exit_size_usdt (portion closed), duration_s, regime
+        """
+        sym = data.get("symbol", "???")
+        side = data.get("side", "buy")
+        direction = "LONG" if side == "buy" else "SHORT"
+        entry     = data.get("entry_price", 0.0)
+        exit_p    = data.get("exit_price",  0.0)
+        pnl_usdt  = float(data.get("pnl_usdt", 0.0) or 0.0)
+        closed_sz = float(data.get("size_usdt", 0.0) or 0.0)
+        orig_sz   = float(data.get("entry_size_usdt", closed_sz) or closed_sz)
+        remaining = round(orig_sz - closed_sz, 2)
+        regime    = data.get("regime", "—")
+        tf        = data.get("timeframe", "30m")
+
+        close_pct = round(closed_sz / orig_sz * 100) if orig_sz > 0 else 33
+
+        notify_data = {
+            "symbol":             sym,
+            "direction":          direction,
+            "timeframe":          tf,
+            "regime":             regime,
+            "entry_price":        entry,
+            "exit_price":         exit_p,
+            "pnl_usdt":           pnl_usdt,
+            "pnl":                pnl_usdt,
+            "closed_size_usdt":   round(closed_sz, 2),
+            "remaining_size_usdt": remaining,
+            "close_pct":          close_pct,
+            "stop_now_breakeven": True,   # SL moved to entry by _breakeven_applied
+            "models_fired":       data.get("models_fired", []),
+            "strategy":           ", ".join(data.get("models_fired") or []),
+        }
+        self.notify(
+            "partial_exit",
+            notify_data,
+            dedup_key=f"partial_{sym}_{direction}",
         )
 
     def _on_order_filled(self, event: Event) -> None:
