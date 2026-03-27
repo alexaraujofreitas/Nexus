@@ -171,8 +171,9 @@ class TestSettingsIntegration:
             "disabled_models": [],
         }))
 
-        with patch('config.settings.CONFIG_PATH', config_file):
-            # Reload the module to pick up patched path
+        # Patch config.constants.CONFIG_PATH so reload picks up the temp file
+        # (patching config.settings.CONFIG_PATH alone is defeated by the reload)
+        with patch('config.constants.CONFIG_PATH', config_file):
             import importlib
             import config.settings
             importlib.reload(config.settings)

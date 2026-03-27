@@ -272,29 +272,30 @@ def test_sg006_crashed_model_is_isolated():
 @pytest.mark.unit
 def test_sg007_default_models_count():
     """
-    A SignalGenerator created without explicit models (using defaults) must
-    have at least 8 sub-models registered.  RL model is separate and optional.
+    v1.2: 4 active sub-models (mean_reversion, vwap_reversion, liquidity_sweep,
+    order_book archived). RL model is separate and optional.
     """
     sg = SignalGenerator()
 
-    assert len(sg._models) >= 8, (
-        f"Expected ≥ 8 default models, got {len(sg._models)}"
+    assert len(sg._models) >= 4, (
+        f"Expected ≥ 4 active models (v1.2 config), got {len(sg._models)}"
     )
 
 
 @pytest.mark.unit
 def test_sg007_default_model_names():
-    """All expected core sub-model names must be present in the default list."""
+    """All v1.2 active core sub-model names must be present in the default list."""
     sg = SignalGenerator()
     model_names = {m.name for m in sg._models}
 
+    # v1.2 active models — mean_reversion, vwap_reversion, liquidity_sweep,
+    # order_book are archived (PF < 1.0 in Study 4)
     expected = {
-        "trend", "mean_reversion", "momentum_breakout",
-        "vwap_reversion", "liquidity_sweep", "funding_rate",
-        "order_book", "sentiment",
+        "trend", "momentum_breakout",
+        "funding_rate", "sentiment",
     }
     missing = expected - model_names
-    assert not missing, f"Missing sub-models: {missing}"
+    assert not missing, f"Missing active sub-models: {missing}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

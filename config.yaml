@@ -13,18 +13,26 @@ agents:
   funding_enabled: true
   liquidation_flow:
     enabled: true
+  liquidity_vacuum_enabled: false
   lunarcrush_api_key: __vault__
   min_confluence_boost: 0.25
+  miner_flow_enabled: false
+  narrative_enabled: false
   onchain:
     enabled: true
     symbols:
     - bitcoin
     - ethereum
-  options_enabled: true
+  options_enabled: false
   options_max_days_expiry: 35.0
-  orderbook_enabled: true
+  orderbook_enabled: false
+  reddit_enabled: false
+  scalp_enabled: false
+  sector_rotation_enabled: false
+  social_sentiment_enabled: false
+  twitter_enabled: false
   volatility_surface:
-    enabled: true
+    enabled: false
 ai:
   active_provider: Local (Ollama)
   agent_models:
@@ -200,11 +208,15 @@ backtesting:
   walk_forward_step_months: 3
   walk_forward_train_months: 24.0
   walk_forward_validate_months: 6.0
+capital:
+  scaling_enabled: false
 confluence:
   min_direction_dominance: 0.3
 correlation_dampening:
   enabled: true
   min_factor: 0.5
+crash_defense:
+  auto_execute: false
 crash_detector:
   enabled: true
   eval_interval_seconds: 60
@@ -258,6 +270,10 @@ execution:
   - TRENDING_DOWN
   - RECOVERY
   base_size_usdt: 500.0
+exit:
+  mode: partial
+  partial_pct: 0.33
+  partial_r_trigger: 1.0
 expected_value:
   enabled: true
   ev_threshold: 0.05
@@ -296,15 +312,6 @@ hmm_regime:
   min_train_bars: 300
   n_components: 6
   retrain_every_n_bars: 50
-# ── v1.2 Exit Logic (Phase 5 winning config: partial 33% at 1R + breakeven SL)
-# exit.mode options: "partial" | "fixed"
-# "partial" = close partial_pct at partial_r_trigger × initial_risk, then SL→breakeven
-# "fixed"   = original behaviour (hold to TP or SL with no partial exit)
-exit:
-  mode: partial
-  partial_pct: 0.33
-  partial_r_trigger: 1.0
-
 idss:
   min_confluence_score: 0.45
 ltf_confirmation:
@@ -647,6 +654,7 @@ risk_engine:
   max_trades_per_scan_cycle: 1
   min_position_pct: 0.003
   portfolio_heat_max_pct: 0.04
+  max_capital_pct: 0.04
   risk_pct_per_trade: 0.5
   sizing_mode: risk_based
   vol_adjusted_sizing: true

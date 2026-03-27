@@ -36,7 +36,7 @@ def _make_df(
     ema21: float = 49_800.0,
     ema20: float = 50_100.0,
     ema100: float = 48_000.0,
-    adx: float = 30.0,
+    adx: float = 32.0,
     rsi: float = 55.0,
     macd: float = 100.0,
     macd_signal: float = 80.0,
@@ -77,7 +77,7 @@ MODEL = TrendModel()
 class TestUncertainRegimeLong:
     def test_tm01_returns_model_signal(self):
         """Long signal must be returned for uncertain regime with bullish indicators."""
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=30.0, rsi=55.0)
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=32.0, rsi=55.0)
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
         assert result is not None, (
             "TrendModel must return a signal for uncertain regime when EMA9 > EMA21 "
@@ -86,17 +86,17 @@ class TestUncertainRegimeLong:
         )
 
     def test_tm01_direction_is_long(self):
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=30.0, rsi=55.0)
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=32.0, rsi=55.0)
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
         assert result.direction == "long"
 
     def test_tm01_strength_is_positive(self):
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=30.0, rsi=55.0)
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=32.0, rsi=55.0)
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
         assert result.strength > 0.0
 
     def test_tm01_signal_has_valid_sl_tp(self):
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=30.0, rsi=55.0)
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=32.0, rsi=55.0)
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
         assert result.stop_loss > 0.0
         assert result.take_profit > result.entry_price, (
@@ -107,7 +107,7 @@ class TestUncertainRegimeLong:
         )
 
     def test_tm01_rationale_mentions_uncertain(self):
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=30.0, rsi=55.0)
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=32.0, rsi=55.0)
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
         assert "uncertain" in result.rationale.lower(), (
             "Rationale must identify the uncertain regime for transparency"
@@ -123,7 +123,7 @@ class TestUncertainRegimeShort:
         """Short signal must fire for uncertain regime with bearish indicators."""
         df = _make_df(
             ema9=49_800.0, ema21=50_200.0,   # ema9 < ema21
-            adx=30.0,
+            adx=32.0,                          # v1.2 threshold = 31.0
             rsi=42.0,                          # in bear zone 30–55
             macd=-100.0, macd_signal=-50.0,   # macd < macd_signal
         )
@@ -136,7 +136,7 @@ class TestUncertainRegimeShort:
     def test_tm02_direction_is_short(self):
         df = _make_df(
             ema9=49_800.0, ema21=50_200.0,
-            adx=30.0, rsi=42.0,
+            adx=32.0, rsi=42.0,
             macd=-100.0, macd_signal=-50.0,
         )
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
@@ -145,7 +145,7 @@ class TestUncertainRegimeShort:
     def test_tm02_tp_below_entry_for_short(self):
         df = _make_df(
             ema9=49_800.0, ema21=50_200.0,
-            adx=30.0, rsi=42.0,
+            adx=32.0, rsi=42.0,
             macd=-100.0, macd_signal=-50.0,
         )
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
@@ -182,20 +182,20 @@ class TestUncertainRegimeNoSignal:
 # ---------------------------------------------------------------------------
 
 class TestUncertainRegimeADXGate:
-    def test_tm04_returns_none_when_adx_below_25(self):
-        """ADX < 25 means no confirmed momentum — signal must be suppressed."""
+    def test_tm04_returns_none_when_adx_below_31(self):
+        """ADX < 31 (v1.2 Phase 5 threshold) — signal must be suppressed."""
         df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=20.0, rsi=55.0)
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
         assert result is None, (
-            "TrendModel must not fire in uncertain regime when ADX < 25 — "
+            "TrendModel must not fire when ADX < adx_min (31.0 in v1.2) — "
             "ADX gate prevents low-conviction momentum trades"
         )
 
-    def test_tm04_fires_when_adx_exactly_25(self):
-        """ADX == 25 is the threshold — must fire at exactly 25."""
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=25.0, rsi=55.0)
+    def test_tm04_fires_when_adx_above_31(self):
+        """ADX == 31 is the v1.2 threshold — must fire at exactly 31."""
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=31.0, rsi=55.0)
         result = MODEL.evaluate(SYMBOL, df, regime="uncertain", timeframe=TIMEFRAME)
-        assert result is not None, "ADX=25 is right at the threshold — should fire"
+        assert result is not None, "ADX=31 is right at the v1.2 threshold — should fire"
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ class TestUncertainRegimeADXGate:
 class TestUnknownRegime:
     def test_tm06_unknown_regime_string_returns_none(self):
         """Any unrecognised regime string must return None — no accidental signals."""
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=30.0, rsi=55.0)
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=32.0, rsi=55.0)
         for bad_regime in ("sideways", "accumulation", "distribution", "", "BULL"):
             result = MODEL.evaluate(SYMBOL, df, regime=bad_regime, timeframe=TIMEFRAME)
             assert result is None, (
@@ -221,7 +221,7 @@ class TestBullBearRegimeRegression:
     def test_tm07_bull_trend_long_signal_fires(self):
         """Bull trend: long signal must still fire after uncertain branch was added."""
         from core.regime.regime_classifier import REGIME_BULL_TREND
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=30.0, rsi=55.0)
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=32.0, rsi=55.0)
         result = MODEL.evaluate(SYMBOL, df, regime=REGIME_BULL_TREND, timeframe=TIMEFRAME)
         assert result is not None
         assert result.direction == "long"
@@ -231,7 +231,7 @@ class TestBullBearRegimeRegression:
         from core.regime.regime_classifier import REGIME_BEAR_TREND
         df = _make_df(
             ema9=49_800.0, ema21=50_200.0,
-            adx=30.0, rsi=42.0,
+            adx=32.0, rsi=42.0,
             macd=-100.0, macd_signal=-50.0,
         )
         result = MODEL.evaluate(SYMBOL, df, regime=REGIME_BEAR_TREND, timeframe=TIMEFRAME)
@@ -250,7 +250,7 @@ class TestUncertainStrengthPenalty:
         With identical indicators, uncertain should produce lower strength.
         """
         from core.regime.regime_classifier import REGIME_BULL_TREND
-        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=30.0, rsi=55.0)
+        df = _make_df(ema9=50_200.0, ema21=49_800.0, adx=32.0, rsi=55.0)
         bull_result      = MODEL.evaluate(SYMBOL, df, regime=REGIME_BULL_TREND, timeframe=TIMEFRAME)
         uncertain_result = MODEL.evaluate(SYMBOL, df, regime="uncertain",       timeframe=TIMEFRAME)
         assert bull_result is not None

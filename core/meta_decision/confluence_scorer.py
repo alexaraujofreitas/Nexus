@@ -614,12 +614,19 @@ class ConfluenceScorer:
             sizing_mode = "risk_based"
 
         if sizing_mode == "risk_based" and stop_loss_price and stop_loss_price > 0 and entry_for_sizing > 0:
+            # Pass concurrency for tiered capital model (Phase 2, gated by config)
+            try:
+                _open_count = sum(len(v) for v in _pe._positions.values()) if isinstance(_pe, object) and hasattr(_pe, "_positions") else 0
+            except Exception:
+                _open_count = 0
             position_size = self._sizer.calculate_risk_based(
-                capital_usdt = _capital,
-                entry_price  = entry_for_sizing,
-                stop_price   = stop_loss_price,
-                risk_pct     = risk_pct,
-                regime       = regime,
+                capital_usdt         = _capital,
+                entry_price          = entry_for_sizing,
+                stop_price           = stop_loss_price,
+                risk_pct             = risk_pct,
+                regime               = regime,
+                open_positions_count = _open_count,
+                conviction_score     = weighted_score,
             )
             logger.info(
                 "ConfluenceScorer: %s risk-based size=%.2f USDT (capital=%.0f, risk=%.2f%%, stop_dist=%.6f)",

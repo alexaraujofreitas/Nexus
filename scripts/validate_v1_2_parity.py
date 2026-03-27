@@ -176,8 +176,9 @@ def validate_signal_generator() -> None:
         check("signal_generator import", FAIL, str(exc), "importable")
         return
 
-    expected_active   = {"TrendModel", "MomentumBreakout", "FundingRateModel", "SentimentModel"}
-    expected_inactive = {"MeanReversion", "VWAPReversion", "LiquiditySweep", "OrderBook"}
+    # Model .name attributes are lowercase (e.g. TrendModel().name == "trend")
+    expected_active   = {"trend", "momentum_breakout", "funding_rate", "sentiment"}
+    expected_inactive = {"mean_reversion", "vwap_reversion", "liquidity_sweep", "order_book"}
 
     # Unwanted models present
     bad_active = active_names & expected_inactive
