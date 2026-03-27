@@ -34,7 +34,7 @@ from core.signals.signal_generator  import SignalGenerator
 from core.meta_decision.confluence_scorer import ConfluenceScorer
 from core.meta_decision.order_candidate   import OrderCandidate
 from core.risk.risk_gate           import RiskGate
-from core.features.indicator_library import calculate_all
+from core.features.indicator_library import calculate_all, calculate_scan_mode
 from core.scanning.closed_candle_guard import enforce_closed_candles
 from core.event_bus import bus, Topics
 
@@ -531,8 +531,12 @@ class ScanWorker(QThread):
         except Exception as _freshness_err:
             logger.debug("Scanner: freshness check failed for %s: %s", symbol, _freshness_err)
 
-        # Calculate indicators
-        df = calculate_all(df)
+        # Calculate indicators — scan mode only (CORE set).
+        # calculate_scan_mode() computes the minimum columns required by all
+        # active live-scan consumers (TrendModel, MomentumBreakout, Regime,
+        # ATR-based models, volatility pre-filter). BacktestEngine and
+        # IDSSBacktester continue to call calculate_all() for the full set.
+        df = calculate_scan_mode(df)
 
         # ── Phase 1 pre-scan filters (time-of-day, volatility) ─────────
         try:
@@ -673,8 +677,10 @@ class ScanWorker(QThread):
                      symbol, candidate is not None, _sc.get("multi_tf.confirmation_required", False))
         if candidate and _sc.get("multi_tf.confirmation_required", False):
             try:
+                # v1.2: 30m primary → 4h HTF gate (Phase 5 winning config).
+                # Previously 30m mapped to "1h"; updated to "4h" per Study 5 results.
                 tf_map = {"1m": "5m", "3m": "15m", "5m": "15m", "15m": "1h",
-                          "30m": "1h", "1h": "4h", "2h": "4h", "4h": "1d",
+                          "30m": "4h", "1h": "4h", "2h": "4h", "4h": "1d",
                           "6h": "1d", "12h": "1d", "1d": "1w"}
                 higher_tf = tf_map.get(self._timeframe)
                 if higher_tf:
@@ -717,7 +723,7 @@ class ScanWorker(QThread):
                         df_htf = pd.DataFrame(raw_htf, columns=["timestamp", "open", "high", "low", "close", "volume"])
                         df_htf["timestamp"] = pd.to_datetime(df_htf["timestamp"], unit="ms", utc=True)
                         df_htf = df_htf.set_index("timestamp").astype(float)
-                        df_htf = calculate_all(df_htf)
+                        df_htf = calculate_scan_mode(df_htf)   # regime only needs CORE set
                         htf_regime, _, _ = self._regime_clf.classify(df_htf)
                         candidate.higher_tf_regime = htf_regime
                         logger.debug("Scanner: %s higher-TF (%s) regime=%s", symbol, higher_tf, htf_regime)
@@ -943,12 +949,17 @@ class AssetScanner(QObject):
         risk_pct  = _s.get("risk_engine.risk_pct_per_trade", 0.75)
         mtf_on    = _s.get("multi_tf.confirmation_required", True)
         ae_on     = _s.get("scanner.auto_execute", True)
+        from config.constants import APP_VERSION as _VER
+        _exit_mode = _s.get("exit.mode", "partial")
+        _partial_pct = _s.get("exit.partial_pct", 0.33)
         logger.info(
             "═══════════════════════════════════════════════════════════\n"
-            "  NEXUS TRADER — PRODUCTION CONFIGURATION (FROZEN)\n"
-            "  Strategy        : MomentumBreakout (TrendModel gate)\n"
+            "  NEXUS TRADER v%s — PRODUCTION CONFIGURATION (FROZEN)\n"
+            "  Strategy        : TrendModel + MomentumBreakout\n"
+            "  Primary TF      : %s  |  HTF gate : 4h\n"
             "  Disabled models : %s\n"
             "  Confluence      : %.2f (dynamic=%s)\n"
+            "  Exit mode       : %s (partial=%.0f%% @ 1R + SL→BE)\n"
             "  Time filter     : %s\n"
             "  Portfolio heat  : %.0f%% max\n"
             "  Sizing mode     : %s (%.2f%% risk/trade)\n"
@@ -956,7 +967,10 @@ class AssetScanner(QObject):
             "  Auto-execute    : %s\n"
             "  Circuit breaker : 10%% drawdown hard stop\n"
             "═══════════════════════════════════════════════════════════",
-            disabled, threshold, dyn_on, time_f, heat,
+            _VER, self._timeframe,
+            disabled, threshold, dyn_on,
+            _exit_mode, _partial_pct * 100,
+            time_f, heat,
             sz_mode, risk_pct, mtf_on, ae_on,
         )
 
@@ -1406,7 +1420,9 @@ class AssetScanner(QObject):
 
 
 # ── Module-level singleton ────────────────────────────────
-scanner = AssetScanner()
+# v1.2: Default primary timeframe is 30m (Phase 5 winning config).
+# HTF confirmation uses 4h regime gate (set in tf_map above).
+scanner = AssetScanner(timeframe="30m")
 
 # Apply startup configuration from settings
 try:

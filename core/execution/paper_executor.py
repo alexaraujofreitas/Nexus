@@ -78,6 +78,8 @@ class PaperPosition:
         self.lowest_price: float = entry_price
         self._breakeven_applied: bool = False  # True once SL moves to entry on +1R
         self._initial_risk: float = abs(entry_price - stop_loss)  # original risk for R calc
+        # v1.2 — auto partial-exit flag (33% at 1R, persisted across restarts)
+        self._auto_partial_applied: bool = False
 
     def update(self, current_price: float) -> Optional[str]:
         """
@@ -150,12 +152,13 @@ class PaperPosition:
             "size_usdt":        self.size_usdt,
             "entry_size_usdt":  self.entry_size_usdt,
             "unrealized_pnl":   round(self.unrealized_pnl, 4),
-            "score":            self.score,
-            "rationale":        self.rationale,
-            "regime":           self.regime,
-            "models_fired":     self.models_fired,
-            "timeframe":        self.timeframe,
-            "opened_at":        self.opened_at.isoformat(),
+            "score":                    self.score,
+            "rationale":               self.rationale,
+            "regime":                  self.regime,
+            "models_fired":            self.models_fired,
+            "timeframe":               self.timeframe,
+            "opened_at":               self.opened_at.isoformat(),
+            "_auto_partial_applied":   self._auto_partial_applied,
         }
 
 
@@ -183,6 +186,15 @@ class PaperExecutor:
         self._peak_capital    = initial_capital_usdt
         # ── Production safeguards ────────────────────────────────────
         self._dd_circuit_breaker_pct: float = 10.0   # Hard block at 10% drawdown
+        # ── Daily loss limit (UTC day boundary) ──────────────────────
+        # Blocks new entries when today's realized P&L <= -limit_pct% of initial capital.
+        # Set daily_loss_limit_pct to 0.0 in config to disable.
+        from config.settings import settings as _s
+        self._daily_loss_limit_pct: float = float(
+            _s.get("risk_engine.daily_loss_limit_pct", 2.0)
+        )
+        self._daily_loss_limit_hit: bool = False
+        self._daily_loss_limit_date: str = ""   # UTC date "YYYY-MM-DD" when limit last fired
         # Restore any open positions that survived a restart (reads capital from JSON)
         self._load_open_positions()
         # Restore closed-trade history from SQLite — MUST run after _load_open_positions()
@@ -250,6 +262,9 @@ class PaperExecutor:
                 pos.entry_size_usdt  = float(
                     pd.get("entry_size_usdt") or pd.get("size_usdt", pos.size_usdt)
                 )
+                # v1.2 — restore auto-partial flag so restarts don't trigger a
+                # duplicate partial close on positions that already had one.
+                pos._auto_partial_applied = bool(pd.get("_auto_partial_applied", False))
                 self._positions.setdefault(symbol, []).append(pos)
                 restored += 1
             # Always restore capital from the JSON file — it is the authoritative
@@ -297,6 +312,107 @@ class PaperExecutor:
 
         except Exception as exc:
             logger.warning("PaperExecutor: position monitor handler error: %s", exc)
+
+    # ── Daily loss limit ────────────────────────────────────────────
+
+    def _get_today_realized_pnl(self) -> float:
+        """
+        Sum realized P&L for the current UTC calendar day.
+
+        Mirrors the pattern in notification_manager._send_daily_summary()
+        so both systems agree on "today's" trades without a DB round-trip.
+        _closed_trades is fully loaded from DB on startup via _load_history(),
+        so this is safe across restarts.
+        """
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        return sum(
+            float(t.get("pnl_usdt") or 0)
+            for t in self._closed_trades
+            if isinstance(t.get("closed_at", ""), str) and t["closed_at"].startswith(today)
+        )
+
+    def _check_daily_loss_limit(self) -> bool:
+        """
+        Return True (and block trading) if the daily loss limit has been breached.
+
+        Auto-resets when the UTC date changes — no timer required.
+        Does nothing when daily_loss_limit_pct is 0 (disabled).
+
+        Side-effects on first breach only:
+          - Sets _daily_loss_limit_hit = True
+          - Stamps _daily_loss_limit_date
+          - Logs CRITICAL
+          - Publishes Topics.SYSTEM_ALERT
+        Open positions are NOT affected — limit only blocks *new* entries.
+        """
+        if self._daily_loss_limit_pct <= 0:
+            return False  # feature disabled
+
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+
+        # Auto-reset when UTC day rolls over
+        if self._daily_loss_limit_hit and self._daily_loss_limit_date != today:
+            logger.info(
+                "PaperExecutor: daily loss limit reset — new UTC day %s "
+                "(was active on %s).",
+                today, self._daily_loss_limit_date,
+            )
+            self._daily_loss_limit_hit = False
+            self._daily_loss_limit_date = ""
+
+        if self._daily_loss_limit_hit:
+            return True
+
+        threshold = -(abs(self._initial_capital) * self._daily_loss_limit_pct / 100.0)
+        today_pnl = self._get_today_realized_pnl()
+
+        if today_pnl <= threshold:
+            self._daily_loss_limit_hit = True
+            self._daily_loss_limit_date = today
+            logger.critical(
+                "PaperExecutor: DAILY LOSS LIMIT HIT — today realized P&L %.2f USDT "
+                "<= threshold %.2f USDT (%.1f%% of initial capital %.2f USDT). "
+                "All new trade entries blocked until UTC midnight. "
+                "Open positions continue to be managed normally.",
+                today_pnl,
+                threshold,
+                self._daily_loss_limit_pct,
+                self._initial_capital,
+            )
+            bus.publish(
+                Topics.SYSTEM_ALERT,
+                data={
+                    "type":              "daily_loss_limit_hit",
+                    "today_pnl_usdt":    round(today_pnl, 2),
+                    "threshold_usdt":    round(threshold, 2),
+                    "limit_pct":         self._daily_loss_limit_pct,
+                    "date":              today,
+                    "message": (
+                        f"Daily loss limit of {self._daily_loss_limit_pct:.1f}% breached. "
+                        f"Today P&L: {today_pnl:.2f} USDT. "
+                        f"New entries blocked until UTC midnight."
+                    ),
+                },
+                source="paper_executor",
+            )
+            return True
+
+        return False
+
+    @property
+    def is_daily_limit_hit(self) -> bool:
+        """True when the daily loss kill switch is active (read-only; safe to call from UI)."""
+        return self._daily_loss_limit_hit
+
+    @property
+    def today_realized_pnl(self) -> float:
+        """Today's realized P&L in USDT (UTC day boundary). Excludes open unrealized P&L."""
+        return self._get_today_realized_pnl()
+
+    @property
+    def daily_loss_limit_pct(self) -> float:
+        """Configured daily loss limit as percentage of initial capital. 0 = disabled."""
+        return self._daily_loss_limit_pct
 
     @property
     def available_capital(self) -> float:
@@ -355,6 +471,19 @@ class PaperExecutor:
         Applies BTC-first size multiplier.
         Returns True if position opened.
         """
+        # ── Daily loss limit ─────────────────────────────────────────
+        # Hard safeguard: block new entries once today's realized P&L
+        # has hit the configured threshold (default -2% of initial capital).
+        # Open positions are unaffected — only new entries are blocked.
+        # Resets automatically at UTC midnight.
+        if self._check_daily_loss_limit():
+            logger.warning(
+                "PaperExecutor: DAILY LOSS LIMIT ACTIVE — new entry for %s %s rejected. "
+                "Limit: %.1f%% of capital. Resets at UTC midnight.",
+                candidate.side, candidate.symbol, self._daily_loss_limit_pct,
+            )
+            return False
+
         # ── Drawdown circuit breaker ─────────────────────────────────
         # Hard safeguard: block ALL new trades when drawdown >= 10%.
         dd = self.drawdown_pct
@@ -591,6 +720,48 @@ class PaperExecutor:
         # Iterate over a copy — positions may be closed during iteration
         for pos in list(self._positions.get(symbol, [])):
             exit_reason = pos.update(price)
+
+            # ── v1.2: Auto-partial-exit at +1R (Phase 5 winning config) ──────
+            # When unrealized P&L reaches exactly +1R (based on original risk),
+            # close 33% of the position and move SL to breakeven.
+            # The SL breakeven move is handled inside pos.update() via
+            # _breakeven_applied.  Both flags persist across restarts to prevent
+            # duplicate partial closes after a system restart.
+            # Only fires when: price not already at SL/TP, initial risk > 0,
+            # partial not already applied, and exit mode is "partial" in config.
+            if (
+                not exit_reason
+                and not pos._auto_partial_applied
+                and pos._initial_risk > 0
+            ):
+                try:
+                    from config.settings import settings as _s_pe
+                    _exit_mode = _s_pe.get("exit.mode", "partial")
+                    if _exit_mode == "partial":
+                        _partial_pct = float(_s_pe.get("exit.partial_pct", 0.33))
+                        _trigger_r   = float(_s_pe.get("exit.partial_r_trigger", 1.0))
+                        _ur = (
+                            (price - pos.entry_price) / pos._initial_risk
+                            if pos.side == "buy"
+                            else (pos.entry_price - price) / pos._initial_risk
+                        )
+                        if _ur >= _trigger_r:
+                            pos._auto_partial_applied = True
+                            logger.info(
+                                "PaperExecutor: AUTO-PARTIAL triggered for %s %s @ %.4f "
+                                "(unrealised_R=%.2f >= trigger %.1fR) — closing %.0f%%",
+                                pos.side, symbol, price, _ur, _trigger_r, _partial_pct * 100,
+                            )
+                            self.partial_close(symbol, _partial_pct)
+                            # partial_close already published POSITION_UPDATED; skip below
+                            continue
+                except Exception as _ap_exc:
+                    logger.debug(
+                        "PaperExecutor: auto-partial check failed for %s (non-fatal): %s",
+                        symbol, _ap_exc,
+                    )
+            # ─────────────────────────────────────────────────────────────────
+
             if exit_reason:
                 self._close_position(symbol, price, exit_reason, pos)
             else:
@@ -1084,6 +1255,10 @@ class PaperExecutor:
             "short_trades":       len(short_trades),
             "long_pnl_usdt":      round(long_pnl, 2),
             "short_pnl_usdt":     round(short_pnl, 2),
+            # ── Daily loss limit state (for UI / monitoring) ──────────
+            "daily_loss_limit_pct":   self._daily_loss_limit_pct,
+            "daily_loss_limit_hit":   self._daily_loss_limit_hit,
+            "today_realized_pnl":     round(self._get_today_realized_pnl(), 2),
         }
 
     def get_production_status(self) -> dict:

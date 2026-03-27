@@ -225,7 +225,7 @@ crash_detector:
     price_velocity: 1.8
 data:
   cache_enabled: true
-  default_timeframe: 5m
+  default_timeframe: 30m
   feed_interval_seconds: 3
   historical_days: 365.0
   max_candles_per_request: 1000
@@ -235,6 +235,7 @@ disabled_models:
 - mean_reversion
 - liquidity_sweep
 - vwap_reversion
+- order_book
 dynamic_confluence:
   base_threshold: 0.2
   enabled: false
@@ -295,6 +296,15 @@ hmm_regime:
   min_train_bars: 300
   n_components: 6
   retrain_every_n_bars: 50
+# ── v1.2 Exit Logic (Phase 5 winning config: partial 33% at 1R + breakeven SL)
+# exit.mode options: "partial" | "fixed"
+# "partial" = close partial_pct at partial_r_trigger × initial_risk, then SL→breakeven
+# "fixed"   = original behaviour (hold to TP or SL with no partial exit)
+exit:
+  mode: partial
+  partial_pct: 0.33
+  partial_r_trigger: 1.0
+
 idss:
   min_confluence_score: 0.45
 ltf_confirmation:
@@ -361,7 +371,7 @@ models:
     tp_atr_mult: 2.5
   trend:
     adx_bonus_max: 0.4
-    adx_min: 25.0
+    adx_min: 31.0
     ema20_bonus: 0.25
     entry_buffer_atr: 0.2
     macd_bonus: 0.2
@@ -620,6 +630,7 @@ risk:
   min_sharpe_live: 0.5
 risk_engine:
   atr_percentile_lookback_days: 90
+  daily_loss_limit_pct: 2.0
   fat_tail_risk_multiplier: 1.5
   kelly_fraction: 0.25
   loss_streak_size_multiplier: 0.5
@@ -660,7 +671,7 @@ scanner:
   auto_execute: true
   auto_execute_cooldown_seconds: 30
   btc_only_mode: false
-  capital_usdt: 99931.0
+  capital_usdt: 92112.0
   ohlcv_bars: 300
   watchlists:
     Default:

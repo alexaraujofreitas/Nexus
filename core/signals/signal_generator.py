@@ -11,14 +11,27 @@ from typing import Optional
 import pandas as pd
 
 from core.signals.sub_models.trend_model             import TrendModel
-from core.signals.sub_models.mean_reversion_model    import MeanReversionModel
 from core.signals.sub_models.momentum_breakout_model import MomentumBreakoutModel
-from core.signals.sub_models.vwap_reversion_model    import VWAPReversionModel
-from core.signals.sub_models.liquidity_sweep_model   import LiquiditySweepModel
 from core.signals.sub_models.funding_rate_model      import FundingRateModel
-from core.signals.sub_models.order_book_model        import OrderBookModel
 from core.signals.sub_models.sentiment_model         import SentimentModel
 from core.meta_decision.order_candidate import ModelSignal
+
+# v1.2 archived models — kept as importable modules for tests and historical
+# analysis, but excluded from _ALL_MODELS so they are never instantiated or
+# evaluated at runtime.  Re-enable via the disabled_models config list only
+# after out-of-sample validation on live demo data (75+ trades).
+#
+# Archived reason (Study 4 / Phase 5):
+#   MeanReversionModel   — PF 0.21 (-$18k), WR 32.2%  → disabled 2026-03-01
+#   VWAPReversionModel   — PF 0.28             → disabled 2026-03-24
+#   LiquiditySweepModel  — PF 0.28 (-$15k), WR 19.3%  → disabled 2026-03-01
+#   OrderBookModel       — structural TF gate (PF ≤1.0 at 1h+)  → disabled 2026-03-01
+#
+# To re-import for tests:
+#   from core.signals.sub_models.mean_reversion_model   import MeanReversionModel
+#   from core.signals.sub_models.vwap_reversion_model   import VWAPReversionModel
+#   from core.signals.sub_models.liquidity_sweep_model  import LiquiditySweepModel
+#   from core.signals.sub_models.order_book_model       import OrderBookModel
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +42,13 @@ try:
 except Exception:
     _RL_MODEL_AVAILABLE = False
 
-# All sub-models, instantiated once and reused
-# Order matters: technical models first (regime-specific),
-# then agent-derived models (regime-agnostic).
+# Active models — instantiated once and reused across all scan cycles.
+# v1.2: Only TrendModel + MomentumBreakout active (Study 4+5 validated).
+# FundingRateModel and SentimentModel remain for context enrichment (low weight).
 _ALL_MODELS = [
     TrendModel(),
-    MeanReversionModel(),
     MomentumBreakoutModel(),
-    VWAPReversionModel(),  # Phase 1c/1d — VWAP mean reversion
-    LiquiditySweepModel(),
     FundingRateModel(),    # Sprint 1 — contrarian funding rate signal
-    OrderBookModel(),      # Sprint 2 — L2 order book imbalance
     SentimentModel(),      # Sprint 4 — FinBERT / VADER news sentiment
 ]
 
@@ -137,7 +146,28 @@ class SignalGenerator:
             except Exception:
                 pass
 
+            # ── Hard ACTIVE_REGIMES gate (Wave 3 bug fix) ──────────────────
+            # ACTIVE_REGIMES is a hard constraint — it must be respected regardless
+            # of whether adaptive_activation is enabled.  REGIME_AFFINITY values
+            # adjust weights *within* the allowed regime set; they must not expand it.
+            #
+            # Bug that this fixes: when adaptive_activation.enabled=True the code
+            # below used get_activation_weight() exclusively, bypassing
+            # is_active_in_regime() entirely.  MomentumBreakout (ACTIVE_REGIMES=
+            # [vol_expansion]) was firing in ranging/uncertain/vol_compression
+            # because its REGIME_AFFINITY values for those regimes (0.1–0.2) were
+            # ≥ min_activation_weight (0.1), making the < comparison False.
+            # Confirmed result: 7 trades, 0% WR in those out-of-regime conditions.
+            if model.ACTIVE_REGIMES and not model.is_active_in_regime(regime):
+                logger.debug(
+                    "SignalGenerator: hard-gating %s "
+                    "(regime=%s not in ACTIVE_REGIMES, adaptive_activation cannot override)",
+                    model.name, regime,
+                )
+                continue
+
             # Use probabilistic activation when regime_probs available
+            # (applies within the set already validated by ACTIVE_REGIMES above)
             min_activation = float(_sc.get("adaptive_activation.min_activation_weight", 0.10))
             if regime_probs and _sc.get("adaptive_activation.enabled", True):
                 activation_wt = model.get_activation_weight(regime_probs)
