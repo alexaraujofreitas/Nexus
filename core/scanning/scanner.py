@@ -351,7 +351,21 @@ class ScanWorker(QThread):
                         _r["diagnostics"] = sym_diag
                         _all_sym_results[symbol] = _r
                 except Exception as exc:
-                    logger.error("Scanner: error scanning %s: %s", symbol, exc, exc_info=True)
+                    import traceback as _tb
+                    _tb_str = _tb.format_exc()
+                    logger.error("Scanner: error scanning %s: %s\n%s", symbol, exc, _tb_str)
+                    # Write full traceback to diagnostic file so it can be read
+                    # even when the log file is inaccessible (e.g. FUSE cache lag).
+                    try:
+                        import pathlib as _pl, datetime as _dt
+                        _diag_path = _pl.Path(__file__).parent.parent.parent / "data" / "scan_error_diag.txt"
+                        _diag_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(_diag_path, "a", encoding="utf-8") as _df:
+                            _df.write(f"\n=== {_dt.datetime.utcnow().isoformat()} symbol={symbol} ===\n")
+                            _df.write(_tb_str)
+                            _df.flush()
+                    except Exception:
+                        pass
                     _r = self._empty_sym_result(symbol, "Scan error")
                     _r["diagnostics"] = {}
                     _all_sym_results[symbol] = _r
