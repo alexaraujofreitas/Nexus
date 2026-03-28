@@ -50,6 +50,10 @@ HTF_LOOKBACK    = 60
 SLC_1H_LOOKBACK = 150
 DATA_DIR        = ROOT / "backtest_data"
 
+# ── Confluence mode constants ──────────────────────────────────────────────────
+CONFLUENCE_NONE      = "none"           # highest-strength single-winner (default)
+CONFLUENCE_TECHNICAL = "technical_only" # technical-only ConfluenceScorer gate
+
 
 def _fingerprint_parquet(path: Path) -> str:
     """SHA-256 of first 64 KB of a parquet file (fast, stable)."""
@@ -99,6 +103,7 @@ class BacktestRunner:
         symbols:          Optional[list[str]]  = None,
         mode:             str                  = "pbl_slc",
         strategy_subset:  Optional[list[str]]  = None,
+        confluence_mode:  str                  = CONFLUENCE_NONE,
     ):
         """
         Parameters
@@ -114,12 +119,18 @@ class BacktestRunner:
         strategy_subset : list[str] | None
             For mode="custom": explicit list of model_name strings.
             For all other modes: ignored (mode determines the subset).
+        confluence_mode : str
+            CONFLUENCE_NONE      ("none")           — highest-strength single-winner (default)
+            CONFLUENCE_TECHNICAL ("technical_only") — technical-only ConfluenceScorer gate
+            Only applies to _run_unified_scenario() (non pbl_slc modes).
+            mode="pbl_slc" always calls _run_scenario() which is unaffected.
         """
         self.date_start      = pd.Timestamp(date_start, tz="UTC") if date_start else None
         self.date_end        = pd.Timestamp(date_end,   tz="UTC") if date_end   else None
         self.symbols         = symbols or SYMBOLS
         self.mode            = mode
         self.strategy_subset = strategy_subset
+        self.confluence_mode = confluence_mode
         self._data_loaded    = False
         self._raw:  dict[str, dict[str, pd.DataFrame]] = {}
         self._ind:  dict[str, dict[str, pd.DataFrame]] = {}
@@ -708,13 +719,21 @@ class BacktestRunner:
         use_hmm        = bool(self._HMM_MODELS & active_set)
 
         logger.info(
-            "UnifiedEngine mode=%s active=%s research=%s hmm=%s",
-            self.mode, active_models, use_research, use_hmm,
+            "UnifiedEngine mode=%s active=%s research=%s hmm=%s confluence=%s",
+            self.mode, active_models, use_research, use_hmm, self.confluence_mode,
         )
 
         sig_gen = SignalGenerator()
         sig_gen._warmup_complete = True
         sizer   = PositionSizer()
+
+        # ── Technical-only ConfluenceScorer (optional gate) ───────────────────
+        _use_conf = (self.confluence_mode == CONFLUENCE_TECHNICAL)
+        _scorer: Optional[Any] = None
+        if _use_conf:
+            from core.meta_decision.confluence_scorer import ConfluenceScorer
+            _scorer = ConfluenceScorer()
+            logger.info("UnifiedEngine: confluence_mode=technical_only — ConfluenceScorer gate active")
 
         # ── Pre-build index structures for O(log n) timestamp lookups ────────
         idx30: dict = {}
@@ -884,9 +903,11 @@ class BacktestRunner:
                             logger.debug("UnifiedEngine SLC %s: %s", sym, exc)
 
                 # ── HMM regime path (Trend / Momentum) ────────────────────────
+                _hmm_probs_this_sym: Optional[dict] = None
                 if use_hmm and sym in self._hmm:
                     try:
                         hmm_regime, hmm_conf, hmm_probs = self._hmm[sym].classify(df_window)
+                        _hmm_probs_this_sym = hmm_probs
                         # Skip signals in crisis/liquidation_cascade regimes
                         if hmm_regime not in ("crisis", "liquidation_cascade"):
                             hmm_active = [
@@ -906,9 +927,32 @@ class BacktestRunner:
                 if not candidate_signals:
                     continue
 
-                # ── Select best signal: highest strength (deterministic) ────────
-                candidate_signals.sort(key=lambda s: s.strength, reverse=True)
-                sig = candidate_signals[0]
+                # ── Signal selection: highest-strength OR technical ConfluenceScorer ──
+                if _use_conf and _scorer is not None:
+                    # Technical-only ConfluenceScorer gate: uses deterministic scoring
+                    # (model weights, regime affinity, direction dominance, correlation
+                    # dampening, dynamic threshold).  Excluded: Orchestrator, L1/L2,
+                    # OI/Liq modifiers, paper_executor capital.
+                    scored = _scorer.score(
+                        signals=candidate_signals,
+                        symbol=sym,
+                        regime_probs=_hmm_probs_this_sym,
+                        technical_only=True,
+                        capital_usdt_override=equity,
+                    )
+                    if scored is None:
+                        continue   # confluence gate rejected
+                    # Extract the primary model signal that aligns with scored direction
+                    target_dir = "long" if scored.side == "buy" else "short"
+                    aligned = [s for s in candidate_signals if s.direction == target_dir]
+                    if not aligned:
+                        continue
+                    aligned.sort(key=lambda s: s.strength, reverse=True)
+                    sig = aligned[0]
+                else:
+                    # Default: highest-strength single-winner (deterministic, no scorer)
+                    candidate_signals.sort(key=lambda s: s.strength, reverse=True)
+                    sig = candidate_signals[0]
                 n_signals_gen += 1
 
                 open_count = len(positions)

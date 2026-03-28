@@ -77,10 +77,10 @@ def _card(title: str) -> tuple[QGroupBox, QVBoxLayout]:
     gb.setStyleSheet(f"""
         QGroupBox {{
             background: {_CARD};
-            border: 1px solid #2a4a7a;
-            border-radius: 6px;
-            margin-top: 14px;
-            padding: 8px;
+            border: 1px solid #1e3050;
+            border-radius: 3px;
+            margin-top: 8px;
+            padding: 4px;
             color: {_TEXT};
             font-weight: bold;
         }}
@@ -91,8 +91,8 @@ def _card(title: str) -> tuple[QGroupBox, QVBoxLayout]:
         }}
     """)
     lay = QVBoxLayout(gb)
-    lay.setSpacing(6)
-    lay.setContentsMargins(8, 16, 8, 8)
+    lay.setSpacing(4)
+    lay.setContentsMargins(4, 10, 4, 4)
     return gb, lay
 
 
@@ -137,6 +137,8 @@ class _LabState:
     # Phase 2 additions: unified engine mode
     backtest_mode:      str  = "pbl_slc"    # BacktestRunner.MODE_* constant
     strategy_subset:    list = field(default_factory=list)  # non-empty only for "custom" mode
+    # Session 41: technical-only confluence mode
+    confluence_mode:    str  = "none"       # "none" | "technical_only"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -257,6 +259,7 @@ class SweepWorkerThread(QThread):
         store  = ExperimentStore(exp_id)
         _sw_mode   = getattr(state, "backtest_mode", "pbl_slc")
         _sw_subset = getattr(state, "strategy_subset", []) or None
+        _sw_conf   = getattr(state, "confluence_mode", "none")
         engine = SweepEngine(
             n_workers       = state.n_workers,
             date_start      = state.date_start,
@@ -264,6 +267,7 @@ class SweepWorkerThread(QThread):
             symbols         = state.selected_symbols or None,
             mode            = _sw_mode,
             strategy_subset = _sw_subset,
+            confluence_mode = _sw_conf,
         )
         best_pf = 0.0
 
@@ -657,12 +661,19 @@ class _ParameterPanel(QWidget):
 
         for model_key in seen_models:
             color, title = _SEC_COLORS.get(model_key, (_TEXT, model_key.upper()))
-            hdr = _label(title, bold=True, color=color)
-            hdr.setStyleSheet(
-                f"color:{color}; font-weight:bold; background:{_PANEL};"
-                f" padding:4px 8px; font-size:12px;"
+            # Full-width header widget so background fills the entire row
+            hdr_w = QWidget()
+            hdr_w.setStyleSheet(f"background:{_PANEL};")
+            hdr_lay = QHBoxLayout(hdr_w)
+            hdr_lay.setContentsMargins(8, 4, 8, 4)
+            hdr_lay.setSpacing(0)
+            hdr_lbl = _label(title, bold=True, color=color)
+            hdr_lbl.setStyleSheet(
+                f"color:{color}; font-weight:bold; background:transparent; font-size:12px;"
             )
-            vlay.addWidget(hdr)
+            hdr_lay.addWidget(hdr_lbl)
+            hdr_lay.addStretch()
+            vlay.addWidget(hdr_w)
             vlay.addWidget(_hsep())
 
             for p in [pp for pp in params if pp.model == model_key]:
@@ -712,68 +723,88 @@ class _SearchPanel(QWidget):
 
     def _build(self):
         card, vlay = _card("⊟  Search")
+        vlay.setSpacing(0)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
 
+        _cb_style = (
+            f"QComboBox {{ background:{_DARK}; color:{_TEXT}; border:1px solid #2d2d2d;"
+            f" padding:2px 4px; font-size:12px; }}"
+            f" QComboBox::drop-down {{ border:none; }}"
+            f" QComboBox QAbstractItemView {{ background:{_DARK}; color:{_TEXT};"
+            f" selection-background-color:#1a3555; border:1px solid #2d2d2d; }}"
+        )
+        _sp_style = (
+            f"QSpinBox {{ background:{_DARK}; color:{_TEXT}; border:1px solid #2d2d2d;"
+            f" padding:2px 4px; font-size:12px; }}"
+        )
+
+        def _form_row(label_text: str, widget: QWidget) -> QWidget:
+            """Wrap label+widget in a dark-background row widget."""
+            row_w = QWidget()
+            row_w.setStyleSheet(f"background:{_DARK};")
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(8, 4, 8, 4)
+            row_h.setSpacing(6)
+            lbl = _label(label_text, color=_TEXT)
+            lbl.setStyleSheet(f"color:{_TEXT}; background:transparent; font-size:12px;")
+            lbl.setFixedWidth(70)
+            row_h.addWidget(lbl)
+            row_h.addWidget(widget, 1)
+            return row_w
+
         # Strategy
-        row1 = QHBoxLayout()
-        row1.addWidget(_label("Strategy:", color=_TEXT))
         self._strategy_cb = QComboBox()
         self._strategy_cb.addItems(["Coarse Grid Sweep", "Random Search", "Bayesian (coming soon)"])
-        self._strategy_cb.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444;"
-        )
-        row1.addWidget(self._strategy_cb)
-        vlay.addLayout(row1)
+        self._strategy_cb.setStyleSheet(_cb_style)
+        vlay.addWidget(_form_row("Strategy:", self._strategy_cb))
+        vlay.addWidget(_hsep())
 
-        # Random trials (only for random mode)
-        row2 = QHBoxLayout()
-        row2.addWidget(_label("Trials:", color=_TEXT))
+        # Random trials
         self._n_trials_spin = QSpinBox()
         self._n_trials_spin.setRange(10, 10000)
         self._n_trials_spin.setValue(200)
-        self._n_trials_spin.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444;"
-        )
-        row2.addWidget(self._n_trials_spin)
-        vlay.addLayout(row2)
+        self._n_trials_spin.setStyleSheet(_sp_style)
+        vlay.addWidget(_form_row("Trials:", self._n_trials_spin))
+        vlay.addWidget(_hsep())
 
         # Workers
-        row3 = QHBoxLayout()
-        row3.addWidget(_label("Workers:", color=_TEXT))
         self._workers_spin = QSpinBox()
         self._workers_spin.setRange(1, 8)
         self._workers_spin.setValue(2)
-        self._workers_spin.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444;"
-        )
-        row3.addWidget(self._workers_spin)
-        vlay.addLayout(row3)
+        self._workers_spin.setStyleSheet(_sp_style)
+        vlay.addWidget(_form_row("Workers:", self._workers_spin))
+        vlay.addWidget(_hsep())
 
         # Objective
-        row4 = QHBoxLayout()
-        row4.addWidget(_label("Objective:", color=_TEXT))
         self._obj_cb = QComboBox()
         self._obj_cb.addItems(["Profit Factor", "CAGR", "Win Rate"])
-        self._obj_cb.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444;"
-        )
-        row4.addWidget(self._obj_cb)
-        vlay.addLayout(row4)
+        self._obj_cb.setStyleSheet(_cb_style)
+        vlay.addWidget(_form_row("Objective:", self._obj_cb))
+        vlay.addWidget(_hsep())
 
         # Fee model
-        row5 = QHBoxLayout()
-        row5.addWidget(_label("Fees:", color=_TEXT))
         self._fee_cb = QComboBox()
         self._fee_cb.addItems(["0.04%/side (production)", "Zero fees"])
-        self._fee_cb.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444;"
-        )
-        row5.addWidget(self._fee_cb)
-        vlay.addLayout(row5)
+        self._fee_cb.setStyleSheet(_cb_style)
+        vlay.addWidget(_form_row("Fees:", self._fee_cb))
+        vlay.addWidget(_hsep())
 
-        vlay.addSpacing(8)
+        # Confluence mode (Session 41)
+        self._conf_cb = QComboBox()
+        self._conf_cb.addItems(["None (highest-strength)", "Technical Only"])
+        self._conf_cb.setStyleSheet(_cb_style)
+        self._conf_cb.setToolTip(
+            "None: highest-strength single-winner (default)\n"
+            "Technical Only: ConfluenceScorer gate — model weights, regime\n"
+            "affinity, direction dominance, correlation dampening, dynamic\n"
+            "threshold.  Excludes: Orchestrator, L1/L2, OI/Liq modifiers."
+        )
+        vlay.addWidget(_form_row("Confluence:", self._conf_cb))
+        vlay.addWidget(_hsep())
+
+        vlay.addSpacing(6)
 
         # Start / Cancel buttons
         btn_row = QHBoxLayout()
@@ -801,13 +832,15 @@ class _SearchPanel(QWidget):
             1: "random",
             2: "bayesian",
         }
-        fee_map = {0: 0.0004, 1: 0.0}
+        fee_map  = {0: 0.0004, 1: 0.0}
+        conf_map = {0: "none", 1: "technical_only"}
         return {
             "search_strategy": strategy_map[self._strategy_cb.currentIndex()],
             "n_random_trials": self._n_trials_spin.value(),
             "n_workers":       self._workers_spin.value(),
             "objective":       self._obj_cb.currentText().lower().replace(" ", "_"),
             "cost_per_side":   fee_map[self._fee_cb.currentIndex()],
+            "confluence_mode": conf_map[self._conf_cb.currentIndex()],
         }
 
     def set_running(self, running: bool):
@@ -1152,12 +1185,22 @@ class _DataStatusPanel(QWidget):
         _COLS = ["Symbol", "Status", "Coverage", "Rows"]
         self._table = QTableWidget(0, len(_COLS))
         self._table.setHorizontalHeaderLabels(_COLS)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # Column proportion 1 : 1 : 2 : 1
+        # Symbol(0), Status(1), Rows(3) are Fixed at equal width;
+        # Coverage(2) is Stretch and takes all remaining space (≈ 2× the others).
+        _hdr = self._table.horizontalHeader()
+        _hdr.setSectionResizeMode(0, QHeaderView.Fixed)   # Symbol
+        _hdr.setSectionResizeMode(1, QHeaderView.Fixed)   # Status
+        _hdr.setSectionResizeMode(2, QHeaderView.Stretch) # Coverage — fills remaining
+        _hdr.setSectionResizeMode(3, QHeaderView.Fixed)   # Rows
+        self._table.setColumnWidth(0, 72)   # Symbol
+        self._table.setColumnWidth(1, 72)   # Status
+        self._table.setColumnWidth(3, 52)   # Rows
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setSelectionMode(QAbstractItemView.NoSelection)
         self._table.setMaximumHeight(140)
         self._table.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; gridline-color:#333;"
+            f"background:{_DARK}; color:{_TEXT}; gridline-color:#2d2d2d;"
             " font-size:12px; border:none;"
         )
         self._table.verticalHeader().setVisible(False)
@@ -1744,6 +1787,7 @@ class ResearchLabPage(QWidget):
         self._state.n_random_trials= search["n_random_trials"]
         self._state.n_workers      = search["n_workers"]
         self._state.cost_per_side  = search["cost_per_side"]
+        self._state.confluence_mode= search.get("confluence_mode", "none")
 
         from research.engine.experiment_store import ExperimentStore
         exp_id = ExperimentStore.new_id()

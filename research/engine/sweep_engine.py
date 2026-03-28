@@ -40,10 +40,11 @@ def _init_worker(date_start:       str        = "2022-03-22",
                  date_end:         str        = "2026-03-21",
                  symbols:          list | None = None,
                  mode:             str        = "pbl_slc",
-                 strategy_subset:  list | None = None):
+                 strategy_subset:  list | None = None,
+                 confluence_mode:  str        = "none"):
     """
     Called once per worker process — loads BacktestRunner with the given period,
-    symbol set, and engine mode.  All args are passed as Pool initargs.
+    symbol set, engine mode, and confluence mode.  All args are passed as Pool initargs.
     """
     global _worker_runner
     try:
@@ -56,6 +57,7 @@ def _init_worker(date_start:       str        = "2022-03-22",
             symbols         = symbols or SYMBOLS,
             mode            = mode,
             strategy_subset = strategy_subset or None,
+            confluence_mode = confluence_mode,
         )
         _worker_runner.load_data()
     except Exception as e:
@@ -163,6 +165,7 @@ class SweepEngine:
         symbols:         list | None = None,
         mode:            str        = "pbl_slc",
         strategy_subset: list | None = None,
+        confluence_mode: str        = "none",
     ):
         self.n_workers       = max(1, min(n_workers, mp.cpu_count()))
         self.date_start      = date_start
@@ -170,6 +173,7 @@ class SweepEngine:
         self.symbols         = symbols
         self.mode            = mode
         self.strategy_subset = strategy_subset
+        self.confluence_mode = confluence_mode
         self._cancelled      = False
 
     def cancel(self):
@@ -198,7 +202,7 @@ class SweepEngine:
             processes   = self.n_workers,
             initializer = _init_worker,
             initargs    = (self.date_start, self.date_end, self.symbols,
-                           self.mode, self.strategy_subset),
+                           self.mode, self.strategy_subset, self.confluence_mode),
         )
         try:
             for result in pool.imap_unordered(_worker_run, args, chunksize=1):
