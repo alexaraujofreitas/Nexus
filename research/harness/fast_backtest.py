@@ -387,22 +387,24 @@ class FastBacktestEngine:
             for sym in to_remove:
                 del positions[sym]
 
-            # ── Portfolio heat check ────────────────────────────────────
+            # ── Portfolio heat check (max-positions guard only) ─────────────
             n_open = len(positions)
             if n_open >= MAX_POS:
-                continue
-
-            total_exp = sum(p[4] for p in positions.values())
-            size_usdt = capital * POS_FRAC
-            if (total_exp + size_usdt) / max(capital, 1) > MAX_HEAT:
-                continue
-            if capital < size_usdt * 0.5:
                 continue
 
             # ── Signal generation ───────────────────────────────────────
             for sym in SYMBOLS:
                 if sym in positions:
                     continue  # one position per symbol
+
+                # Per-symbol heat check — recompute AFTER each position opens
+                # so the 2nd/3rd symbol sees the exposure from the 1st/2nd.
+                total_exp = sum(p[4] for p in positions.values())
+                size_usdt = capital * POS_FRAC
+                if (total_exp + size_usdt) / max(capital, 1) > MAX_HEAT:
+                    break  # heat cap reached; no further entries this bar
+                if capital < size_usdt * 0.5:
+                    break  # insufficient capital for any more entries
 
                 pdata = self._precomputed[sym]
                 if pdata.n_30m == 0:
@@ -452,8 +454,17 @@ class FastBacktestEngine:
                 # ── SLC signal (1h bar, deduplicated) ───────────────────
                 if mode in ("slc_only", "combined") and sym not in positions:
                     if pdata.ts_1h is not None and pdata.n_1h > 0:
-                        idx1h = int(np.searchsorted(pdata.ts_1h, ts_i8, side="right")) - 1
-                        if idx1h >= slc_swing + 2:
+                        # side="left": returns the 1h bar that OPENED before ts_i8
+                        # (bar at index `idx1h` opened at ts_1h[idx1h]; it closes
+                        #  when ts_1h[idx1h+1] opens).  This avoids look-ahead:
+                        # we only read the bar once its NEXT bar has opened.
+                        idx1h = int(np.searchsorted(pdata.ts_1h, ts_i8, side="left")) - 1
+                        # Bar is closed iff its successor's open time ≤ ts_i8
+                        bar_closed = (
+                            idx1h + 1 >= pdata.n_1h or
+                            pdata.ts_1h[idx1h + 1] <= ts_i8
+                        )
+                        if idx1h >= slc_swing + 2 and bar_closed:
                             # De-duplicate: evaluate only once per 1h bar per symbol
                             if slc_last_1h.get(sym) != idx1h:
                                 slc_last_1h[sym] = idx1h
@@ -496,7 +507,14 @@ class FastBacktestEngine:
         gp = sum(t[7] for t in wins)
         gl = abs(sum(t[7] for t in losses))
 
-        pf  = gp / gl if gl > 0 else 999.0
+        # PF: 0.0 for zero-trade configs (not 999) so they sink to the bottom
+        # of the leaderboard rather than dominating it.
+        if n == 0:
+            pf = 0.0
+        elif gl == 0:
+            pf = 999.0   # all-winning trades (valid edge, rare)
+        else:
+            pf = gp / gl
         wr  = len(wins) / n if n > 0 else 0.0
 
         ts_arr = self._ts_master

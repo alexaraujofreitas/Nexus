@@ -153,6 +153,11 @@ CONFIRMATION_VARIANTS = [
 
 FEE_SCENARIOS = [0.0, 0.0004, 0.0008, 0.0015]
 
+# Minimum trade count for a result to appear in leaderboards / be loaded as a
+# candidate.  Configs with fewer trades than this have meaningless PF values
+# (and in the buggy era produced PF=999 for 0-trade sets).
+MIN_TRADES = 30
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Grid builders
@@ -238,7 +243,13 @@ def _load_top_n_from_csv(csv_path: Path, n: int = 5, sort_col: str = "pf") -> li
     if not csv_path.exists():
         raise FileNotFoundError(f"Results CSV not found: {csv_path}")
     df = pd.read_csv(csv_path)
-    df = df[df["status"] == "ok"].sort_values(sort_col, ascending=False).head(n)
+    df = df[df["status"] == "ok"]
+    # Drop low-trade-count rows — they have meaningless PF values
+    if "n_trades" in df.columns:
+        df = df[df["n_trades"] >= MIN_TRADES]
+    if df.empty:
+        return []
+    df = df.sort_values(sort_col, ascending=False).head(n)
     results = []
     for _, row in df.iterrows():
         # Parse nested 'params' column if present, else reconstruct from flat columns
@@ -453,8 +464,13 @@ def run_sweep(
                     errors += 1
                 else:
                     all_results.append(result)
-                    # Maintain sorted top-10
-                    all_results_ok = [r for r in all_results if r.get("status") == "ok"]
+                    # Maintain sorted top-10 (require MIN_TRADES so zero-trade
+                    # configs with PF=0 can't dominate the leaderboard)
+                    all_results_ok = [
+                        r for r in all_results
+                        if r.get("status") == "ok"
+                        and r.get("n_trades", 0) >= MIN_TRADES
+                    ]
                     top10 = sorted(
                         all_results_ok,
                         key=lambda x: x.get(sort_col, 0),
@@ -590,8 +606,15 @@ def stage_confirmation(args):
     if coarse_csv.exists():
         try:
             top_list = _load_top_n_from_csv(coarse_csv, n=1, sort_col="pf")
-            best_pbl = top_list[0] if top_list else BASELINE_PBL
-            print(f"  Best PBL params loaded from {coarse_csv.name}")
+            if top_list:
+                best_pbl = top_list[0]
+                print(f"  Best PBL params loaded from {coarse_csv.name} "
+                      f"(n_trades check: ≥{MIN_TRADES})")
+            else:
+                print(f"  [WARN] No qualifying rows in {coarse_csv.name} "
+                      f"(need n_trades≥{MIN_TRADES}) — using BASELINE params.\n"
+                      f"  ⚠  Re-run --stage coarse_pbl with the fixed engine first.")
+                best_pbl = BASELINE_PBL
         except Exception as e:
             print(f"  [WARN] Could not load coarse CSV ({e}) — using baseline PBL params")
             best_pbl = BASELINE_PBL
@@ -636,7 +659,13 @@ def stage_walkforward(args):
         return
 
     candidates = _load_top_n_from_csv(coarse_csv, n=args.top_n, sort_col="pf")
-    print(f"  Loaded {len(candidates)} candidate(s) from coarse sweep")
+    if not candidates:
+        print(f"\n  [ERROR] No qualifying candidates in {coarse_csv.name} "
+              f"(need n_trades≥{MIN_TRADES}).\n"
+              f"  ⚠  Re-run --stage coarse_pbl with the fixed engine first.")
+        return
+    print(f"  Loaded {len(candidates)} candidate(s) from coarse sweep "
+          f"(all have n_trades≥{MIN_TRADES})")
 
     out_csv = RESULTS_DIR / "trials_walkforward.csv"
     all_wf: list[dict] = []
@@ -661,12 +690,18 @@ def stage_walkforward(args):
             with ctx.Pool(1) as pool:
                 oos_res = list(pool.imap_unordered(worker_run, oos_args))[0]
 
-            is_pf  = is_res.get("pf", 0) if is_res.get("status") == "ok" else 0
-            oos_pf = oos_res.get("pf", 0) if oos_res.get("status") == "ok" else 0
+            is_ok  = is_res.get("status") == "ok"
+            oos_ok = oos_res.get("status") == "ok"
+            is_pf   = is_res.get("pf",    0.0) if is_ok  else 0.0
+            is_cagr = is_res.get("cagr",  0.0) if is_ok  else 0.0
+            is_n    = is_res.get("n_trades", 0) if is_ok  else 0
+            oos_pf  = oos_res.get("pf",   0.0) if oos_ok else 0.0
+            oos_cagr= oos_res.get("cagr", 0.0) if oos_ok else 0.0
+            oos_n   = oos_res.get("n_trades", 0) if oos_ok else 0
 
-            print(f"      IS PF={is_pf:.4f}  OOS PF={oos_pf:.4f}  "
-                  f"WFE={oos_pf/is_pf:.3f}" if is_pf > 0 else
-                  f"      IS PF={is_pf:.4f}  OOS PF={oos_pf:.4f}")
+            wfe_str = f"  WFE={oos_pf/is_pf:.3f}" if is_pf > 0 else "  WFE=N/A"
+            print(f"      IS : PF={is_pf:.4f}  CAGR={is_cagr:+.1f}%  n={is_n}")
+            print(f"      OOS: PF={oos_pf:.4f}  CAGR={oos_cagr:+.1f}%  n={oos_n}{wfe_str}")
 
             wfe_is.append(is_pf)
             wfe_oos.append(oos_pf)
@@ -713,6 +748,11 @@ def stage_holdout(args):
         return
 
     candidates = _load_top_n_from_csv(coarse_csv, n=args.top_n, sort_col="pf")
+    if not candidates:
+        print(f"\n  [ERROR] No qualifying candidates in {coarse_csv.name} "
+              f"(need n_trades≥{MIN_TRADES}).\n"
+              f"  ⚠  Re-run --stage coarse_pbl with the fixed engine first.")
+        return
     print(f"\n  Running holdout on {len(candidates)} candidate(s)...")
 
     results = run_sweep(
@@ -749,6 +789,11 @@ def stage_stress(args):
         return
 
     candidates = _load_top_n_from_csv(coarse_csv, n=args.top_n, sort_col="pf")
+    if not candidates:
+        print(f"\n  [ERROR] No qualifying candidates in {coarse_csv.name} "
+              f"(need n_trades≥{MIN_TRADES}).\n"
+              f"  ⚠  Re-run --stage coarse_pbl with the fixed engine first.")
+        return
     all_trials = []
     for cost in FEE_SCENARIOS:
         all_trials.extend(candidates)  # same params, different cost per pool call
