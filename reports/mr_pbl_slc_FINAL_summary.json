@@ -1,0 +1,14 @@
+{
+  "label": "3-sym no-MR  pf=35%  zero fees",
+  "period": "2022-03-22 to 2026-03-21",
+  "years": 4.0,
+  "capital": 100000.0,
+  "fees": "zero",
+  "config": "3-sym no-MR",
+  "pos_frac": 0.35,
+  "cagr": 0.5040637327286728,
+  "pf": 1.29754112704204,
+  "mdd": -0.20658742549147777,
+  "n": 1476,
+  "final_equity": 511186.79750176705
+}
