@@ -1,4 +1,6 @@
 _test:
+  batch_key1: v1
+  batch_key2: v2
   value: null
 adaptive_activation:
   crash_long_multiplier: 0.0
@@ -395,6 +397,25 @@ models:
     sl_atr_mult: 1.2
     tp_atr_offset: 0.5
     z_threshold: 1.5
+mr_pbl_slc:
+  enabled: true
+  max_heat: 0.8
+  max_per_asset: 3
+  max_positions: 10
+  pos_frac: 0.35
+  pullback_long:
+    ema_prox_atr_mult: 0.5
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+    rsi_min: 40.0
+    sl_atr_mult: 2.5
+    tp_atr_mult: 3.0
+  slc_1h_bars: 150
+  swing_low_continuation:
+    adx_min: 28.0
+    sl_atr_mult: 2.5
+    swing_bars: 10
+    tp_atr_mult: 2.0
 ms_garch:
   enabled: true
   refit_every_n_bars: 100
@@ -708,35 +729,6 @@ staged_candidates:
   max_active: 20
   retention_seconds: 86400
   ttl_seconds: 10800
-# ──────────────────────────────────────────────────────────────────────────────
-# MR + PBL + SLC Strategy Suite (v1.3 — Phase 6 integration)
-# Gated behind 'enabled: false' until Phase 1 50-trade milestone is reached.
-# Operator must manually set 'enabled: true' after reviewing demo performance.
-#
-# Benchmark (commit daf41dc, 2022-03-22 to 2026-03-21, $100k, 3-sym):
-#   Zero fees:  CAGR=50.41%, PF=1.2975, MaxDD=-20.66%, n=1,476
-#   Maker fees: CAGR=35.67%, PF=1.2116, MaxDD=-23.45%  <- live target
-# ──────────────────────────────────────────────────────────────────────────────
-mr_pbl_slc:
-  enabled: false          # SET true ONLY after Phase 1 50-trade milestone
-  pos_frac: 0.35          # fraction of equity per position (Phase 5 optimal)
-  max_heat: 0.80          # max deployed / equity ratio (80%)
-  max_positions: 10       # hard cap on concurrent positions
-  max_per_asset: 3        # max positions per symbol
-  slc_1h_bars: 150        # number of 1h bars to fetch for SLC evaluation
-  pullback_long:
-    ema_prox_atr_mult: 0.5      # |close - EMA50| <= mult x ATR14
-    sl_atr_mult: 2.5            # stop-loss = entry - mult x ATR14
-    tp_atr_mult: 3.0            # take-profit = entry + mult x ATR14
-    rsi_min: 40.0               # RSI14 must exceed this value
-    htf_ema_fast: 20            # 4h EMA fast period for HTF gate
-    htf_ema_slow: 50            # 4h EMA slow period for HTF gate
-  swing_low_continuation:
-    adx_min: 28.0               # ADX14 minimum (confirmed bear trend)
-    swing_bars: 10              # look-back bars for new closing low
-    sl_atr_mult: 2.5            # stop-loss = entry + mult x ATR14 (short)
-    tp_atr_mult: 2.0            # take-profit = entry - mult x ATR14 (short)
-
 symbol_allocation:
   btc_dominance_high: 55.0
   btc_dominance_low: 45.0

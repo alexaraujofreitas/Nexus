@@ -119,7 +119,7 @@ DEFAULT_CONFIG = {
         "default_stop_loss_pct": 2.0,
         "default_take_profit_pct": 4.0,
         # IDSS RiskGate parameters (hot-applied to scanner on save)
-        "max_concurrent_positions": 5,
+        "max_concurrent_positions": 10,   # Updated to match config.yaml runtime value
         "min_risk_reward": 1.3,
     },
     "idss": {
@@ -488,6 +488,10 @@ DEFAULT_CONFIG = {
         "max_leverage_defensive_mode": 1.0,
         "max_positions_per_symbol": 10,
         "max_trades_per_scan_cycle": 1,
+        # ── Daily loss limit kill switch ────────────────────────────
+        # Blocks new entries when today's realized P&L <= -(limit_pct)% of initial capital.
+        # Set to 0.0 to disable. Resets at UTC midnight. Phase 1 default: 2.0%.
+        "daily_loss_limit_pct": 2.0,
     },
     "staged_candidates": {
         "enabled": True,
@@ -567,11 +571,32 @@ class AppSettings:
             logger.debug("Vault migration skipped: %s", exc)
 
     def save(self):
-        """Persist current config to YAML file."""
+        """Persist current config to YAML file.
+
+        Uses an atomic write (temp file → fsync → rename) so that any write
+        interruption or OS-level buffer flush boundary can never leave the live
+        config.yaml in a truncated state.  The rename() call on POSIX is
+        atomic with respect to the filesystem, so readers always see either the
+        old complete file or the new complete file — never a partial write.
+        """
         try:
+            import os
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_PATH, "w") as f:
-                yaml.dump(self._config, f, default_flow_style=False, indent=2)
+            yaml_bytes = yaml.dump(
+                self._config, default_flow_style=False, indent=2,
+            ).encode("utf-8")
+            tmp_path = CONFIG_PATH.with_suffix(".yaml.tmp")
+            fd = os.open(
+                str(tmp_path),
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            try:
+                os.write(fd, yaml_bytes)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.replace(str(tmp_path), str(CONFIG_PATH))
         except Exception as e:
             logger.error("Could not save config: %s", e)
 
@@ -586,11 +611,13 @@ class AppSettings:
                 return default
         return val
 
-    def set(self, key_path: str, value: Any):
+    def set(self, key_path: str, value: Any, auto_save: bool = True):
         """Set a config value using dot notation or top-level key, and persist.
         Examples:
             settings.set("risk.max_position_pct", 0.25)
             settings.set("risk", {"max_concurrent_positions": 3, ...})
+            settings.set("key", val, auto_save=False)  # batch multiple sets,
+                                                        # call save() manually after
         """
         if isinstance(key_path, str) and "." not in key_path and isinstance(value, dict):
             # Setting entire section
@@ -602,7 +629,8 @@ class AppSettings:
             for k in keys[:-1]:
                 d = d.setdefault(k, {})
             d[keys[-1]] = value
-        self.save()
+        if auto_save:
+            self.save()
 
     def get_section(self, section: str) -> dict:
         """Return an entire config section as a dict."""
