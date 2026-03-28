@@ -44,6 +44,9 @@ sys.path.insert(0, str(ROOT))
 
 logger = logging.getLogger(__name__)
 
+# Persists the last baseline run result across restarts
+_BASELINE_CACHE = ROOT / "research" / "engine" / "last_baseline_result.json"
+
 # ── Colour palette ─────────────────────────────────────────────────────────
 _GREEN  = "#4caf50"
 _RED    = "#f44336"
@@ -304,7 +307,7 @@ class _BaselinePanel(QWidget):
         self._status_lbl.setStyleSheet(f"color:{_AMBER}; font-weight:bold;")
         self._btn.setEnabled(False)
 
-    def set_result(self, summary: dict):
+    def set_result(self, summary: dict, saved_at: str = ""):
         self._btn.setEnabled(True)
         passed = summary.get("passed", False)
         r0     = summary.get("r0", {})
@@ -325,6 +328,8 @@ class _BaselinePanel(QWidget):
             f"PBL: n={r0.get('pbl_n','?')}  PF={r0.get('pbl_pf','?')}",
             f"SLC: n={r0.get('slc_n','?')}  PF={r0.get('slc_pf','?')}",
         ]
+        if saved_at:
+            lines.append(f"(restored from {saved_at})")
         if failures:
             lines.append("FAILURES:")
             lines.extend(f"  • {f}" for f in failures)
@@ -833,6 +838,48 @@ class ResearchLabPage(QWidget):
         self._state   = _LabState()
         self._worker: Optional[SweepWorkerThread] = None
         self._build()
+        self._restore_baseline_cache()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Baseline cache persistence
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _save_baseline_cache(self, summary: dict):
+        """Persist the last baseline result to disk so it survives restarts."""
+        try:
+            payload = {
+                "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "summary":  summary,
+            }
+            _BASELINE_CACHE.write_text(json.dumps(payload, indent=2))
+        except Exception as exc:
+            logger.warning("Could not save baseline cache: %s", exc)
+
+    def _restore_baseline_cache(self):
+        """On startup, reload the last baseline result and repopulate the UI."""
+        if not _BASELINE_CACHE.exists():
+            return
+        try:
+            payload  = json.loads(_BASELINE_CACHE.read_text())
+            summary  = payload.get("summary", {})
+            saved_at = payload.get("saved_at", "unknown")
+            passed   = summary.get("passed", False)
+
+            self._state.baseline_status  = "PASS" if passed else "FAIL"
+            self._state.baseline_metrics = summary
+
+            # Restore panel — annotate with the saved timestamp
+            self._baseline_panel.set_result(summary, saved_at=saved_at)
+            status_msg = (
+                f"Baseline PASS ✅ (from {saved_at})"
+                if passed else
+                f"Baseline FAIL ❌ (from {saved_at})"
+            )
+            self._progress_panel.update_progress(4, 4, 0.0, status_msg)
+            logger.info("Baseline cache restored from %s (status=%s)", saved_at,
+                        self._state.baseline_status)
+        except Exception as exc:
+            logger.warning("Could not restore baseline cache: %s", exc)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Layout
@@ -999,8 +1046,9 @@ class ResearchLabPage(QWidget):
         self._state.baseline_status = "PASS" if passed else "FAIL"
         self._state.baseline_metrics = summary
         self._baseline_panel.set_result(summary)
-        self._progress_panel.update_progress(100, 100, 0.0,
+        self._progress_panel.update_progress(4, 4, 0.0,
             "Baseline PASS ✅" if passed else "Baseline FAIL ❌ — optimization blocked")
+        self._save_baseline_cache(summary)
 
     @Slot(dict)
     def _on_sweep_done(self, summary: dict):
