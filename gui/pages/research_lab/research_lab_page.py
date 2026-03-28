@@ -334,13 +334,23 @@ class _BaselinePanel(QWidget):
             self._status_lbl.setStyleSheet(f"color:{_RED}; font-weight:bold;")
 
         failures = summary.get("failures", [])
+        n_trades = r0.get('n_trades', 0)
+        wr_raw   = r0.get('win_rate', 0)
+        pf0      = r0.get('profit_factor', '?')
+        pf_fees  = r1.get('profit_factor', '?')
+        cagr     = r0.get('cagr', 0)
+        maxdd    = r0.get('max_drawdown', 0)
+        pbl_n    = r0.get('pbl_n', '?')
+        pbl_pf   = r0.get('pbl_pf', '?')
+        slc_n    = r0.get('slc_n', '?')
+        slc_pf   = r0.get('slc_pf', '?')
+        # Format win rate: stored as fraction (0.5638) → display as percentage (56.38%)
+        wr_str = f"{wr_raw * 100:.2f}%" if isinstance(wr_raw, (int, float)) else str(wr_raw)
         lines = [
-            f"n={r0.get('n_trades','?')}  PF(0%)={r0.get('profit_factor','?')}  "
-            f"PF(fees)={r1.get('profit_factor','?')}",
-            f"WR={r0.get('win_rate','?')}  CAGR={r0.get('cagr','?'):.1%}  "
-            f"MaxDD={r0.get('max_drawdown','?'):.1%}",
-            f"PBL: n={r0.get('pbl_n','?')}  PF={r0.get('pbl_pf','?')}",
-            f"SLC: n={r0.get('slc_n','?')}  PF={r0.get('slc_pf','?')}",
+            f"Trades: {n_trades:,}   PF (no fees): {pf0}   PF (0.04%/side): {pf_fees}",
+            f"Win Rate: {wr_str}   CAGR: {cagr:.1%}   Max DD: {maxdd:.1%}",
+            f"PBL: {pbl_n:,} trades   PF: {pbl_pf}" if isinstance(pbl_n, int) else f"PBL: {pbl_n} trades   PF: {pbl_pf}",
+            f"SLC: {slc_n:,} trades   PF: {slc_pf}" if isinstance(slc_n, int) else f"SLC: {slc_n} trades   PF: {slc_pf}",
         ]
         if saved_at:
             lines.append(f"(restored from {saved_at})")
