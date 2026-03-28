@@ -320,6 +320,130 @@ def _fibonacci_levels(df: pd.DataFrame, lookback: int = 50) -> pd.DataFrame:
     return df
 
 
+# ── Scan-mode indicator computation ──────────────────────────
+#
+# SCAN_CORE_COLUMNS — the minimum set of computed columns required for
+# the live IDSS scan path.  Derived from reading every active consumer:
+#
+#   TrendModel:              ema_9, ema_20, ema_21, ema_100,
+#                            adx_14 (alias: adx), rsi_14 (alias: rsi),
+#                            macd, macd_signal, atr_14 (alias: atr)
+#   MomentumBreakout:        rsi_14, atr_14 only (plus raw OHLCV)
+#   PullbackLongModel:       ema_50, rsi_14 (read from df_4h HTF context)
+#   SwingLowContinuation:    adx, rsi_14 (read from df_1h HTF context)
+#   FundingRateModel:        atr_14 only (plus close)
+#   SentimentModel:          atr_14 only (plus close)
+#   OrderBookModel:          atr_14 only — hard-gated at 1h (returns None)
+#   RegimeClassifier (rule): adx, ema_20, bb_upper, bb_lower, bb_mid, rsi
+#   RegimeClassifier (HMM):  adx (feature 3); others derived from close/volume
+#   Volatility pre-filter:   atr (computed inline if absent)
+#
+# All other columns produced by calculate_all() are REMOVE or CONDITIONAL
+# (BacktestEngine / research paths only).
+#
+# IMPORTANT: calculate_scan_mode() is called for ALL timeframe data:
+#   - 30m primary data (299 bars)
+#   - 4h HTF context data for PBL (59 bars)
+#   - 1h HTF context data for SLC (149 bars)
+# Every column in this set MUST be computable on all three data shapes.
+#
+SCAN_CORE_COLUMNS: frozenset[str] = frozenset({
+    # TrendModel EMAs
+    "ema_9", "ema_20", "ema_21", "ema_100",
+    # PullbackLongModel (4h context) — EMA-50 proximity condition
+    "ema_50",
+    # Trend strength / momentum
+    "adx_14", "adx",
+    "rsi_14", "rsi",
+    "macd", "macd_signal",
+    # Volatility / ATR
+    "atr_14", "atr",
+    # Regime classifier (rule-based) — Bollinger
+    "bb_upper", "bb_lower", "bb_mid", "bb_width",
+})
+
+
+def calculate_scan_mode(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute only the CORE indicator set required for the live IDSS scan path.
+
+    This replaces calculate_all() in scanner.py to eliminate dead-weight
+    computation of ~95 columns that no active live-scan consumer reads.
+
+    Consumers and their exact requirements are documented in SCAN_CORE_COLUMNS.
+
+    BacktestEngine, IDSSBacktester, and all research/validation paths must
+    continue to call calculate_all() — they require the full indicator set
+    for condition-tree evaluation and walk-forward validation.
+
+    Performance target: ≥ 40 % faster than calculate_all() on 300-bar OHLCV.
+    Measured: SuperTrend (3 × O(n) Python loops) + 17 SMA + 13 spare EMA +
+    8 spare RSI + 8 spare ATR + Ichimoku + StochRSI + Keltner + Donchian +
+    Pivot + Fibonacci are the primary savings.
+    """
+    if df is None or df.empty or len(df) < 2:
+        return df
+
+    if not TA_AVAILABLE:
+        logger.warning("calculate_scan_mode: 'ta' not installed — returning raw OHLCV")
+        return df
+
+    df = df.copy()
+
+    try:
+        # ── Core EMAs (TrendModel + PullbackLongModel) ────────
+        # Periods: 9/20/21/100 for TrendModel; 50 for PBL EMA-proximity
+        # condition (pullback_long_model.py line 156: df["ema_50"]).
+        _ema_core = {
+            f"ema_{p}": ta.trend.ema_indicator(df["close"], window=p)
+            for p in [9, 20, 21, 50, 100]
+        }
+        df = pd.concat([df, pd.DataFrame(_ema_core, index=df.index)], axis=1)
+
+        # ── ADX-14 (TrendModel + RegimeClassifiers) ───────────
+        try:
+            adx_obj    = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
+            df["adx_14"] = adx_obj.adx()
+            df["adx"]    = df["adx_14"]   # legacy alias — must keep for regime classifier
+        except Exception as _adx_err:
+            logger.debug("calculate_scan_mode: ADX failed — %s", _adx_err)
+
+        # ── RSI-14 (TrendModel + MomentumBreakout + Regime) ──
+        df["rsi_14"] = ta.momentum.rsi(df["close"], window=14)
+        df["rsi"]    = df["rsi_14"]   # legacy alias
+
+        # ── MACD (TrendModel) ─────────────────────────────────
+        macd_obj         = ta.trend.MACD(df["close"], window_slow=26,
+                                          window_fast=12, window_sign=9)
+        df["macd"]        = macd_obj.macd()
+        df["macd_signal"] = macd_obj.macd_signal()
+        # macd_hist intentionally omitted — no active consumer reads it in scan path
+
+        # ── ATR-14 (all models + volatility pre-filter) ───────
+        df["atr_14"] = ta.volatility.average_true_range(
+            df["high"], df["low"], df["close"], window=14
+        )
+        df["atr"] = df["atr_14"]   # legacy alias
+
+        # ── Bollinger Bands (RegimeClassifier rule-based) ─────
+        bb = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+        df["bb_upper"] = bb.bollinger_hband()
+        df["bb_mid"]   = bb.bollinger_mavg()
+        df["bb_lower"] = bb.bollinger_lband()
+        df["bb_width"] = bb.bollinger_wband()
+        # bb_pct intentionally omitted — not used by any active scan consumer
+
+        logger.debug(
+            "calculate_scan_mode: %d scan-mode columns on %d rows (CORE=%d)",
+            len(df.columns), len(df), len(SCAN_CORE_COLUMNS),
+        )
+        return df
+
+    except Exception as exc:
+        logger.error("calculate_scan_mode: failed — %s", exc, exc_info=True)
+        return df
+
+
 # ── Signal Generator ──────────────────────────────────────────
 def get_signals(df: pd.DataFrame) -> dict:
     """

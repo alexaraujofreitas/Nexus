@@ -552,6 +552,24 @@ class ScanWorker(QThread):
         # IDSSBacktester continue to call calculate_all() for the full set.
         df = calculate_scan_mode(df)
 
+        # ── Indicator presence guard ──────────────────────────────────
+        # calculate_scan_mode() has a silent failure mode: if the 'ta'
+        # library fails or raises an exception, it returns raw OHLCV
+        # without any indicators.  Models then find None for ADX/RSI/EMA
+        # and return no signal — showing "No signal" when the real issue
+        # is missing indicators.  Catch this early and surface it.
+        _required_cols = ("adx", "ema_9", "rsi_14")
+        _missing_cols = [c for c in _required_cols if c not in df.columns or df[c].isna().all()]
+        if _missing_cols:
+            logger.error(
+                "Scanner: %s — required indicator(s) %s NOT computed after "
+                "calculate_scan_mode().  'ta' library may have failed silently.  "
+                "Check OHLCV data quality and 'ta' installation.",
+                symbol, _missing_cols,
+            )
+            _sym_diag["indicator_cols_missing"] = _missing_cols
+            return None, "", 0.0, df, "Indicators missing", _sym_diag
+
         # ── Phase 1 pre-scan filters (time-of-day, volatility) ─────────
         try:
             from core.filters.trade_filters import apply_pre_scan_filters
@@ -688,7 +706,11 @@ class ScanWorker(QThread):
                                     _df_tf["timestamp"], unit="ms", utc=True
                                 )
                                 _df_tf = _df_tf.set_index("timestamp").astype(float)
-                                from core.features.indicator_library import calculate_scan_mode
+                                # NOTE: calculate_scan_mode is imported at module level (line 37).
+                                # Do NOT re-import it here — a local `from X import Y` inside
+                                # any branch of this function poisons the entire function scope
+                                # at Python compile time, causing UnboundLocalError at the
+                                # earlier call on line ~553 even when this branch never runs.
                                 _df_tf = calculate_scan_mode(_df_tf)
                                 if _tf_key == "4h":
                                     _df_4h_ctx = _df_tf

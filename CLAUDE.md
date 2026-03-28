@@ -125,12 +125,12 @@ direction/SL/TP, PositionSizer path validated, no context injection.
 ### API Keys (encrypted in vault)
 - CryptoPanic, Coinglass, Reddit Client ID+Secret — all set
 
-### Test Suite (latest full run — Session 36, 2026-03-28)
+### Test Suite (latest full run — Session 37, 2026-03-28)
 - **85 passed**, 0 failed (mr_pbl_slc suite post-fix; full regression from Session 35: 1,652 passed, 11 skipped)
 - Session 36 updated: `test_mr_pbl_slc_models.py` — fixed rejection candle helper (`_make_pbl_df` explicit high/low), updated `test_active_regimes_restored` assertions for ACTIVE_REGIMES=[REGIME_BULL_TREND]/[REGIME_BEAR_TREND], corrected settings mock namespace in pos-sizer test
 - **Stage 8 runtime validation**: `scripts/stage8_runtime_validation.py` — **52 passed, 0 failed** (13 sections; no runtime fixes required)
-- Session 37 added: `test_session37_reset_and_ui_fixes.py` (16 tests) + `test_session37_scan_error_fix.py` (7 tests)
-- **Full suite (Session 37)**: 1558 passed, 11 skipped, 0 failed
+- Session 37 added: `test_session37_reset_and_ui_fixes.py` (16 tests) + `test_session37_scan_error_fix.py` (12 tests — 7 original pre-filter fix + 3 UnboundLocalError fix + 2 indicator-presence guard)
+- **Full suite (Session 37)**: 1558 passed, 11 skipped, 0 failed (pre-indicator-guard baseline); +2 new tests after indicator guard added
 
 ---
 
@@ -258,6 +258,7 @@ OHLCV (1h, 300 bars) → HMM+RuleBased Regime → SignalGenerator (5 models)
 - **Pre-filter rejection return**: `return None, "", 0.0, df, _pf_reason, _sym_diag` — pass `df` so the df_cache can be populated, pass `_sym_diag` for diagnostics.
 - **`DEFAULT_CONFIG filters.time_of_day.enabled`**: MUST be `False`. When `config.yaml` is corrupt/missing, the fallback default must not block scans. Time-of-day filter is an unvalidated hypothesis — opt-in only.
 - **"Scan error" status**: Only set by the `except Exception` clause in `ScanWorker.run()`. Pre-filter rejections show the rejection reason string (e.g. "Volatility filter: ATR ratio 0.30 < min 0.50").
+- **Indicator presence guard** (Session 37): Immediately after `df = calculate_scan_mode(df)`, scanner checks that `adx`, `ema_9`, `rsi_14` columns are present and non-NaN. If any are missing, returns `"Indicators missing"` status. This surfaces `calculate_scan_mode()` silent failures (returns raw OHLCV when `ta` library fails) that would otherwise show as generic "No signal". Diagnostic key `_sym_diag["indicator_cols_missing"]` lists the absent columns.
 
 ### Misc
 - **OrderBook TF gate**: Never fires at 1h+ because `min_confidence/tf_weight = 0.60/0.55 = 1.09 > 1.0`. This is structural, not a bug.

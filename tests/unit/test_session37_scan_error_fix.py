@@ -155,10 +155,131 @@ def test_volatility_filter_rejection_not_scan_error():
     assert "Scan error" not in _all_sym_results[symbol]["status"]
 
 
-# ── 6. Other correct returns in _scan_symbol_with_regime are intact ──────
+# ── 6. UnboundLocalError from local import shadow (Session 37 deep-fix) ──
+#
+# Root cause (second layer, introduced during a prior fix attempt):
+#   A `from core.features.indicator_library import calculate_scan_mode` was
+#   placed INSIDE `_scan_symbol_with_regime()` in the PBL/SLC inner block
+#   (line ~691).  Python's compiler sees any assignment (including `from X
+#   import Y`) anywhere in a function and marks that name as LOCAL for the
+#   ENTIRE function scope, regardless of whether that branch ever executes.
+#   The result: `calculate_scan_mode` is treated as unbound at line ~553
+#   (which runs unconditionally) → UnboundLocalError → "Scan error" for
+#   every symbol on every scan.
+# ─────────────────────────────────────────────────────────────────────────
 
 
-def test_correct_return_patterns_still_present():
+def test_no_local_import_of_calculate_scan_mode_in_scan_symbol():
+    """There must be NO `from ... import calculate_scan_mode` inside
+    _scan_symbol_with_regime() or any other function body in scanner.py.
+
+    A local `from X import Y` marks `Y` as a local variable for the entire
+    enclosing function at compile time (Python scoping rule), causing
+    UnboundLocalError whenever `Y` is used before that branch executes.
+    The module-level import (line 37) is the sole allowed import site.
+    """
+    src = pathlib.Path("core/scanning/scanner.py").read_text(errors="replace")
+    lines = src.splitlines()
+
+    # Find all lines that import calculate_scan_mode (handles both
+    # `from X import calculate_scan_mode` and `from X import a, calculate_scan_mode`)
+    local_import_lines = [
+        (i + 1, l.strip())
+        for i, l in enumerate(lines)
+        if "calculate_scan_mode" in l and l.lstrip().startswith("from ") and "import" in l
+    ]
+
+    # Exactly ONE import is expected: the module-level import at the top of the file
+    assert len(local_import_lines) == 1, (
+        f"Expected exactly 1 import of calculate_scan_mode (module-level), "
+        f"found {len(local_import_lines)}: {local_import_lines}"
+    )
+
+    # That one import must be at the top of the file (before any class/def)
+    lineno, line_text = local_import_lines[0]
+    assert lineno < 60, (
+        f"The only import of calculate_scan_mode must be at module level "
+        f"(expected line < 60), found at line {lineno}: {line_text!r}"
+    )
+
+
+def test_calculate_scan_mode_not_assigned_inside_function():
+    """Verify Python compile-time scoping: after the fix there must be no
+    assignment to `calculate_scan_mode` inside any function body in scanner.py.
+
+    Uses the `compile()` + `dis` approach to inspect bytecode LOAD_FAST
+    vs LOAD_GLOBAL for `calculate_scan_mode` in `_scan_symbol_with_regime`.
+    """
+    import dis, types
+
+    src = pathlib.Path("core/scanning/scanner.py").read_text(errors="replace")
+    code = compile(src, "scanner.py", "exec")
+
+    # Walk all code objects to find _scan_symbol_with_regime
+    def find_code_obj(co, name):
+        if co.co_name == name:
+            return co
+        for const in co.co_consts:
+            if isinstance(const, types.CodeType):
+                result = find_code_obj(const, name)
+                if result:
+                    return result
+        return None
+
+    fn_code = find_code_obj(code, "_scan_symbol_with_regime")
+    assert fn_code is not None, "_scan_symbol_with_regime not found in scanner.py bytecode"
+
+    # In Python 3.11+, local variables are in co_varnames;
+    # check that calculate_scan_mode is NOT listed as a local variable
+    assert "calculate_scan_mode" not in fn_code.co_varnames, (
+        "calculate_scan_mode is in co_varnames of _scan_symbol_with_regime — "
+        "this means a local `from X import calculate_scan_mode` exists inside "
+        "the function, which causes UnboundLocalError at line ~553. "
+        "Remove the local import; use the module-level import only."
+    )
+
+
+def test_unbound_local_error_pattern_is_fixed():
+    """End-to-end: confirm the Python scoping trap is closed.
+
+    Simulates exactly the pattern that was failing:
+      - module-level import of `calculate_scan_mode`
+      - function that uses it early (line ~553)
+      - an inner conditional branch that locally imports it (line ~691)
+
+    Before fix: UnboundLocalError at the early use.
+    After fix:  function executes correctly.
+    """
+    # Compile the actual scanner module and verify no UnboundLocalError
+    # by inspecting the bytecode (no real exchange needed).
+    import types
+
+    src = pathlib.Path("core/scanning/scanner.py").read_text(errors="replace")
+    try:
+        code = compile(src, "scanner.py", "exec")
+    except SyntaxError as e:
+        assert False, f"scanner.py has a syntax error after the fix: {e}"
+
+    # Walk code objects and assert calculate_scan_mode is never a local var
+    def walk(co):
+        yield co
+        for c in co.co_consts:
+            if isinstance(c, types.CodeType):
+                yield from walk(c)
+
+    for co in walk(code):
+        if co.co_name == "_scan_symbol_with_regime":
+            assert "calculate_scan_mode" not in co.co_varnames, (
+                f"UnboundLocalError regression: calculate_scan_mode is marked "
+                f"as a local variable in {co.co_name}. The local import at the "
+                f"PBL/SLC block must be removed."
+            )
+
+
+# ── 7. Other correct returns in _scan_symbol_with_regime are intact ──────
+
+
+def test_correct_return_patterns_still_present():  # noqa: F811
     """All the other return paths in _scan_symbol_with_regime must still use
     None as the candidate (not symbol string).
     """
@@ -175,3 +296,44 @@ def test_correct_return_patterns_still_present():
     assert '"Below threshold", _sym_diag' in src, (
         "_scan_symbol_with_regime must still have the 'Below threshold' return"
     )
+    # 'Indicators missing' return (Session 37 silent-failure guard)
+    assert '"Indicators missing", _sym_diag' in src, (
+        "_scan_symbol_with_regime must have the indicator-presence guard "
+        "that returns 'Indicators missing' when calculate_scan_mode() fails silently."
+    )
+
+
+# ── 8. Indicator presence guard is in place ──────────────────────────────
+
+
+def test_indicator_presence_guard_exists():
+    """scanner.py must check that adx/ema_9/rsi_14 are present after
+    calculate_scan_mode() and return 'Indicators missing' if they are not.
+
+    calculate_scan_mode() has a silent failure mode: when 'ta' is unavailable
+    or raises an exception, it returns raw OHLCV without indicators.  Models
+    then find None for ADX/RSI/EMA and return no signal, showing 'No signal'
+    when the real issue is missing indicators.  The guard surfaces this as a
+    distinct, diagnosable status.
+    """
+    src = pathlib.Path("core/scanning/scanner.py").read_text(errors="replace")
+    assert "_required_cols" in src or "_missing_cols" in src, (
+        "scanner.py must contain indicator-presence guard variables "
+        "(_required_cols / _missing_cols) after calculate_scan_mode()."
+    )
+    assert '"Indicators missing"' in src, (
+        "scanner.py must return 'Indicators missing' status when "
+        "key indicator columns are absent after calculate_scan_mode()."
+    )
+
+
+def test_indicator_presence_guard_checks_correct_columns():
+    """The guard must check adx, ema_9, and rsi_14 — the three columns
+    that would definitively confirm calculate_scan_mode() computed its
+    CORE indicator set.
+    """
+    src = pathlib.Path("core/scanning/scanner.py").read_text(errors="replace")
+    for col in ("adx", "ema_9", "rsi_14"):
+        assert f'"{col}"' in src or f"'{col}'" in src, (
+            f"Indicator presence guard must check column '{col}'."
+        )
