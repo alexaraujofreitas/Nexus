@@ -46,7 +46,7 @@ When user says "Nexus Trader restarted", run full validation automatically. No s
 
 ---
 
-## Current System State (v1.3 Session 35 — 2026-03-27)
+## Current System State (v1.3 Session 36 — 2026-03-28)
 
 ### Production Config (`config.yaml` — runtime only, NOT `config/settings.yaml`)
 ```yaml
@@ -88,30 +88,30 @@ models:
 | MomentumBreakout | 63.5% | 4.17 | +1.21 | ✅ Active |
 | FundingRateModel | — | — | — | ✅ Active (context enrichment, low weight) |
 | SentimentModel | — | — | — | ✅ Active (FinBERT/VADER, low weight) |
-| PullbackLong | 48.4% | 1.1289 | — | ⚙️ Implemented v1.3 (mr_pbl_slc.enabled=false, pending review) |
-| SwingLowContinuation | 58.3% | 1.0008 | — | ⚙️ Implemented v1.3 (mr_pbl_slc.enabled=false, pending review) |
+| PullbackLong | 44.6% | 0.8995 | — | ⚙️ Implemented v1.3 (mr_pbl_slc.enabled=false, pending review) |
+| SwingLowContinuation | 60.9% | 1.5455 | — | ⚙️ Implemented v1.3 (mr_pbl_slc.enabled=false, pending review) |
 | MeanReversion | 32.2% | 0.21 | — | ❌ Archived v1.2 (−$18k Study 4) |
 | LiquiditySweep | 19.3% | 0.28 | — | ❌ Archived v1.2 (−$15k Study 4) |
 | VWAPReversion | — | 0.28 | — | ❌ Archived v1.2 (below 1.0 threshold, 2026-03-24) |
 | OrderBook | — | ≤1.0 | — | ❌ Archived v1.2 (structural 1h+ TF gate) |
 
-### v1.3 PBL+SLC System Backtest (commit ab466ec — 2026-03-27)
+### v1.3 PBL+SLC System Backtest (commit c2c5e30 — 2026-03-28)
 4 years (2022-03-22 → 2026-03-21), BTC+SOL+ETH, 30m primary, 200-bar rolling regime window
 
 | Scenario | CAGR | PF | WR | MaxDD | n |
 |----------|------|----|----|-------|---|
-| A: zero fees | 2.60% | 1.0179 | 56.4% | −29.78% | 1,275 |
-| B: 0.04%/side maker | −6.17% | 0.9572 | 56.4% | −41.98% | 1,275 |
+| A: zero fees | 66.44% | 1.3708 | 56.1% | −16.37% | 1,745 |
+| B: 0.04%/side maker | 47.44% | 1.2682 | 56.1% | −20.33% | 1,745 |
 | Research baseline (v7_final, BTC only) | 50.41% | 1.2975 | 61.1% | −20.66% | 1,476 |
 
-**Per-model breakdown (Scenario A):** PBL: n=246 WR=48.4% PF=1.1289 | SLC: n=1,029 WR=58.3% PF=1.0008
+**Per-model breakdown (Scenario A):** PBL: n=516 WR=44.6% PF=0.8995 | SLC: n=1,229 WR=60.9% PF=1.5455
 
-**Gap analysis:** PF gap (1.2975 → 1.0179) caused by: (1) NexusTrader HMM+rule-based RegimeClassifier
-labeling regimes differently from research script's vectorized labels — SLC fires on marginal bear_trend bars
-that the production classifier emits but research didn't count; (2) heat gate rejected 592 signals (46%);
-(3) multi-symbol correlation dampens WR. SLC system PF is 1.0008 (breakeven) — **do NOT enable without
-further research into regime alignment between production classifier and SLC trigger conditions.**
-PBL system PF=1.1289 is viable but marginal pre-fees. Both remain DISABLED (`mr_pbl_slc.enabled: false`).
+**Fix applied (Session 36):** v8 PF=1.0179 was caused by: (1) SignalGenerator ACTIVE_REGIMES hard gate
+blocking SLC entirely (required ACTIVE_REGIMES=[] + dual generate() calls with correct regime strings);
+(2) single-bar entry at close instead of next-bar open (required pending_entries buffer + sl<ep<tp
+validation matching research gen_pbl/gen_slc). Combined system now matches research baseline.
+PBL PF=0.8995 (Scenario A) is below 1.0 in isolation; combined system PF=1.2682 (with fees) clears the
+≥1.18 target. Both remain DISABLED (`mr_pbl_slc.enabled: false`) pending Stage 8 runtime validation.
 
 ### v1.2 Phase 5 Exit Performance Comparison
 | Exit Mode | PF | Max DD | WR |
@@ -123,9 +123,9 @@ PBL system PF=1.1289 is viable but marginal pre-fees. Both remain DISABLED (`mr_
 ### API Keys (encrypted in vault)
 - CryptoPanic, Coinglass, Reddit Client ID+Secret — all set
 
-### Test Suite (latest full run — Session 35, 2026-03-27)
-- **1,652 passed** (1,611 prior + 41 new mr_pbl_slc tests), 11 skipped (GPU), 0 failures
-- Session 35 added: `test_mr_pbl_slc_models.py` (41 tests: PBL×15, SLC×12, PosSizer×9, SignalGen integration×5)
+### Test Suite (latest full run — Session 36, 2026-03-28)
+- **85 passed**, 0 failed (mr_pbl_slc suite post-fix; full regression from Session 35: 1,652 passed, 11 skipped)
+- Session 36 updated: `test_mr_pbl_slc_models.py` — fixed rejection candle helper (`_make_pbl_df` explicit high/low), updated `test_active_regimes_declared` → `test_active_regimes_empty` for both PBL+SLC, corrected settings mock namespace in pos-sizer test
 
 ---
 
@@ -327,11 +327,41 @@ Pause conditions: Portfolio RED → `should_pause=True`; OR 2+ models RED → `s
 - **Scanner HTF fetch**: when enabled, fires `ThreadPoolExecutor(max_workers=2)` per symbol to fetch 4h+1h concurrently before calling `generate()`. Uses explicit pool + `finally` shutdown per threading rule.
 - **Regime guards in evaluate()**: both models explicitly check regime at entry (`if regime != REGIME_X: return None`). Do NOT rely solely on the SignalGenerator gate — direct test calls also need the guard.
 
-### PBL+SLC System Backtest Findings
-- Production HMM+rule-based RegimeClassifier emits `bear_trend` on bars the research script's vectorized labeler did not — SLC fires frequently on marginal bear bars where the R:R edge is thin.
-- SLC system PF=1.0008 across 1,029 trades is **breakeven**. Do NOT enable SLC live until regime alignment is investigated.
-- PBL system PF=1.1289 is marginal pre-fees (below target of 1.3+). Enable only after further investigation.
-- Investigation approach: compare RegimeClassifier `bear_trend` fraction vs research script's `bear_trend` fraction on the same data; if production emits 2× more bear_trend bars, tighten `adx_trend_threshold` or add a second filter to SLC.
+---
+
+## Session 36 — v1.3 PBL+SLC Regime Alignment Fix (2026-03-28)
+
+### Root Cause of v8 PF=1.0179 (commit c2c5e30)
+
+Two compounding bugs produced the PF gap vs research baseline:
+
+**Bug 1 — SignalGenerator ACTIVE_REGIMES hard gate blocked SLC entirely**
+- `ACTIVE_REGIMES = [REGIME_BEAR_TREND]` caused `if model.ACTIVE_REGIMES and not model.is_active_in_regime(regime)` to hard-block SLC whenever backtest called `generate()` with the NexusTrader HMM regime string (almost never "bear_trend").
+- Fix: Set `ACTIVE_REGIMES: list[str] = []` on both PBL and SLC. Regime control is now handled entirely inside `evaluate()` via `context["research_regime_30m"]` / `context["research_regime_1h"]` (primary) or NexusTrader string (fallback). REGIME_AFFINITY still suppresses models in crisis/liquidation_cascade via adaptive activation.
+- Fix: Replaced single `generate(nx_regime)` call with dual calls: `generate("bull_trend")` collecting only PBL signals when `res_regime_30m == RES_BULL_TREND`, and `generate("bear_trend")` collecting only SLC signals when `res_regime_1h == RES_BEAR_TREND`.
+
+**Bug 2 — Entry at current bar close instead of next bar open**
+- Research `gen_pbl` / `gen_slc` enter at `o_v[i+1]` (next bar's open) with validation `sl < ep < tp` (long) or `tp < ep < sl` (short). Backtest was entering at current bar's close.
+- Fix: Implemented `pending_entries: dict[str, dict]` buffer — signal buffered at bar i, filled at bar i+1's open with sl/tp validation before committing.
+
+### Files Changed (commit c2c5e30)
+- `core/regime/research_regime_classifier.py` — exact port of btc_regime_labeler.py (ADX ewm span=14, ATR_ratio expansion/crash thresholds, 3-bar hysteresis)
+- `core/signals/sub_models/pullback_long_model.py` — `ACTIVE_REGIMES=[]`, all 3 rejection candle conditions, `context["research_regime_30m"]` primary gate
+- `core/signals/sub_models/swing_low_continuation_model.py` — `ACTIVE_REGIMES=[]`, `context["research_regime_1h"]` primary gate
+- `core/scanning/scanner.py` — injects `research_regime_{30m,1h}` into signal context via `_res_classify()`
+- `scripts/mr_pbl_slc_research/backtest_v9_system.py` — dual generate() calls + pending_entries next-bar fill
+- `tests/unit/test_mr_pbl_slc_models.py` — rejection candle helper fix + ACTIVE_REGIMES tests updated
+- `reports/mr_pbl_slc_v9_system.json` — final v9 results
+
+### Key Architectural Rule (ACTIVE_REGIMES=[] dual-call pattern)
+- **Hard gate bypass**: `ACTIVE_REGIMES=[]` makes `is_active_in_regime()` always return True. Regime enforcement moves entirely inside `evaluate()`.
+- **Dual generate() pattern**: backtest (and scanner) must call `generate("bull_trend")` for PBL path AND `generate("bear_trend")` for SLC path, then filter by `model_name`. A single call with NexusTrader HMM regime will suppress whichever model's regime doesn't match.
+- **REGIME_AFFINITY still active**: crisis / liquidation_cascade affinities (0.0) continue to suppress models via adaptive activation weight check — not bypassed by `ACTIVE_REGIMES=[]`.
+
+### PBL+SLC Backtest Findings (v9 — resolved)
+- Combined system PF=1.2682 (with 0.04%/side fees), CAGR=47.44%, WR=56.1% — targets met (PF≥1.18, CAGR≥30%).
+- SLC dominates returns: PF=1.5455 (zero fees), n=1,229. PBL PF=0.8995 (below 1.0 in isolation) but combined portfolio clears target.
+- Regime alignment gap (production HMM vs research vectorized labeler) is now mitigated — both models use `research_regime_classifier.py` as the primary gate, bypassing the HMM entirely.
 
 ---
 
@@ -344,7 +374,7 @@ Pause conditions: Portfolio RED → `should_pause=True`; OR 2+ models RED → `s
 - Monitor LiquiditySweepModel OOS expectancy early demo — if also negative, keep disabled
 - Monitor target capture % in Exit Efficiency panel (target: 80–120%)
 - If stop tightness flag fires in calm markets: review ATR multipliers in sub-model `REGIME_ATR_MULTIPLIERS`
-- **[v1.3 PBL/SLC]** Investigate regime alignment gap — compare production RegimeClassifier `bear_trend` fraction vs research-script fraction on 4-year BTC data; resolve before enabling SLC live
+- **[v1.3 PBL/SLC]** ~~Investigate regime alignment gap~~ — **RESOLVED Session 36**: `research_regime_classifier.py` is now the primary gate for both models; production HMM no longer used for PBL/SLC regime decisions
 - **[v1.3 PBL/SLC]** Run Stage 8 runtime validation: launch NexusTrader with `mr_pbl_slc.enabled: true`, trigger scanner, verify PBL/SLC signals appear in logs with correct direction/SL/TP
 
 ---
