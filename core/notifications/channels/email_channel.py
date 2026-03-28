@@ -61,11 +61,18 @@ class EmailChannel:
     def is_configured(self) -> bool:
         return bool(self._host and self._user and self._pass and self._from and self._to)
 
-    def send(self, message: str, subject: Optional[str] = None) -> bool:
+    def send(
+        self,
+        message: str,
+        subject: Optional[str] = None,
+        html_body: Optional[str] = None,
+    ) -> bool:
         """
         Send an email.
-        message : plain-text body (the 'body' template key)
-        subject : email subject line (the 'subject' template key)
+        message   : plain-text body (the 'body' template key)
+        subject   : email subject line (the 'subject' template key)
+        html_body : rich HTML body from template; when supplied the channel
+                    uses it directly instead of the <pre> fallback.
         Returns True on success, False on failure.
         """
         if not self._enabled:
@@ -85,17 +92,21 @@ class EmailChannel:
                 msg["From"]    = self._from
                 msg["To"]      = ", ".join(self._to)
 
-                # Plain text part
+                # Plain text part (always included for non-HTML clients)
                 text_part = MIMEText(message, "plain", "utf-8")
 
-                # Basic HTML part (monospace body for trading data)
-                html_body = (
-                    "<html><body style='font-family:monospace;background:#0A0E1A;"
-                    "color:#C8D0E0;padding:20px'>"
-                    f"<pre style='color:#C8D0E0'>{message}</pre>"
-                    "</body></html>"
-                )
-                html_part = MIMEText(html_body, "html", "utf-8")
+                # HTML part — use rich template HTML when provided,
+                # otherwise fall back to a styled <pre> wrapper.
+                if html_body:
+                    _html = html_body
+                else:
+                    _html = (
+                        "<html><body style='font-family:monospace;background:#0A0E1A;"
+                        "color:#C8D0E0;padding:20px'>"
+                        f"<pre style='color:#C8D0E0'>{message}</pre>"
+                        "</body></html>"
+                    )
+                html_part = MIMEText(_html, "html", "utf-8")
 
                 # Attach both parts — email client picks best
                 msg.attach(text_part)

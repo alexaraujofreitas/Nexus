@@ -96,10 +96,18 @@ class GeminiChannel:
 
     # ── Send ──────────────────────────────────────────────────
 
-    def send(self, message: str, subject: Optional[str] = None) -> bool:
+    def send(
+        self,
+        message: str,
+        subject: Optional[str] = None,
+        html_body: Optional[str] = None,
+    ) -> bool:
         """
         Send a notification email via Gmail.
         Optionally enriches body with Gemini AI analysis.
+        html_body : rich HTML body from template; when supplied the channel
+                    uses it directly (AI enrichment appended in a separate card
+                    below if available).
         Returns True on success.
         """
         if not self._enabled:
@@ -115,12 +123,24 @@ class GeminiChannel:
         subject = subject or "NexusTrader — Gemini Notification"
         body    = message
 
-        # Optional Gemini AI enrichment
+        # Optional Gemini AI enrichment (plain-text only)
+        enrichment_html = ""
         if self._ai_enrich and self._api_key:
             try:
                 enriched = self._ai_enrich_text(message)
                 if enriched:
                     body = message + "\n\n── Gemini Analysis ───────────────────\n" + enriched
+                    import html as _h
+                    enrichment_html = (
+                        "<div style='margin-top:14px;border:1px solid #1A3050;"
+                        "border-left:3px solid #4285F4;border-radius:6px;"
+                        "padding:14px 16px;background:#0A1628;font-size:12px;"
+                        "color:#93C5FD;font-family:Arial,sans-serif'>"
+                        "<div style='font-size:10px;letter-spacing:1px;color:#4285F4;"
+                        "font-weight:700;margin-bottom:8px'>GEMINI AI ANALYSIS</div>"
+                        f"<pre style='margin:0;white-space:pre-wrap;color:#C8D0E0'>"
+                        f"{_h.escape(enriched)}</pre></div>"
+                    )
             except Exception as exc:
                 logger.debug("GeminiChannel: AI enrichment skipped — %s", exc)
 
@@ -134,19 +154,27 @@ class GeminiChannel:
                 # Plain text
                 text_part = MIMEText(body, "plain", "utf-8")
 
-                # HTML — NexusTrader dark theme with Gemini accent
-                html_body = (
-                    "<html><body style='font-family:monospace;background:#0A0E1A;"
-                    "color:#C8D0E0;padding:20px'>"
-                    "<div style='border-left:3px solid #4285F4;padding-left:12px;"
-                    "margin-bottom:16px'>"
-                    "<span style='color:#4285F4;font-size:11px;font-weight:bold;"
-                    "letter-spacing:1px'>NEXUSTRADER  ·  GEMINI CHANNEL</span>"
-                    "</div>"
-                    f"<pre style='color:#C8D0E0;white-space:pre-wrap'>{body}</pre>"
-                    "</body></html>"
+                # HTML — use rich template when provided; insert Gemini card
+                # before the closing </body> tag if enrichment is available.
+                if html_body:
+                    if enrichment_html and "</body>" in html_body:
+                        _html = html_body.replace("</body>", enrichment_html + "</body>", 1)
+                    else:
+                        _html = html_body
+                else:
+                    _html = (
+                        "<html><body style='font-family:monospace;background:#0A0E1A;"
+                        "color:#C8D0E0;padding:20px'>"
+                        "<div style='border-left:3px solid #4285F4;padding-left:12px;"
+                        "margin-bottom:16px'>"
+                        "<span style='color:#4285F4;font-size:11px;font-weight:bold;"
+                        "letter-spacing:1px'>NEXUSTRADER  ·  GEMINI CHANNEL</span>"
+                        "</div>"
+                        f"<pre style='color:#C8D0E0;white-space:pre-wrap'>{body}</pre>"
+                        + enrichment_html +
+                        "</body></html>"
                 )
-                html_part = MIMEText(html_body, "html", "utf-8")
+                html_part = MIMEText(_html, "html", "utf-8")
 
                 msg.attach(text_part)
                 msg.attach(html_part)

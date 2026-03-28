@@ -1294,7 +1294,7 @@ def _build_trade_opened_html(data: dict) -> str:
           <div class="card-header">
             <span style="font-weight:700;font-size:13px;">🤖 AI Entry Quality</span>
             <span class="badge" style="{badge_style};float:right;">
-              {e(a_emoji)} {e(a_cls)} &nbsp; {e(a_overall)}/100
+              {e(str(a_emoji))} {e(str(a_cls))} &nbsp; {e(str(a_overall))}/100
             </span>
           </div>
           <div class="card-body">
@@ -1408,12 +1408,12 @@ def _build_trade_closed_html(data: dict) -> str:
           <div class="card-header">
             <span style="font-weight:700;font-size:13px;">🤖 AI Trade Quality Scorecard</span>
             <span class="badge" style="{badge_style};float:right;">
-              {e(a_emoji)} {e(a_cls)} &nbsp; {e(a_overall)}/100
+              {e(str(a_emoji))} {e(str(a_cls))} &nbsp; {e(str(a_overall))}/100
             </span>
           </div>
           <div class="card-body">
             <div style="text-align:center;margin-bottom:14px;">
-              <div style="font-size:32px;font-weight:700;color:{overall_color};">{e(a_overall)}</div>
+              <div style="font-size:32px;font-weight:700;color:{overall_color};">{e(str(a_overall))}</div>
               <div style="font-size:11px;color:#8899AA;">Overall Score</div>
             </div>
             {_score_row_html("Setup Quality",     a_setup)}
@@ -1570,6 +1570,525 @@ def _build_partial_exit_html(data: dict) -> str:
 <div class="footer">NexusTrader v1.2 • {timestamp}</div>
 </div></body></html>"""
     return html
+
+
+# ══════════════════════════════════════════════════════════════
+# HTML builders for remaining templates (Session 38)
+# All templates now produce a rich html_body key for email channels.
+# Uses the same _TRADE_HTML_CSS base + shared _build_email_html() helper.
+# ══════════════════════════════════════════════════════════════
+
+def _esc(v) -> str:
+    """HTML-escape any value to string."""
+    return _html_mod.escape(str(v)) if v is not None else ""
+
+
+def _build_email_html(
+    title: str,
+    subtitle: str,
+    header_color: str,
+    rows: "list[tuple[str, str, str]]",
+    timestamp: str,
+    alert_box: "Optional[str]" = None,
+    extra_sections: "list[tuple[str, list[tuple[str,str,str]]]]" = None,
+    badge_html: str = "",
+) -> str:
+    """
+    Generic professional HTML email builder.
+
+    Parameters
+    ----------
+    title         : Main heading (e.g. "STOP-LOSS HIT")
+    subtitle      : Sub-heading (e.g. "BTCUSDT · LONG")
+    header_color  : Left-border accent colour (hex)
+    rows          : list of (label, value, value_color_hex) — use "" for default colour
+    timestamp     : UTC timestamp string
+    alert_box     : Optional red/amber highlighted message at bottom of first card
+    extra_sections: Optional list of (section_title, rows) additional cards
+    badge_html    : Optional HTML injected next to the title (right-aligned badge)
+    """
+    def _row(label: str, value: str, color: str = "") -> str:
+        vc = f"color:{color};" if color else ""
+        return (
+            f'<tr>'
+            f'<td style="padding:5px 0;font-size:13px;color:#8899AA;'
+            f'width:38%;vertical-align:top">{_esc(label)}</td>'
+            f'<td style="padding:5px 0 5px 8px;font-size:13px;font-weight:600;'
+            f'color:#E8EBF0;{vc}vertical-align:top">{value}</td>'
+            f'</tr>'
+        )
+
+    rows_html = "".join(_row(l, v, c) for l, v, c in rows)
+
+    alert_html = ""
+    if alert_box:
+        alert_html = (
+            f'<div style="margin-top:12px;padding:10px 14px;background:#1A0A0A;'
+            f'border-left:3px solid #FF3355;border-radius:4px;font-size:12px;'
+            f'color:#FCA5A5;line-height:1.6">{_esc(alert_box)}</div>'
+        )
+
+    extra_html = ""
+    if extra_sections:
+        for sec_title, sec_rows in extra_sections:
+            sec_rows_html = "".join(_row(l, v, c) for l, v, c in sec_rows)
+            extra_html += f"""
+<div class="card" style="margin-top:10px">
+  <div class="card-header">
+    <span style="font-weight:700;font-size:13px;color:#C8D0E0">{_esc(sec_title)}</span>
+  </div>
+  <div class="card-body">
+    <table width="100%" cellpadding="0" cellspacing="0">{sec_rows_html}</table>
+  </div>
+</div>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>{_TRADE_HTML_CSS}</style></head>
+<body><div class="wrap">
+
+<!-- Header card -->
+<div class="card" style="border-left:3px solid {header_color}">
+  <div class="card-header" style="border-bottom:1px solid #1A2332">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="vertical-align:middle">
+        <span style="font-weight:700;font-size:14px;color:{header_color}">{_esc(title)}</span>
+        <span style="margin-left:8px;font-size:12px;color:#8899AA">{_esc(subtitle)}</span>
+      </td>
+      <td align="right" style="vertical-align:middle">{badge_html}</td>
+    </tr></table>
+  </div>
+  <div class="card-body">
+    <table width="100%" cellpadding="0" cellspacing="0">
+{rows_html}
+    </table>
+{alert_html}
+  </div>
+</div>
+
+{extra_html}
+
+<div class="footer">NexusTrader &nbsp;·&nbsp; {_esc(timestamp)}</div>
+</div></body></html>"""
+
+
+# ── trade_stopped HTML ─────────────────────────────────────────
+
+def _build_trade_stopped_html(data: dict) -> str:
+    sym       = _esc(data.get("symbol", "???"))
+    direction = (data.get("direction", "long") or "long").upper()
+    entry     = _esc(_fmt_price(data.get("entry_price")))
+    stop      = _esc(_fmt_price(data.get("stop_price")))
+    loss      = data.get("loss", 0.0)
+    loss_pct  = data.get("loss_pct", 0.0)
+    loss_str  = f"−{abs(float(loss_pct or 0)):.2f}% &nbsp;({_fmt_price(abs(float(loss or 0)), 2)} USDT)"
+    ts        = _esc(_now_utc())
+    dir_color = "#00CC77" if direction in ("BUY", "LONG") else "#FF3355"
+    dir_badge = (
+        f'<span style="background:{"#064E3B" if direction in ("BUY","LONG") else "#7F1D1D"};'
+        f'color:{dir_color};font-size:10px;font-weight:700;padding:2px 7px;'
+        f'border-radius:3px;letter-spacing:1px">{direction}</span>'
+    )
+    return _build_email_html(
+        title="STOP-LOSS HIT",
+        subtitle=f"{sym} · {direction}",
+        header_color="#FF3355",
+        rows=[
+            ("Asset",       f"{sym} &nbsp;{dir_badge}", ""),
+            ("Entry Price", entry,                       "#E8EBF0"),
+            ("Stop Triggered", stop,                     "#FF3355"),
+            ("Loss",        loss_str,                    "#FF3355"),
+            ("Time",        ts,                          "#8899AA"),
+        ],
+        timestamp=ts,
+        alert_box="Position closed by stop-loss. Review trade parameters before next entry.",
+    )
+
+
+# ── trade_rejected HTML ────────────────────────────────────────
+
+def _build_trade_rejected_html(data: dict) -> str:
+    sym      = _esc(data.get("symbol", "???"))
+    strategy = _esc(str(data.get("strategy", "—")))
+    reason   = _esc(str(data.get("reason", "risk gate")))
+    conf     = data.get("confidence", 0.0)
+    regime   = _esc(str(data.get("regime", "—")))
+    ts       = _esc(_now_utc())
+    conf_pct = f"{float(conf or 0):.0%}"
+    conf_color = "#00CC77" if float(conf or 0) >= 0.60 else ("#FFB300" if float(conf or 0) >= 0.40 else "#FF3355")
+    return _build_email_html(
+        title="SIGNAL REJECTED",
+        subtitle=sym,
+        header_color="#FFB300",
+        rows=[
+            ("Asset",      sym,       ""),
+            ("Strategy",   strategy,  "#E8EBF0"),
+            ("Confidence", conf_pct,  conf_color),
+            ("Regime",     regime,    "#93C5FD"),
+            ("Reject Reason", reason, "#FCA5A5"),
+            ("Time",       ts,        "#8899AA"),
+        ],
+        timestamp=ts,
+    )
+
+
+# ── trade_modified HTML ────────────────────────────────────────
+
+def _build_trade_modified_html(data: dict) -> str:
+    sym     = _esc(data.get("symbol", "???"))
+    change  = _esc(str(data.get("change_description", "parameters updated")))
+    old_sl  = _esc(_fmt_price(data.get("old_stop_loss")))
+    new_sl  = _esc(_fmt_price(data.get("new_stop_loss")))
+    old_tp  = _esc(_fmt_price(data.get("old_take_profit")))
+    new_tp  = _esc(_fmt_price(data.get("new_take_profit")))
+    ts      = _esc(_now_utc())
+    arrow   = ' <span style="color:#4A6A8A">→</span> '
+    return _build_email_html(
+        title="TRADE MODIFIED",
+        subtitle=sym,
+        header_color="#1E90FF",
+        rows=[
+            ("Asset",      sym,                              ""),
+            ("Change",     change,                           "#E8EBF0"),
+            ("Stop Loss",  f"{old_sl}{arrow}{new_sl}",       "#FFB300"),
+            ("Take Profit",f"{old_tp}{arrow}{new_tp}",       "#00CC77"),
+            ("Time",       ts,                               "#8899AA"),
+        ],
+        timestamp=ts,
+    )
+
+
+# ── strategy_signal HTML ───────────────────────────────────────
+
+def _build_strategy_signal_html(data: dict) -> str:
+    sym      = _esc(data.get("symbol", "???"))
+    direction= (data.get("direction", "long") or "long").upper()
+    strategy = _esc(str(data.get("strategy", "—")))
+    conf     = data.get("confidence", 0.0)
+    regime   = _esc(str(data.get("regime", "—")))
+    entry    = _esc(_fmt_price(data.get("entry_price")))
+    sl       = _esc(_fmt_price(data.get("stop_loss")))
+    tp       = _esc(_fmt_price(data.get("take_profit")))
+    signals  = data.get("contributing_signals", [])
+    sigs_str = _esc(", ".join(signals[:5])) if signals else "—"
+    ts       = _esc(_now_utc())
+    conf_pct = f"{float(conf or 0):.0%}"
+    dir_color = "#00CC77" if direction in ("BUY", "LONG") else "#FF3355"
+    dir_badge = (
+        f'<span style="background:{"#064E3B" if direction in ("BUY","LONG") else "#7F1D1D"};'
+        f'color:{dir_color};font-size:10px;font-weight:700;padding:2px 7px;'
+        f'border-radius:3px;letter-spacing:1px">{direction}</span>'
+    )
+    return _build_email_html(
+        title="STRATEGY SIGNAL",
+        subtitle=f"{sym} · {direction}",
+        header_color="#1E90FF",
+        rows=[
+            ("Asset",       f"{sym} &nbsp;{dir_badge}", ""),
+            ("Strategy",    strategy,                    "#E8EBF0"),
+            ("Confidence",  conf_pct,                    "#00CC77"),
+            ("Regime",      regime,                      "#93C5FD"),
+        ],
+        timestamp=ts,
+        extra_sections=[
+            ("Entry Parameters", [
+                ("Entry Price",  entry,   "#E8EBF0"),
+                ("Stop Loss",    sl,      "#FF3355"),
+                ("Take Profit",  tp,      "#00CC77"),
+                ("Signals",      sigs_str,"#8899AA"),
+            ]),
+        ],
+    )
+
+
+# ── risk_warning HTML ──────────────────────────────────────────
+
+def _build_risk_warning_html(data: dict) -> str:
+    warning_type = _esc(str(data.get("warning_type", "Risk Warning")))
+    level        = str(data.get("level", "high")).lower()
+    message      = _esc(str(data.get("message", "Risk threshold exceeded")))
+    current_val  = _esc(str(data.get("current_value", "—")))
+    threshold    = _esc(str(data.get("threshold", "—")))
+    ts           = _esc(_now_utc())
+    level_colors = {
+        "low":      ("#00CC77", "#0A3320"),
+        "medium":   ("#FFB300", "#2A1A00"),
+        "high":     ("#FF3355", "#3A0A14"),
+        "critical": ("#FF0033", "#500010"),
+    }
+    lc, lbg = level_colors.get(level, ("#FF3355", "#3A0A14"))
+    level_badge = (
+        f'<span style="background:{lbg};color:{lc};font-size:10px;font-weight:700;'
+        f'padding:2px 8px;border-radius:3px;letter-spacing:1px">{level.upper()}</span>'
+    )
+    return _build_email_html(
+        title="RISK WARNING",
+        subtitle=warning_type,
+        header_color=lc,
+        rows=[
+            ("Warning Type", warning_type,       ""),
+            ("Level",        level_badge,        ""),
+            ("Message",      message,            "#FCA5A5"),
+            ("Current Value",current_val,        "#FFB300"),
+            ("Threshold",    threshold,          "#8899AA"),
+            ("Time",         ts,                "#8899AA"),
+        ],
+        timestamp=ts,
+        alert_box=f"RISK ACTION REQUIRED — {message}",
+    )
+
+
+# ── market_condition HTML ──────────────────────────────────────
+
+def _build_market_condition_html(data: dict) -> str:
+    condition  = _esc(str(data.get("condition", "Market Alert")))
+    regime     = _esc(str(data.get("regime", "—")))
+    message    = _esc(str(data.get("message", "")))
+    confidence = data.get("confidence", 0.0)
+    ts         = _esc(_now_utc())
+    conf_pct   = f"{float(confidence or 0):.0%}"
+    return _build_email_html(
+        title="MARKET CONDITION ALERT",
+        subtitle=condition,
+        header_color="#1E90FF",
+        rows=[
+            ("Condition",  condition,  "#E8EBF0"),
+            ("Regime",     regime,     "#93C5FD"),
+            ("Confidence", conf_pct,   "#FFB300"),
+            ("Details",    message,    "#C8D0E0"),
+            ("Time",       ts,        "#8899AA"),
+        ],
+        timestamp=ts,
+    )
+
+
+# ── system_error HTML ─────────────────────────────────────────
+
+def _build_system_error_html(data: dict) -> str:
+    component = _esc(str(data.get("component", "System")))
+    error     = _esc(str(data.get("error", "Unknown error")))
+    severity  = str(data.get("severity", "error")).upper()
+    ts        = _esc(_now_utc())
+    sev_color = "#FF0033" if severity == "CRITICAL" else "#FF3355"
+    sev_badge = (
+        f'<span style="background:#3A0A14;color:{sev_color};font-size:10px;'
+        f'font-weight:700;padding:2px 8px;border-radius:3px;letter-spacing:1px">'
+        f'{severity}</span>'
+    )
+    return _build_email_html(
+        title="SYSTEM ERROR",
+        subtitle=component,
+        header_color="#FF3355",
+        rows=[
+            ("Component", component,  "#E8EBF0"),
+            ("Severity",  sev_badge,  ""),
+            ("Error",     error,      "#FCA5A5"),
+            ("Time",      ts,        "#8899AA"),
+        ],
+        timestamp=ts,
+        alert_box=f"SYSTEM ALERT: {component} reported an error. Immediate review required.",
+    )
+
+
+# ── system_alert HTML ─────────────────────────────────────────
+
+def _build_system_alert_html(data: dict) -> str:
+    title_str = _esc(str(data.get("title", "System Alert")))
+    message   = _esc(str(data.get("message", "")))
+    ts        = _esc(_now_utc())
+    return _build_email_html(
+        title="SYSTEM ALERT",
+        subtitle=title_str,
+        header_color="#1E90FF",
+        rows=[
+            ("Alert",   title_str, "#E8EBF0"),
+            ("Details", message,   "#C8D0E0"),
+            ("Time",    ts,       "#8899AA"),
+        ],
+        timestamp=ts,
+    )
+
+
+# ── emergency_stop HTML ───────────────────────────────────────
+
+def _build_emergency_stop_html(data: dict) -> str:
+    reason   = _esc(str(data.get("reason", "emergency stop triggered")))
+    open_pos = _esc(str(data.get("open_positions", 0)))
+    equity   = _esc(_fmt_price(data.get("equity"), 2))
+    ts       = _esc(_now_utc())
+    return _build_email_html(
+        title="⚠ EMERGENCY STOP ACTIVATED",
+        subtitle="ALL TRADING HALTED",
+        header_color="#FF0033",
+        rows=[
+            ("Reason",          reason,   "#FCA5A5"),
+            ("Positions Closed",open_pos, "#FF3355"),
+            ("Equity",          f"{equity} USDT", "#E8EBF0"),
+            ("Status",          "TRADING HALTED — Manual review required", "#FF3355"),
+            ("Time",            ts,       "#8899AA"),
+        ],
+        timestamp=ts,
+        alert_box="EMERGENCY STOP: All positions have been closed. Do not resume trading without reviewing the cause.",
+    )
+
+
+# ── crash_* HTML builders ─────────────────────────────────────
+
+def _build_crash_html(
+    tier: str,
+    score: float,
+    actions: str,
+    advisory: str,
+    header_color: str,
+    ts: str,
+) -> str:
+    score_str = f"{score:.1f} / 10.0"
+    # Score bar
+    pct = min(100, int(score * 10))
+    bar = (
+        f'<div style="background:#141E2E;border-radius:3px;height:6px;margin-top:4px">'
+        f'<div style="background:{header_color};width:{pct}%;height:6px;border-radius:3px"></div>'
+        f'</div>'
+    )
+    return _build_email_html(
+        title=f"CRASH DEFENSE — {tier}",
+        subtitle=f"Score: {score_str}",
+        header_color=header_color,
+        rows=[
+            ("Tier",         f'<span style="font-weight:700;color:{header_color}">{_esc(tier)}</span>', ""),
+            ("Crash Score",  f"{score_str} {bar}", ""),
+            ("Actions Taken",_esc(actions), "#FCA5A5"),
+            ("Time",         _esc(ts), "#8899AA"),
+        ],
+        timestamp=_esc(ts),
+        alert_box=advisory,
+    )
+
+
+def _build_crash_defensive_html(data: dict) -> str:
+    return _build_crash_html(
+        tier="DEFENSIVE",
+        score=float(data.get("score", 0.0)),
+        actions=str(data.get("actions", "New longs halted")),
+        advisory="Defensive mode active. No new long entries permitted. Monitor closely.",
+        header_color="#FFB300",
+        ts=str(data.get("timestamp", _now_utc())),
+    )
+
+
+def _build_crash_high_alert_html(data: dict) -> str:
+    return _build_crash_html(
+        tier="HIGH ALERT",
+        score=float(data.get("score", 0.0)),
+        actions=str(data.get("actions", "50% of long positions closed")),
+        advisory="High Alert: 50% of longs closed. Trailing stops activated on remaining positions.",
+        header_color="#FF3355",
+        ts=str(data.get("timestamp", _now_utc())),
+    )
+
+
+def _build_crash_emergency_html(data: dict) -> str:
+    return _build_crash_html(
+        tier="EMERGENCY",
+        score=float(data.get("score", 0.0)),
+        actions=str(data.get("actions", "All long positions closed")),
+        advisory="EMERGENCY: All longs closed. System in READ-ONLY mode. No new trades until manual override.",
+        header_color="#FF0033",
+        ts=str(data.get("timestamp", _now_utc())),
+    )
+
+
+def _build_crash_systemic_html(data: dict) -> str:
+    return _build_crash_html(
+        tier="SYSTEMIC CRISIS",
+        score=float(data.get("score", 0.0)),
+        actions=str(data.get("actions", "All positions closed")),
+        advisory="SYSTEMIC CRISIS: ALL positions closed. SAFE MODE active. Manual restart required before resuming.",
+        header_color="#CC0033",
+        ts=str(data.get("timestamp", _now_utc())),
+    )
+
+
+# ── daily_summary HTML ────────────────────────────────────────
+
+def _build_daily_summary_html(data: dict) -> str:
+    date     = _esc(str(data.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))))
+    trades   = int(data.get("total_trades", 0))
+    wins     = int(data.get("wins", 0))
+    losses   = int(data.get("losses", 0))
+    pnl      = float(data.get("daily_pnl", 0.0) or 0.0)
+    pnl_pct  = float(data.get("daily_pnl_pct", 0.0) or 0.0)
+    win_rate = float(data.get("win_rate", 0.0) or 0.0)
+    equity   = _esc(_fmt_price(data.get("equity"), 2))
+    regime   = _esc(str(data.get("current_regime", "—")))
+    ts       = _esc(_now_utc())
+
+    pnl_color = "#00CC77" if pnl >= 0 else "#FF3355"
+    pnl_str   = f'<span style="color:{pnl_color};font-weight:700">{("+" if pnl>=0 else "")}{pnl_pct:.2f}% ({("+" if pnl>=0 else "")}{_fmt_price(pnl, 2)} USDT)</span>'
+    wr_color  = "#00CC77" if win_rate >= 50 else "#FFB300"
+
+    # Win rate bar
+    wr_bar = (
+        f'<div style="background:#141E2E;border-radius:3px;height:5px;margin-top:4px;max-width:200px">'
+        f'<div style="background:{wr_color};width:{min(100,win_rate):.0f}%;height:5px;border-radius:3px"></div>'
+        f'</div>'
+    )
+
+    return _build_email_html(
+        title="DAILY SUMMARY",
+        subtitle=date,
+        header_color="#1E90FF",
+        rows=[
+            ("Date",        date,   "#E8EBF0"),
+            ("Daily P&amp;L", pnl_str, ""),
+            ("Equity",      f"{equity} USDT", "#E8EBF0"),
+            ("Total Trades", str(trades), "#E8EBF0"),
+            ("Wins / Losses",f'{wins}W &nbsp;/&nbsp; {losses}L', "#E8EBF0"),
+            ("Win Rate",    f'{win_rate:.1f}% {wr_bar}', wr_color),
+            ("Regime",      regime, "#93C5FD"),
+            ("Time",        ts,    "#8899AA"),
+        ],
+        timestamp=ts,
+    )
+
+
+# ── Wire html_body into the remaining template functions ───────
+# (the 13 templates that previously returned no html_body)
+
+def _wrap_html(fn):
+    """Decorator: call html builder named '_build_{fn.__name__}_html', attach result."""
+    import functools
+    builder_name = f"_build_{fn.__name__}_html"
+
+    @functools.wraps(fn)
+    def wrapper(data: dict) -> dict:
+        result = fn(data)
+        builder = globals().get(builder_name)
+        if builder is not None:
+            try:
+                result["html_body"] = builder(data)
+            except Exception:
+                pass
+        return result
+    return wrapper
+
+
+# Apply to all templates that had no html_body
+trade_stopped    = _wrap_html(trade_stopped)
+trade_rejected   = _wrap_html(trade_rejected)
+trade_modified   = _wrap_html(trade_modified)
+strategy_signal  = _wrap_html(strategy_signal)
+risk_warning     = _wrap_html(risk_warning)
+market_condition = _wrap_html(market_condition)
+system_error     = _wrap_html(system_error)
+system_alert     = _wrap_html(system_alert)
+emergency_stop   = _wrap_html(emergency_stop)
+crash_defensive  = _wrap_html(crash_defensive)
+crash_high_alert = _wrap_html(crash_high_alert)
+crash_emergency  = _wrap_html(crash_emergency)
+crash_systemic   = _wrap_html(crash_systemic)
+daily_summary    = _wrap_html(daily_summary)
 
 
 # ── Template registry ─────────────────────────────────────────
