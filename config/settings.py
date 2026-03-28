@@ -231,7 +231,7 @@ DEFAULT_CONFIG = {
     # Phase 1 — Trade filters
     "filters": {
         "time_of_day": {
-            "enabled": True,
+            "enabled": False,   # hypothesis filter — not yet validated; prod config overrides
             "start_hour_utc": 12,
             "end_hour_utc": 21,
         },

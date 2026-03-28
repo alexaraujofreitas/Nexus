@@ -544,7 +544,7 @@ class ScanWorker(QThread):
             _pf_ok, _pf_reason = apply_pre_scan_filters(symbol, df, self._timeframe)
             if not _pf_ok:
                 logger.debug("Scanner: %s pre-filter REJECTED — %s", symbol, _pf_reason)
-                return symbol, None, None, None, _pf_reason, {}
+                return None, "", 0.0, df, _pf_reason, _sym_diag
         except Exception as _pf_exc:
             logger.debug("Scanner: pre-filter error for %s: %s", symbol, _pf_exc)
 
