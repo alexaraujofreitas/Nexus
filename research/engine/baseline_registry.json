@@ -1,0 +1,34 @@
+{
+  "name": "canonical_2026-03-28",
+  "locked_at": "2026-03-28",
+  "commit_hash": "90b94b1",
+  "date_start": "2022-03-22",
+  "date_end": "2026-03-21",
+  "symbols": [
+    "BTC/USDT",
+    "SOL/USDT",
+    "ETH/USDT"
+  ],
+  "n_trades": 1731,
+  "profit_factor": 1.3798,
+  "profit_factor_fees": 1.2758,
+  "win_rate": 0.5638,
+  "cagr": 0.6754,
+  "tol_n_min": 1705,
+  "tol_n_max": 1756,
+  "tol_pf_min": 1.3522,
+  "tol_pf_max": 1.4074,
+  "tol_pf_fees_min": 1.2503,
+  "tol_pf_fees_max": 1.3013,
+  "dataset_fingerprints": {
+    "BTC/USDT/30m": "407654cf353f70d6",
+    "BTC/USDT/4h": "f7088e8f19f1f0a5",
+    "BTC/USDT/1h": "ca9bf57c05c5696a",
+    "SOL/USDT/30m": "1e058780b15a3ecb",
+    "SOL/USDT/4h": "f72c472c8eac69d1",
+    "SOL/USDT/1h": "59ce567baed7fd98",
+    "ETH/USDT/30m": "4fd2818df59e2c2a",
+    "ETH/USDT/4h": "bd40fb48d618a3d5",
+    "ETH/USDT/1h": "de1242932de4a2aa"
+  }
+}
