@@ -36,8 +36,10 @@ _LIGHT  = "#C8D0E0"
 _BG     = "#0D1B2A"
 _PANEL  = "#0F1923"
 
-# Agent weights (mirror orchestrator weights for display)
-_AGENT_WEIGHTS = {
+# Agent weights (mirror orchestrator weights for display).
+# Disabled agents are filtered out at page construction time so they never
+# appear in the Signal Contributors grid or the narrative builder.
+_AGENT_WEIGHTS_ALL = {
     "funding_rate":    0.25,
     "order_book":      0.22,
     "options_flow":    0.18,
@@ -47,6 +49,34 @@ _AGENT_WEIGHTS = {
     "geopolitical":    0.03,
     "sector_rotation": 0.02,
 }
+
+# Config gate map: agent name → (settings_key, default_if_missing)
+# Agents not in this map are always shown (no disable gate in coordinator).
+_AGENT_GATE: dict[str, tuple[str, bool]] = {
+    "order_book":       ("agents.orderbook_enabled",        False),
+    "options_flow":     ("agents.options_enabled",          False),
+    "social_sentiment": ("agents.social_sentiment_enabled", False),
+    "sector_rotation":  ("agents.sector_rotation_enabled",  False),
+    "funding_rate":     ("agents.funding_enabled",          True),
+}
+
+def _build_agent_weights() -> dict[str, float]:
+    """Return only the weights for agents that are enabled in config."""
+    try:
+        from config.settings import settings as _s
+    except Exception:
+        return _AGENT_WEIGHTS_ALL
+
+    result = {}
+    for name, weight in _AGENT_WEIGHTS_ALL.items():
+        if name in _AGENT_GATE:
+            key, default = _AGENT_GATE[name]
+            if not _s.get(key, default):
+                continue
+        result[name] = weight
+    return result
+
+_AGENT_WEIGHTS = _build_agent_weights()
 
 _REGIME_EMOJIS = {
     "bull_trend":             "🐂  Bull Trend",

@@ -319,6 +319,8 @@ class DashboardPage(QWidget):
         bus.subscribe(Topics.SIGNAL_CONFIRMED,   self._on_signal_confirmed)
         # Scanner lifecycle — update Strategy Engine + Scanner status rows
         bus.subscribe(Topics.SCAN_CYCLE_COMPLETE, self._on_scan_cycle_complete)
+        # Paper account wiped — reset session counters and re-pull executor state
+        bus.subscribe(Topics.ACCOUNT_RESET,      self._on_account_reset)
 
     # ── PaperExecutor handlers ─────────────────────────────
     def _refresh_from_executor(self):
@@ -398,6 +400,9 @@ class DashboardPage(QWidget):
                 "trend", "momentum_breakout", "mean_reversion", "vwap_reversion",
                 "liquidity_sweep", "order_book", "funding_rate", "sentiment", "rl_ensemble",
             ]
+            # v1.3 PBL/SLC models gated by their own flag (not disabled_models)
+            if _s.get("mr_pbl_slc.enabled", False):
+                _all_models += ["pullback_long", "swing_low_continuation"]
             _disabled = list(_s.get("disabled_models", []) or [])
             _active_n  = len([m for m in _all_models if m not in _disabled])
             _disabled_n = len([m for m in _all_models if m in _disabled])
@@ -416,6 +421,12 @@ class DashboardPage(QWidget):
             self._card_heat.set_sub("% capital at risk")
         except Exception:
             pass
+
+    def _on_account_reset(self, event):
+        """Paper account wiped — reset session counters and do a full executor refresh."""
+        self._trades_opened_today = 0
+        self._signals_today       = 0
+        QTimer.singleShot(0, self._refresh_from_executor)
 
     def _on_trade_opened(self, event):
         # Increment trades-opened counter and refresh signals card

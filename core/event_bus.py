@@ -79,6 +79,7 @@ class Topics:
     SYSTEM_ALERT        = "system.alert"
     LOG_ENTRY           = "system.log"
     NOTIFICATION_SENT   = "system.notification.sent"  # emitted after any notification is dispatched
+    ACCOUNT_RESET       = "account.reset"              # paper account wiped — all pages must full-refresh
 
     # Settings
     SETTINGS_CHANGED    = "settings.changed"

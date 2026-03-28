@@ -667,6 +667,9 @@ class RiskManagementPage(QWidget):
         bus.subscribe(Topics.FEED_STATUS,      self._on_feed_status)
         bus.subscribe(Topics.SCAN_CYCLE_COMPLETE, self._on_scan_cycle)
         bus.subscribe(Topics.MODE_CHANGED,     self._on_mode_changed)
+        # Full refresh when paper account is wiped — positions cleared silently during
+        # reset() so TRADE_CLOSED is never emitted; this is the only reliable signal.
+        bus.subscribe(Topics.ACCOUNT_RESET,    self._on_portfolio_event)
 
     # ── Refresh ────────────────────────────────────────────
     @Slot()

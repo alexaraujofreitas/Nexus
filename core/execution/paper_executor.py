@@ -159,6 +159,7 @@ class PaperPosition:
             "timeframe":               self.timeframe,
             "opened_at":               self.opened_at.isoformat(),
             "_auto_partial_applied":   self._auto_partial_applied,
+            "_breakeven_applied":      self._breakeven_applied,
         }
 
 
@@ -203,6 +204,14 @@ class PaperExecutor:
         self._load_history()
         # Subscribe to position monitoring events
         bus.subscribe(Topics.POSITION_MONITOR_UPDATED, self._on_position_monitor)
+        # Register self with CrashDefenseController so auto-execute tiers can
+        # call close_all_longs(), partial_close(), etc.  Lazy import avoids
+        # circular dependency (crash_defense → executor → crash_defense).
+        try:
+            from core.risk.crash_defense_controller import get_crash_defense_controller
+            get_crash_defense_controller().set_executor(self)
+        except Exception as _cda_exc:
+            logger.debug("PaperExecutor: CrashDefenseController injection skipped: %s", _cda_exc)
 
     # ── Open-position persistence ───────────────────────────────
 
@@ -265,6 +274,9 @@ class PaperExecutor:
                 # v1.2 — restore auto-partial flag so restarts don't trigger a
                 # duplicate partial close on positions that already had one.
                 pos._auto_partial_applied = bool(pd.get("_auto_partial_applied", False))
+                # v1.2 Section-1 — restore breakeven-applied flag so update() doesn't
+                # re-run the SL move on a position that already had it applied.
+                pos._breakeven_applied    = bool(pd.get("_breakeven_applied", False))
                 self._positions.setdefault(symbol, []).append(pos)
                 restored += 1
             # Always restore capital from the JSON file — it is the authoritative
@@ -465,6 +477,64 @@ class PaperExecutor:
                 return True
         return False
 
+    # ── Section-5 rolling PF helpers ─────────────────────────────────────
+
+    def _compute_rolling_pf(self, n: int) -> float:
+        """
+        Compute Profit Factor over the last *n* closed trades.
+
+        PF = sum(winning pnl_usdt) / abs(sum(losing pnl_usdt))
+
+        Partial closes (exit_reason == "partial_close") are EXCLUDED — they
+        represent position management, not independent trade outcomes, and
+        including them would deflate PF (they always lock a win fraction).
+
+        Returns 999.0 if there are no losing trades in the window (no losers
+        means infinite PF; 999 is a sentinel that passes all thresholds).
+        """
+        # Filter out partial closes
+        full_closes = [
+            t for t in self._closed_trades
+            if t.get("exit_reason", "") != "partial_close"
+        ]
+        window = full_closes[-n:]
+        if not window:
+            return 999.0
+        gross_win  = sum(t["pnl_usdt"] for t in window if t.get("pnl_usdt", 0) > 0)
+        gross_loss = sum(abs(t["pnl_usdt"]) for t in window if t.get("pnl_usdt", 0) < 0)
+        if gross_loss == 0:
+            return 999.0
+        return round(gross_win / gross_loss, 4)
+
+    def _rolling_size_scalar(self) -> float:
+        """
+        Section-5 profitability guardrail: reduce position size when recent
+        performance is poor.
+
+        - Rolling 20-trade PF < 1.5  → return 0.50  (50% size reduction)
+        - Otherwise                  → return 1.00  (no change)
+
+        Applied in submit() AFTER the PositionSizer output so it does not
+        interfere with R-based risk calculation — it is a post-hoc reduction
+        on an already-risk-sized position.
+
+        Requires ≥ 20 full closes to activate; returns 1.0 until then.
+        """
+        full_closes = [
+            t for t in self._closed_trades
+            if t.get("exit_reason", "") != "partial_close"
+        ]
+        if len(full_closes) < 20:
+            return 1.0
+        rpf20 = self._compute_rolling_pf(20)
+        if rpf20 < 1.5:
+            logger.info(
+                "PaperExecutor: size scalar 0.50 applied — rolling-20 PF=%.3f < 1.5",
+                rpf20,
+            )
+            return 0.50
+        return 1.0
+
     def submit(self, candidate: OrderCandidate) -> bool:
         """
         Submit an approved OrderCandidate for paper execution.
@@ -590,6 +660,49 @@ class PaperExecutor:
                 _perf_exc,
             )
 
+        # ── Section-5 rolling PF guardrails ─────────────────────────
+        # These use only the in-memory closed-trade history so they work
+        # instantly without touching the RAG evaluation layer.
+        #
+        # 1. Hard block — rolling 30-trade PF < 1.0
+        #    Independent of WR; fires earlier than the combined PF+WR block.
+        # 2. Size scalar — rolling 20-trade PF < 1.5 → 50% reduction
+        # 3. Scale gate advisory — rolling 50-trade PF ≥ 2.0
+        _s5_trades = len(self._closed_trades)
+        if _s5_trades >= 30:
+            _rpf30 = self._compute_rolling_pf(30)
+            if _rpf30 < 1.0:
+                logger.critical(
+                    "PaperExecutor: ROLLING PF HARD BLOCK — last-30 PF=%.3f < 1.0. "
+                    "Blocking new entry for %s. Investigate recent performance.",
+                    _rpf30, candidate.symbol,
+                )
+                bus.publish(
+                    Topics.SYSTEM_ALERT,
+                    data={"type":         "rolling_pf_hard_block",
+                          "rolling_pf_30": round(_rpf30, 4),
+                          "trades":        _s5_trades,
+                          "symbol":        candidate.symbol},
+                    source="paper_executor",
+                )
+                return False
+
+        if _s5_trades >= 50:
+            _rpf50 = self._compute_rolling_pf(50)
+            if _rpf50 >= 2.0:
+                logger.info(
+                    "PaperExecutor: SCALE GATE ADVISORY — last-50 PF=%.3f ≥ 2.0. "
+                    "System eligible for phase advancement. Call ScaleManager.evaluate_advancement().",
+                    _rpf50,
+                )
+                bus.publish(
+                    Topics.SYSTEM_ALERT,
+                    data={"type":         "scale_gate_eligible",
+                          "rolling_pf_50": round(_rpf50, 4),
+                          "trades":        _s5_trades},
+                    source="paper_executor",
+                )
+
         existing = self._positions.get(candidate.symbol, [])
         if len(existing) >= self._max_positions_per_symbol:
             logger.debug("PaperExecutor: max positions (%d) reached for %s",
@@ -617,7 +730,8 @@ class PaperExecutor:
 
         # PositionSizer output (position_size_usdt) is final — SymbolAllocator
         # is the single allocation mechanism.  No per-symbol overrides applied here.
-        size_usdt = candidate.position_size_usdt
+        # Section-5: apply rolling-PF size scalar BEFORE slippage calculation.
+        size_usdt = candidate.position_size_usdt * self._rolling_size_scalar()
 
         fill_price = self._apply_slippage(entry_price, candidate.side) if entry_price > 0 else entry_price
         slippage_cost = abs(fill_price - entry_price)
@@ -793,6 +907,49 @@ class PaperExecutor:
                 count += 1
         return count
 
+    def close_all_longs(self, exit_reason: str = "crash_defense_emergency") -> int:
+        """
+        Close ALL long (buy) positions at their last known mark price.
+        Used by CrashDefenseController EMERGENCY tier.
+        Returns the number of positions closed.
+        """
+        count = 0
+        for symbol in list(self._positions.keys()):
+            for pos in list(self._positions.get(symbol, [])):
+                if pos.side == "buy":
+                    self._close_position(symbol, pos.current_price, exit_reason, pos)
+                    count += 1
+        logger.warning(
+            "PaperExecutor.close_all_longs(): closed %d long position(s) — reason=%s",
+            count, exit_reason,
+        )
+        return count
+
+    def move_all_longs_to_breakeven(self) -> int:
+        """
+        Move the stop-loss of ALL open long positions to their entry price (breakeven).
+        Used by CrashDefenseController DEFENSIVE tier to protect profits without closing.
+        Returns the number of positions updated.
+        """
+        count = 0
+        for symbol, pos_list in self._positions.items():
+            for pos in pos_list:
+                if pos.side == "buy" and not pos._breakeven_applied:
+                    old_sl = pos.stop_loss
+                    pos.stop_loss = pos.entry_price
+                    pos._breakeven_applied = True
+                    count += 1
+                    logger.info(
+                        "PaperExecutor.move_all_longs_to_breakeven: %s SL %.6g → %.6g (entry)",
+                        symbol, old_sl, pos.entry_price,
+                    )
+        if count:
+            self._save_open_positions()
+        logger.warning(
+            "PaperExecutor.move_all_longs_to_breakeven(): updated %d position(s)", count,
+        )
+        return count
+
     # ── Dynamic stop adjustment ────────────────────────────────
 
     def adjust_stop(self, symbol: str, new_stop_loss: float) -> bool:
@@ -922,6 +1079,13 @@ class PaperExecutor:
         # drawdown_pct all reflect the smaller remaining position correctly.
         pos.quantity  = new_qty
         pos.size_usdt = pos.size_usdt * (1.0 - reduce_pct)
+
+        # ── Move stop-loss to breakeven immediately (v1.2 Section-1 fix) ────
+        # PaperPosition.update() carries a _breakeven_applied flag that also
+        # moves the SL, but only on the NEXT tick.  Setting it here closes the
+        # 1-tick gap AND makes the change restart-safe (serialised via to_dict).
+        pos.stop_loss = pos.entry_price
+        pos._breakeven_applied = True
 
         # ── Realise P&L into capital ────────────────────────────────────────
         # Full closes (close_position) already do this via _close_position().
@@ -1071,6 +1235,19 @@ class PaperExecutor:
             logger.debug("PaperExecutor reset: L2 learning clear skipped: %s", exc)
 
         logger.info("PaperExecutor: account reset (capital=%.2f)", initial_capital)
+
+        # ── Notify all GUI pages that the account was wiped ──────────────
+        # TRADE_CLOSED / POSITION_UPDATED are NOT emitted during reset because
+        # positions are cleared silently.  ACCOUNT_RESET is the single signal
+        # that tells every subscribing page to do a full refresh from scratch.
+        try:
+            bus.publish(
+                Topics.ACCOUNT_RESET,
+                {"capital": initial_capital, "reason": "manual_reset"},
+                source="paper_executor",
+            )
+        except Exception as _ev_exc:
+            logger.debug("PaperExecutor reset: event publish failed: %s", _ev_exc)
 
     # ── DB persistence helpers ─────────────────────────────
 

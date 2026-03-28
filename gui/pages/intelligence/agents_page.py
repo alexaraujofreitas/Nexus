@@ -428,12 +428,33 @@ class AgentsDashboard(QWidget):
             hh.addWidget(lbl, 0 if width > 0 else 1)
         content_lay.addWidget(hdr)
 
-        # ── Agent rows ──────────────────────────────────────────
-        agent_names = [
+        # ── Agent rows (enabled agents only) ────────────────────
+        # Config key → (settings_key, default_if_missing).
+        # Agents without a key are always shown (no disable gate in coordinator).
+        _AGENT_GATE: dict[str, tuple[str, bool]] = {
+            "funding_rate":     ("agents.funding_enabled",          True),
+            "order_book":       ("agents.orderbook_enabled",        False),
+            "options_flow":     ("agents.options_enabled",          False),
+            "social_sentiment": ("agents.social_sentiment_enabled", False),
+            "sector_rotation":  ("agents.sector_rotation_enabled",  False),
+        }
+        _ALL_AGENT_NAMES = [
             "funding_rate", "order_book", "options_flow",
             "macro", "social_sentiment", "news",
             "geopolitical", "sector_rotation",
         ]
+
+        def _is_enabled(name: str) -> bool:
+            if name not in _AGENT_GATE:
+                return True  # no disable gate — always active
+            key, default = _AGENT_GATE[name]
+            try:
+                from config.settings import settings as _s
+                return bool(_s.get(key, default))
+            except Exception:
+                return default
+
+        agent_names = [n for n in _ALL_AGENT_NAMES if _is_enabled(n)]
         for name in agent_names:
             row = _AgentRow(name)
             self._agent_rows[name] = row

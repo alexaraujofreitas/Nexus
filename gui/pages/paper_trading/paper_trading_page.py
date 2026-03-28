@@ -336,6 +336,9 @@ class PaperTradingPage(QWidget):
         bus.subscribe(Topics.TRADE_OPENED,     self._on_trade_opened)
         bus.subscribe(Topics.TRADE_CLOSED,     self._on_trade_closed)
         bus.subscribe(Topics.POSITION_UPDATED, self._on_position_updated)
+        # Account wipe clears positions and trade history silently — must trigger
+        # a full refresh so stats/history widgets show zeroed state immediately.
+        bus.subscribe(Topics.ACCOUNT_RESET,    self._on_trade_opened)
 
     # ── EventBus handlers ───────────────────────────────────
     @Slot(object)
@@ -413,11 +416,17 @@ class PaperTradingPage(QWidget):
     def _refresh_positions_from(self, pe) -> None:
         positions = pe.get_open_positions()
         n = len(positions)
+        # Read max_pos from the live RiskGate (same source as Risk Management page).
+        # Falls back to settings, then to a safe constant if both are unavailable.
         try:
-            from config.settings import settings as _s
-            max_pos = int(_s.get("risk.max_concurrent_positions", 5))
+            from core.scanning.scanner import scanner as _sc
+            max_pos = _sc._risk_gate.max_concurrent_positions
         except Exception:
-            max_pos = 5
+            try:
+                from config.settings import settings as _s
+                max_pos = int(_s.get("risk.max_concurrent_positions", 5))
+            except Exception:
+                max_pos = 5
         self._pos_hdr_lbl.setText(
             f"OPEN POSITIONS  ({n}  /  {max_pos} max)"
         )

@@ -2242,7 +2242,9 @@ class PerformanceAnalyticsPage(QWidget):
 
     # ── EventBus subscriptions ─────────────────────────
     def _subscribe(self):
-        bus.subscribe(Topics.TRADE_CLOSED, self._on_trade_closed)
+        bus.subscribe(Topics.TRADE_CLOSED,  self._on_trade_closed)
+        # Paper account wiped — full analytics refresh so stale trade history is cleared
+        bus.subscribe(Topics.ACCOUNT_RESET, self._on_account_reset)
 
     # ── Refresh ────────────────────────────────────────
     @Slot()
@@ -2347,6 +2349,10 @@ class PerformanceAnalyticsPage(QWidget):
 
         except Exception as exc:
             logger.warning("PerformanceAnalyticsPage refresh error: %s", exc)
+
+    def _on_account_reset(self, event):
+        """Paper account wiped — all analytics must re-query from the cleared executor."""
+        QTimer.singleShot(0, self._refresh)
 
     def _on_trade_closed(self, event):
         """Refresh shortly after a trade closes so data is fully committed."""

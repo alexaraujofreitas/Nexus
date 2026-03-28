@@ -155,6 +155,98 @@ def _score_color(s: float) -> str:
     return "#00CC77" if s >= 0.75 else ("#FFB300" if s >= 0.55 else "#FF9800")
 
 
+def _bar(score: float, width: int = 20) -> str:
+    """ASCII progress bar for a 0-100 score."""
+    filled = round(score / 100 * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def _format_analysis_block(analysis: dict, is_open: bool = False) -> list[str]:
+    """
+    Format an analysis dict into plain-text lines for the detail panel.
+    Returns list of lines (not joined).
+    """
+    if not analysis:
+        return []
+
+    lines: list[str] = []
+    sep = "─" * 42
+
+    cls_    = analysis.get("classification", "NEUTRAL")
+    emoji   = {"GOOD": "✅", "BAD": "❌", "NEUTRAL": "⚖️"}.get(cls_, "⚖️")
+    overall = analysis.get("overall_score", 0.0)
+    setup   = analysis.get("setup_score",   0.0)
+    risk    = analysis.get("risk_score",    0.0)
+    exec_   = analysis.get("execution_score", 0.0)
+    dec_    = analysis.get("decision_score",  0.0)
+    rr      = analysis.get("rr_ratio")
+
+    lines.append("")
+    lines.append(sep)
+    if is_open:
+        lines.append(f"  AI ENTRY QUALITY  ·  Setup: {setup:.0f}/100  Risk: {risk:.0f}/100")
+        rr_str = f"{rr:.2f}" if rr else "—"
+        lines.append(f"  R:R: {rr_str}   |   Regime affinity: "
+                     f"{['-', '=', '+'][analysis.get('regime_affinity', 0) + 1]}")
+    else:
+        lines.append(f"  AI QUALITY SCORECARD  {emoji} {cls_}  |  Overall: {overall:.0f}/100")
+        lines.append(f"  {_bar(overall)}")
+        lines.append(f"  Setup:     {setup:.0f:>3}  {_bar(setup, 12)}")
+        lines.append(f"  Risk:      {risk:.0f:>3}  {_bar(risk, 12)}")
+        lines.append(f"  Execution: {exec_:.0f:>3}  {_bar(exec_, 12)}")
+        lines.append(f"  Decision:  {dec_:.0f:>3}  {_bar(dec_, 12)}")
+        rr_str = f"{rr:.2f}" if rr else "—"
+        lines.append(f"  R:R ratio: {rr_str}")
+
+    hard = analysis.get("hard_overrides") or []
+    if hard:
+        lines.append("")
+        lines.append("  ⚠  HARD OVERRIDES:")
+        for h in hard:
+            lines.append(f"     • {h}")
+
+    root_causes = analysis.get("root_causes") or []
+    if root_causes:
+        lines.append("")
+        lines.append("  ROOT CAUSES:")
+        for rc in root_causes[:5]:
+            sev  = rc.get("severity", "minor").upper()[:3]
+            desc = rc.get("description", "")
+            lines.append(f"  [{sev}] {desc}")
+
+    recs = analysis.get("recommendations") or []
+    if recs and not is_open:
+        lines.append("")
+        lines.append("  RECOMMENDATIONS:")
+        for i, rec in enumerate(recs[:3], 1):
+            action = rec.get("action", "")
+            safe   = "✓" if rec.get("auto_tune_safe") else "⚑"
+            # Wrap long action text
+            if len(action) > 70:
+                lines.append(f"  {i}. [{safe}] {action[:70]}…")
+            else:
+                lines.append(f"  {i}. [{safe}] {action}")
+
+    ai_exp = analysis.get("ai_explanation")
+    if ai_exp:
+        lines.append("")
+        lines.append("  AI EXPLANATION:")
+        # Word-wrap at ~70 chars
+        words = ai_exp.split()
+        current_line = "  "
+        for word in words:
+            if len(current_line) + len(word) + 1 > 72:
+                lines.append(current_line)
+                current_line = f"  {word}"
+            else:
+                current_line += f" {word}" if current_line.strip() else f"  {word}"
+        if current_line.strip():
+            lines.append(current_line)
+
+    lines.append(sep)
+    return lines
+
+
 # ─────────────────────────────────────────────────────────────
 # Summary strip widget
 # ─────────────────────────────────────────────────────────────
@@ -417,14 +509,30 @@ class OrdersPositionsPage(QWidget):
         v.setContentsMargins(12, 8, 12, 8)
         v.setSpacing(4)
 
-        hdr = QLabel("TRADE DETAIL  /  RATIONALE")
+        # Header row with label and classification badge
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(8)
+        hdr = QLabel("TRADE DETAIL  /  AI RATIONALE")
         hdr.setStyleSheet(_SECT_STYLE)
-        v.addWidget(hdr)
+        hdr_row.addWidget(hdr)
+        hdr_row.addStretch()
+        self._detail_badge = QLabel("")
+        self._detail_badge.setStyleSheet(
+            "font-size:12px;font-weight:700;padding:2px 8px;"
+            "border-radius:4px;background:transparent;color:#8899AA;"
+        )
+        hdr_row.addWidget(self._detail_badge)
+        self._detail_thesis_label = QLabel("")
+        self._detail_thesis_label.setStyleSheet(
+            "font-size:11px;color:#7A8BA8;margin-left:8px;"
+        )
+        hdr_row.addWidget(self._detail_thesis_label)
+        v.addLayout(hdr_row)
 
         self._detail_txt = QTextEdit()
         self._detail_txt.setReadOnly(True)
         self._detail_txt.setPlaceholderText(
-            "Select any row in Open Positions or Trade Journal to view IDSS details…"
+            "Select any row in Open Positions or Trade Journal to view IDSS details and AI analysis…"
         )
         self._detail_txt.setStyleSheet(
             "QTextEdit{background:#080C16;color:#C0D0E0;border:none;"
@@ -440,6 +548,7 @@ class OrdersPositionsPage(QWidget):
         bus.subscribe(Topics.TRADE_OPENED,     self._on_trade_event)
         bus.subscribe(Topics.TRADE_CLOSED,     self._on_trade_event)
         bus.subscribe(Topics.POSITION_UPDATED, self._on_position_updated)
+        bus.subscribe(Topics.ACCOUNT_RESET,    self._on_trade_event)
 
     @Slot(object)
     def _on_trade_event(self, _event):
@@ -671,6 +780,40 @@ class OrdersPositionsPage(QWidget):
         rationale = p.get("rationale", "No rationale stored.")
         if rationale:
             lines.append(rationale)
+
+        # Phase 2: Full analyst review using canonical renderer
+        try:
+            from core.analysis.trade_analysis_service import trade_analysis_service
+            from core.analysis.canonical_renderer import render_for_channel, MODE_UI_OPEN
+
+            analysis = trade_analysis_service.build_open_trade_analysis(p)
+            rendered = render_for_channel(analysis, mode=MODE_UI_OPEN, trade=p)
+
+            # Update badge
+            cls_ = analysis.get("classification", "NEUTRAL")
+            thesis = (analysis.get("thesis") or {})
+            thesis_status = thesis.get("thesis_status", "")
+            badge_color = {"GOOD": "#00CC77", "BAD": "#FF3355", "NEUTRAL": "#FFB300"}.get(cls_, "#8899AA")
+            emoji = analysis.get("classification_emoji", "⚖️")
+            badge_text = f"{emoji} {cls_}"
+            if thesis_status:
+                badge_text += f"  [{thesis_status.upper()}]"
+            self._detail_badge.setText(badge_text)
+            self._detail_badge.setStyleSheet(
+                f"color: {badge_color}; font-weight: bold; font-size: 13px;"
+            )
+
+            # Update thesis label
+            if thesis_status:
+                self._detail_thesis_label.setText(f"Thesis: {thesis_status}")
+
+            # Append analysis lines
+            for line in rendered.get("text_lines", []):
+                lines.append(line)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug("open position analysis failed: %s", exc)
+
         self._detail_txt.setPlainText("\n".join(lines))
 
     def _show_trade_detail(self, t: dict) -> None:
@@ -702,6 +845,38 @@ class OrdersPositionsPage(QWidget):
         rationale = t.get("rationale", "No rationale stored.")
         if rationale:
             lines.append(rationale)
+
+        # Phase 2: Full analyst review using canonical renderer
+        try:
+            from core.analysis.trade_analysis_service import trade_analysis_service
+            from core.analysis.canonical_renderer import render_for_channel, MODE_UI_CLOSED
+
+            # Try loading persisted analysis first, then build if not found
+            stored = trade_analysis_service.load_analysis(t)
+            if stored:
+                analysis = stored
+            else:
+                analysis = trade_analysis_service.build_closed_trade_analysis(t)
+
+            rendered = render_for_channel(analysis, mode=MODE_UI_CLOSED, trade=t)
+
+            # Update badge
+            cls_ = analysis.get("classification", "NEUTRAL")
+            emoji = analysis.get("classification_emoji", "⚖️")
+            badge_color = {"GOOD": "#00CC77", "BAD": "#FF3355", "NEUTRAL": "#FFB300"}.get(cls_, "#8899AA")
+            badge_text = f"{emoji} {cls_}  {analysis.get('overall_score', 0):.0f}/100"
+            self._detail_badge.setText(badge_text)
+            self._detail_badge.setStyleSheet(
+                f"color: {badge_color}; font-weight: bold; font-size: 13px;"
+            )
+
+            # Append all rendered lines
+            for line in rendered.get("text_lines", []):
+                lines.append(line)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug("closed trade analysis failed: %s", exc)
+
         self._detail_txt.setPlainText("\n".join(lines))
 
     # ── filter controls ─────────────────────────────────────

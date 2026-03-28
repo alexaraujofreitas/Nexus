@@ -886,9 +886,10 @@ class PositionsPanel(QFrame):
         self._header = None
         self._build()
         try:
-            bus.subscribe(Topics.TRADE_OPENED, self._on_position_change)
-            bus.subscribe(Topics.TRADE_CLOSED, self._on_position_change)
+            bus.subscribe(Topics.TRADE_OPENED,     self._on_position_change)
+            bus.subscribe(Topics.TRADE_CLOSED,     self._on_position_change)
             bus.subscribe(Topics.POSITION_UPDATED, self._on_position_change)
+            bus.subscribe(Topics.ACCOUNT_RESET,    self._on_position_change)
         except Exception:
             pass
         # Initial load
@@ -996,8 +997,9 @@ class PortfolioPanel(QFrame):
         self._metric_labels = {}
         self._build()
         try:
-            bus.subscribe(Topics.TRADE_OPENED, self._on_update)
-            bus.subscribe(Topics.TRADE_CLOSED, self._on_update)
+            bus.subscribe(Topics.TRADE_OPENED,  self._on_update)
+            bus.subscribe(Topics.TRADE_CLOSED,  self._on_update)
+            bus.subscribe(Topics.ACCOUNT_RESET, self._on_update)
         except Exception:
             pass
         # Initial load
@@ -1196,7 +1198,8 @@ class TradeHistoryPanel(QFrame):
         self._header = None
         self._build()
         try:
-            bus.subscribe(Topics.TRADE_CLOSED, self._on_trade_closed)
+            bus.subscribe(Topics.TRADE_CLOSED,  self._on_trade_closed)
+            bus.subscribe(Topics.ACCOUNT_RESET, self._on_trade_closed)
         except Exception:
             pass
         # Initial load
@@ -1505,9 +1508,10 @@ class AlertsPanel(QFrame):
         self._build()
         try:
             bus.subscribe(Topics.SIGNAL_CONFIRMED, self._on_signal)
-            bus.subscribe(Topics.RISK_LIMIT_HIT, self._on_alert)
-            bus.subscribe(Topics.TRADE_OPENED, self._on_trade_opened)
-            bus.subscribe(Topics.TRADE_CLOSED, self._on_trade_closed)
+            bus.subscribe(Topics.RISK_LIMIT_HIT,   self._on_alert)
+            bus.subscribe(Topics.TRADE_OPENED,     self._on_trade_opened)
+            bus.subscribe(Topics.TRADE_CLOSED,     self._on_trade_closed)
+            bus.subscribe(Topics.ACCOUNT_RESET,    self._on_account_reset)
         except Exception:
             pass
 
@@ -1612,6 +1616,19 @@ class AlertsPanel(QFrame):
         side = data.get("side", "LONG")
         msg = f"{sym} {side} closed {pnl_pct:+.2f}% @ ${exit_price:,.2f}"
         self._prepend_alert("TRADE", msg, "just now")
+
+    @Slot(object)
+    def _on_account_reset(self, _event):
+        """Paper account wiped — clear all accumulated alerts and restore placeholder."""
+        while self._feed_lay.count():
+            item = self._feed_lay.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+        self._placeholder = _lbl("No alerts yet",
+            f"font-size:13px; color:{_TEXT_DIM}; font-style:italic; padding:20px;")
+        self._placeholder.setAlignment(Qt.AlignCenter)
+        self._feed_lay.addWidget(self._placeholder)
+        self._feed_lay.addStretch()
 
     def _prepend_alert(self, alert_type: str, msg: str, age: str):
         # Hide placeholder on first alert
