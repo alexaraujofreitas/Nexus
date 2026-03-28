@@ -517,13 +517,21 @@ class FastBacktestEngine:
             pf = gp / gl
         wr  = len(wins) / n if n > 0 else 0.0
 
-        ts_arr = self._ts_master
-        if len(ts_arr) > 1:
-            # ts_master is int64 nanoseconds; convert to seconds
-            span_s = (int(ts_arr[-1]) - int(ts_arr[0])) * 1e-9
-            span_y = span_s / (365.25 * 86400)
+        # Compute annualisation span from the engine's date boundaries rather than
+        # from ts_master integers.  Parquet files may store datetime64[ms] so
+        # asi8 returns milliseconds, not nanoseconds — arithmetic on raw int64s
+        # would give a span ~1000x too small, inflating CAGR astronomically.
+        if self.date_start and self.date_end:
+            span_y = (self.date_end - self.date_start).total_seconds() / (365.25 * 86400)
         else:
-            span_y = 4.0
+            ts_arr = self._ts_master
+            if len(ts_arr) > 1:
+                # Detect unit from magnitude: ms values are ~1e12, ns values ~1e18
+                raw_span = int(ts_arr[-1]) - int(ts_arr[0])
+                unit_s   = 1e-3 if ts_arr[0] < 1e14 else 1e-9
+                span_y   = raw_span * unit_s / (365.25 * 86400)
+            else:
+                span_y = 4.0
         cagr = ((capital / INITIAL_CAP) ** (1 / max(span_y, 0.1)) - 1) * 100
 
         # MaxDD (closed[0] is int64 ts — sort numerically)
