@@ -46,7 +46,7 @@ When user says "Nexus Trader restarted", run full validation automatically. No s
 
 ---
 
-## Current System State (v1.2 — 2026-03-26)
+## Current System State (v1.3 Session 35 — 2026-03-27)
 
 ### Production Config (`config.yaml` — runtime only, NOT `config/settings.yaml`)
 ```yaml
@@ -88,10 +88,30 @@ models:
 | MomentumBreakout | 63.5% | 4.17 | +1.21 | ✅ Active |
 | FundingRateModel | — | — | — | ✅ Active (context enrichment, low weight) |
 | SentimentModel | — | — | — | ✅ Active (FinBERT/VADER, low weight) |
+| PullbackLong | 48.4% | 1.1289 | — | ⚙️ Implemented v1.3 (mr_pbl_slc.enabled=false, pending review) |
+| SwingLowContinuation | 58.3% | 1.0008 | — | ⚙️ Implemented v1.3 (mr_pbl_slc.enabled=false, pending review) |
 | MeanReversion | 32.2% | 0.21 | — | ❌ Archived v1.2 (−$18k Study 4) |
 | LiquiditySweep | 19.3% | 0.28 | — | ❌ Archived v1.2 (−$15k Study 4) |
 | VWAPReversion | — | 0.28 | — | ❌ Archived v1.2 (below 1.0 threshold, 2026-03-24) |
 | OrderBook | — | ≤1.0 | — | ❌ Archived v1.2 (structural 1h+ TF gate) |
+
+### v1.3 PBL+SLC System Backtest (commit ab466ec — 2026-03-27)
+4 years (2022-03-22 → 2026-03-21), BTC+SOL+ETH, 30m primary, 200-bar rolling regime window
+
+| Scenario | CAGR | PF | WR | MaxDD | n |
+|----------|------|----|----|-------|---|
+| A: zero fees | 2.60% | 1.0179 | 56.4% | −29.78% | 1,275 |
+| B: 0.04%/side maker | −6.17% | 0.9572 | 56.4% | −41.98% | 1,275 |
+| Research baseline (v7_final, BTC only) | 50.41% | 1.2975 | 61.1% | −20.66% | 1,476 |
+
+**Per-model breakdown (Scenario A):** PBL: n=246 WR=48.4% PF=1.1289 | SLC: n=1,029 WR=58.3% PF=1.0008
+
+**Gap analysis:** PF gap (1.2975 → 1.0179) caused by: (1) NexusTrader HMM+rule-based RegimeClassifier
+labeling regimes differently from research script's vectorized labels — SLC fires on marginal bear_trend bars
+that the production classifier emits but research didn't count; (2) heat gate rejected 592 signals (46%);
+(3) multi-symbol correlation dampens WR. SLC system PF is 1.0008 (breakeven) — **do NOT enable without
+further research into regime alignment between production classifier and SLC trigger conditions.**
+PBL system PF=1.1289 is viable but marginal pre-fees. Both remain DISABLED (`mr_pbl_slc.enabled: false`).
 
 ### v1.2 Phase 5 Exit Performance Comparison
 | Exit Mode | PF | Max DD | WR |
@@ -103,8 +123,9 @@ models:
 ### API Keys (encrypted in vault)
 - CryptoPanic, Coinglass, Reddit Client ID+Secret — all set
 
-### Test Suite (latest full run — Session 33, 2026-03-23)
-- **1,611 passed**, 11 skipped (GPU), 0 failures — unit / intelligence / learning / evaluation / backtesting / validation
+### Test Suite (latest full run — Session 35, 2026-03-27)
+- **1,652 passed** (1,611 prior + 41 new mr_pbl_slc tests), 11 skipped (GPU), 0 failures
+- Session 35 added: `test_mr_pbl_slc_models.py` (41 tests: PBL×15, SLC×12, PosSizer×9, SignalGen integration×5)
 
 ---
 
@@ -122,7 +143,7 @@ OHLCV (1h, 300 bars) → HMM+RuleBased Regime → SignalGenerator (5 models)
 | Component | Location | Description |
 |-----------|----------|-------------|
 | IDSS Scanner | `core/scanning/scanner.py` | AssetScanner + ScanWorker, 5-symbol watchlist, candle-boundary timer alignment |
-| Signal models | `core/signals/sub_models/` | base.py, trend, momentum_breakout, vwap_reversion, order_book, funding_rate |
+| Signal models | `core/signals/sub_models/` | base.py, trend, momentum_breakout, vwap_reversion, order_book, funding_rate, pullback_long_model, swing_low_continuation_model |
 | Regime | `core/regime/hmm_regime_classifier.py` + `hmm_classifier.py` | HMM (diag covariance) + rule-based blend; adaptive weight when >50% states "uncertain" |
 | Confluence | `core/meta_decision/confluence_scorer.py` | REGIME_AFFINITY matrix, L1+L2 adaptive weights, direction dominance ≥0.30 |
 | Risk gate | `core/risk/risk_gate.py` | EV gate, slippage-adjusted, MTF conflict rejection, R:R floor 1.0 |
@@ -233,6 +254,44 @@ OHLCV (1h, 300 bars) → HMM+RuleBased Regime → SignalGenerator (5 models)
 - **hmmlearn non-convergence warnings**: Expected at startup on sparse data. Harmless.
 - **MSGARCH refit warning**: Expected informational — no prior checkpoint on fresh restart.
 
+### Session 34 Hardening (v1.2 Final) — 2026-03-26
+
+#### Breakeven SL (Section 1 — demo blocker fix)
+- **`partial_close()` rule**: Must set `pos.stop_loss = pos.entry_price` AND `pos._breakeven_applied = True` IMMEDIATELY inside `partial_close()`. Do NOT rely on the `update()` tick-based flag — that creates a 1-tick gap.
+- **Serialisation**: `_breakeven_applied` and `_auto_partial_applied` MUST both be in `PaperPosition.to_dict()` and restored in `_load_open_positions()`. Missing either causes restart to re-trigger partial close logic.
+- **Regression tests**: `tests/unit/test_breakeven_sl_after_partial.py` — 9 tests, all must pass.
+
+#### Crash Defense Auto-Execute (Section 2)
+- **`crash_defense.auto_execute`** config gate (default `false`). When `true`:
+  - DEFENSIVE (≥5.0): `_executor.move_all_longs_to_breakeven()`
+  - HIGH_ALERT (≥7.0): `_executor.partial_close(symbol, 0.50)` for each long
+  - EMERGENCY (≥8.0): `_executor.close_all_longs(exit_reason="crash_defense_emergency")`
+  - SYSTEMIC (≥9.0): `_executor.close_all()`
+- **Injection**: `PaperExecutor.__init__` calls `get_crash_defense_controller().set_executor(self)`.
+- **`move_all_longs_to_breakeven()`**: Sets `pos.stop_loss = pos.entry_price` directly — does NOT use `adjust_stop()` which rejects breakeven-level stops.
+- **`close_all_longs()`**: Iterates all buy positions, calls `_close_position()` for each.
+
+#### Agent Disable Pattern (Section 3)
+- **Disabled agents** (11): options, orderbook, volatility_surface, reddit, social_sentiment, twitter, sector_rotation, narrative, miner_flow, scalp, liquidity_vacuum
+- **Gate pattern**: `if not self._is_agent_enabled("agents.XXX_enabled", default=False): logger.info(...); return`
+- **Re-enable**: Set `agents.XXX_enabled: true` in `config.yaml`. Never delete agent code.
+- **`_is_agent_enabled()`**: Static helper in `AgentCoordinator` — reads `config.settings.get(config_key, default)`.
+
+#### Tiered Capital Model (Section 4 — Phase 2, GATED)
+- **Gate**: `capital.scaling_enabled: false` in config. NO effect in Phase 1.
+- **Tiers**: Solo standard 12%, Solo high-conviction (score≥0.70) 18%, Dual positions 8%, Multi (3+) 5%.
+- **`_HIGH_CONVICTION_THRESHOLD`**: 0.70 (class constant on `PositionSizer`).
+- **`_TIER_CAPS`**: Dict on `PositionSizer` — `{(open_count, high_conv): max_pct}`.
+- **Concurrency pass-through**: `ConfluenceScorer.score()` reads `_pe._positions` count → passes `open_positions_count` and `conviction_score` to `calculate_risk_based()`.
+
+#### Rolling PF Guardrails (Section 5)
+- **`_compute_rolling_pf(n)`**: Computes PF over last-N full closes (partial_close EXCLUDED). Returns 999.0 if no losers.
+- **Hard block in `submit()`**: Rolling-30 PF < 1.0 → `return False` (fires independently of the compound PF+WR block).
+- **Size scalar in `submit()`**: `size_usdt = candidate.position_size_usdt * self._rolling_size_scalar()`.
+  - `_rolling_size_scalar()`: requires ≥20 full closes; returns 0.50 if rolling-20 PF < 1.5, else 1.0.
+- **Scale gate advisory**: Rolling-50 PF ≥ 2.0 AND trades ≥ 50 → `bus.publish(SYSTEM_ALERT, type="scale_gate_eligible")`.
+- **Regression tests**: `tests/unit/test_section5_rolling_pf_guardrails.py` — 13 tests, all must pass.
+
 ---
 
 ## Demo Trading Milestones
@@ -258,6 +317,24 @@ Pause conditions: Portfolio RED → `should_pause=True`; OR 2+ models RED → `s
 
 ---
 
+## Session 35 — v1.3 PBL+SLC Production Implementation (2026-03-27)
+
+### PBL / SLC Model Architecture (commit ab466ec)
+- **`mr_pbl_slc.enabled`** (config.yaml, default `false`): master gate for both models. Flipping to `true` activates scanner HTF fetch + SignalGenerator dispatch.
+- **Context dispatch**: `SignalGenerator.generate()` accepts `context: dict`. Uses `inspect.signature()` to pass context only to models that declare it (backward-compatible).
+- **PBL context key**: `"df_4h"` — 4h DataFrame passed by scanner; model degrades gracefully if absent.
+- **SLC context key**: `"df_1h"` — 1h DataFrame; model returns `None` (hard requirement, cannot degrade).
+- **Scanner HTF fetch**: when enabled, fires `ThreadPoolExecutor(max_workers=2)` per symbol to fetch 4h+1h concurrently before calling `generate()`. Uses explicit pool + `finally` shutdown per threading rule.
+- **Regime guards in evaluate()**: both models explicitly check regime at entry (`if regime != REGIME_X: return None`). Do NOT rely solely on the SignalGenerator gate — direct test calls also need the guard.
+
+### PBL+SLC System Backtest Findings
+- Production HMM+rule-based RegimeClassifier emits `bear_trend` on bars the research script's vectorized labeler did not — SLC fires frequently on marginal bear bars where the R:R edge is thin.
+- SLC system PF=1.0008 across 1,029 trades is **breakeven**. Do NOT enable SLC live until regime alignment is investigated.
+- PBL system PF=1.1289 is marginal pre-fees (below target of 1.3+). Enable only after further investigation.
+- Investigation approach: compare RegimeClassifier `bear_trend` fraction vs research script's `bear_trend` fraction on the same data; if production emits 2× more bear_trend bars, tighten `adx_trend_threshold` or add a second filter to SLC.
+
+---
+
 ## Pending Actions
 - Remove or hide `🧪 Test Position` button before any public release
 - Wire `FilterStatsTracker.record_trade_outcome()` into `paper_executor._close_position()` per filter (realized_r quality proxy incomplete without this)
@@ -267,6 +344,8 @@ Pause conditions: Portfolio RED → `should_pause=True`; OR 2+ models RED → `s
 - Monitor LiquiditySweepModel OOS expectancy early demo — if also negative, keep disabled
 - Monitor target capture % in Exit Efficiency panel (target: 80–120%)
 - If stop tightness flag fires in calm markets: review ATR multipliers in sub-model `REGIME_ATR_MULTIPLIERS`
+- **[v1.3 PBL/SLC]** Investigate regime alignment gap — compare production RegimeClassifier `bear_trend` fraction vs research-script fraction on 4-year BTC data; resolve before enabling SLC live
+- **[v1.3 PBL/SLC]** Run Stage 8 runtime validation: launch NexusTrader with `mr_pbl_slc.enabled: true`, trigger scanner, verify PBL/SLC signals appear in logs with correct direction/SL/TP
 
 ---
 
