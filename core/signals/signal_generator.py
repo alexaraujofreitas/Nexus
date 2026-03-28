@@ -10,10 +10,12 @@ import logging
 from typing import Optional
 import pandas as pd
 
-from core.signals.sub_models.trend_model             import TrendModel
-from core.signals.sub_models.momentum_breakout_model import MomentumBreakoutModel
-from core.signals.sub_models.funding_rate_model      import FundingRateModel
-from core.signals.sub_models.sentiment_model         import SentimentModel
+from core.signals.sub_models.trend_model                   import TrendModel
+from core.signals.sub_models.momentum_breakout_model       import MomentumBreakoutModel
+from core.signals.sub_models.funding_rate_model            import FundingRateModel
+from core.signals.sub_models.sentiment_model               import SentimentModel
+from core.signals.sub_models.pullback_long_model           import PullbackLongModel
+from core.signals.sub_models.swing_low_continuation_model  import SwingLowContinuationModel
 from core.meta_decision.order_candidate import ModelSignal
 
 # v1.2 archived models — kept as importable modules for tests and historical
@@ -45,11 +47,16 @@ except Exception:
 # Active models — instantiated once and reused across all scan cycles.
 # v1.2: Only TrendModel + MomentumBreakout active (Study 4+5 validated).
 # FundingRateModel and SentimentModel remain for context enrichment (low weight).
+# v1.3 (Phase 6): PullbackLongModel + SwingLowContinuationModel added.
+#   Gated behind mr_pbl_slc.enabled in config.yaml (default: false).
+#   Activated only after Phase 1 50-trade milestone — see integration_plan.md.
 _ALL_MODELS = [
     TrendModel(),
     MomentumBreakoutModel(),
-    FundingRateModel(),    # Sprint 1 — contrarian funding rate signal
-    SentimentModel(),      # Sprint 4 — FinBERT / VADER news sentiment
+    FundingRateModel(),             # Sprint 1 — contrarian funding rate signal
+    SentimentModel(),               # Sprint 4 — FinBERT / VADER news sentiment
+    PullbackLongModel(),            # v1.3 — 30m bull_trend pullback (Phase 5 validated)
+    SwingLowContinuationModel(),    # v1.3 — 1h bear_trend swing-low continuation (Phase 5 validated)
 ]
 
 
@@ -82,6 +89,7 @@ class SignalGenerator:
         regime: str,
         timeframe: str,
         regime_probs: Optional[dict] = None,
+        context: Optional[dict] = None,
     ) -> list[ModelSignal]:
         """
         Run all regime-appropriate sub-models and collect signals.
@@ -94,6 +102,11 @@ class SignalGenerator:
         timeframe : primary timeframe
         regime_probs : dict, optional
             Regime probability distribution for probabilistic model activation
+        context : dict, optional
+            Extra data passed to models that need it.  Currently used by:
+              - PullbackLongModel:          context["df_4h"] — 4h OHLCV DataFrame
+              - SwingLowContinuationModel:  context["df_1h"] — 1h OHLCV DataFrame
+            Both DataFrames should be run through calculate_scan_mode() first.
 
         Returns
         -------
@@ -180,8 +193,32 @@ class SignalGenerator:
                     logger.debug("SignalGenerator: skipping %s (not active in regime=%s)",
                                  model.name, regime)
                     continue
+            # ── mr_pbl_slc gate ────────────────────────────────────────────
+            # PBL and SLC are gated behind mr_pbl_slc.enabled (default: false).
+            # This prevents firing until Phase 1 milestone is reached and the
+            # operator manually sets enabled=true in config.yaml.
+            _pbl_slc_names = {"pullback_long", "swing_low_continuation"}
+            if model.name in _pbl_slc_names:
+                try:
+                    _mr_enabled = bool(_sc.get("mr_pbl_slc.enabled", False))
+                except Exception:
+                    _mr_enabled = False
+                if not _mr_enabled:
+                    logger.debug(
+                        "SignalGenerator: %s gated (mr_pbl_slc.enabled=false)", model.name
+                    )
+                    continue
+
             try:
-                sig = model.evaluate(symbol, df, regime, timeframe)
+                # Pass context to models that accept it (PBL and SLC).
+                # Existing models (TrendModel etc.) use positional-only args
+                # and won't receive context — safe for backward compatibility.
+                import inspect as _inspect
+                _sig_params = _inspect.signature(model.evaluate).parameters
+                if "context" in _sig_params:
+                    sig = model.evaluate(symbol, df, regime, timeframe, context=context)
+                else:
+                    sig = model.evaluate(symbol, df, regime, timeframe)
                 if sig is not None:
                     signals.append(sig)
                     logger.info(

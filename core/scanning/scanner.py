@@ -625,8 +625,72 @@ class ScanWorker(QThread):
         _sym_diag["regime_confidence"] = round(confidence, 3)
         _sym_diag["regime_probs"]      = regime_probs
 
-        # Signal generation with regime probabilities
-        signals = self._sig_gen.generate(symbol, df, regime, self._timeframe, regime_probs=regime_probs)
+        # ── PBL/SLC context: fetch 4h and 1h data when mr_pbl_slc is enabled ───
+        # PullbackLongModel:          needs df_4h for HTF gate (4h EMA20 > EMA50)
+        # SwingLowContinuationModel:  needs df_1h as its primary signal dataframe
+        # Both are fetched here and passed as context["df_4h"] / context["df_1h"].
+        # Failures are non-fatal — models degrade gracefully when data is absent.
+        _signal_context: dict = {}
+        try:
+            from config.settings import settings as _sc_pbl
+            if bool(_sc_pbl.get("mr_pbl_slc.enabled", False)):
+                _slc_bars = int(_sc_pbl.get("mr_pbl_slc.slc_1h_bars", 150))
+
+                # ── 4h fetch (reuse from MTF pool) ─────────────────────
+                _pool_ctx = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+                _futs = {}
+                try:
+                    _futs["4h"] = _pool_ctx.submit(
+                        self._exchange.fetch_ohlcv, symbol, "4h", limit=60
+                    )
+                    _futs["1h"] = _pool_ctx.submit(
+                        self._exchange.fetch_ohlcv, symbol, "1h", limit=_slc_bars
+                    )
+                    for _tf_key, _fut in _futs.items():
+                        try:
+                            _raw_tf = _fut.result(timeout=10.0)
+                            if _raw_tf and len(_raw_tf) >= 20:
+                                _raw_tf, _ = enforce_closed_candles(
+                                    _raw_tf, _tf_key, log_symbol=f"{symbol}/ctx",
+                                )
+                            if _raw_tf and len(_raw_tf) >= 20:
+                                _df_tf = pd.DataFrame(
+                                    _raw_tf,
+                                    columns=["timestamp", "open", "high", "low", "close", "volume"],
+                                )
+                                _df_tf["timestamp"] = pd.to_datetime(
+                                    _df_tf["timestamp"], unit="ms", utc=True
+                                )
+                                _df_tf = _df_tf.set_index("timestamp").astype(float)
+                                from core.features.indicator_library import calculate_scan_mode
+                                _df_tf = calculate_scan_mode(_df_tf)
+                                _ctx_key = f"df_{_tf_key}"  # "df_4h" or "df_1h"
+                                _signal_context[_ctx_key] = _df_tf
+                                logger.debug(
+                                    "Scanner: %s context %s — %d bars fetched",
+                                    symbol, _tf_key, len(_df_tf),
+                                )
+                        except concurrent.futures.TimeoutError:
+                            logger.debug(
+                                "Scanner: %s context fetch %s timed out — model will degrade",
+                                symbol, _tf_key,
+                            )
+                        except Exception as _ctx_exc:
+                            logger.debug(
+                                "Scanner: %s context fetch %s error: %s",
+                                symbol, _tf_key, _ctx_exc,
+                            )
+                finally:
+                    _pool_ctx.shutdown(wait=False, cancel_futures=True)
+        except Exception as _ctx_outer:
+            logger.debug("Scanner: context fetch outer error for %s: %s", symbol, _ctx_outer)
+
+        # Signal generation with regime probabilities and HTF/1h context
+        signals = self._sig_gen.generate(
+            symbol, df, regime, self._timeframe,
+            regime_probs=regime_probs,
+            context=_signal_context,
+        )
 
         # ── Model-level diagnostics for rationale panel ───────────────
         try:

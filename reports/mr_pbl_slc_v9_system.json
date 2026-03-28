@@ -1,0 +1,52 @@
+{
+  "description": "v9 system backtest \u2014 NexusTrader PBL+SLC models, O(n) regime precompute",
+  "commit_reference": "daf41dc (research baseline)",
+  "scenario_a": {
+    "label": "A: zero fees",
+    "cost_per_side": 0.0,
+    "slip_per_side": 0.0,
+    "symbols": [
+      "BTC/USDT",
+      "SOL/USDT",
+      "ETH/USDT"
+    ],
+    "n_trades": 1275,
+    "win_rate": 0.5639,
+    "profit_factor": 1.0179,
+    "cagr": 0.026,
+    "max_drawdown": -0.2978,
+    "avg_r": 0.0528,
+    "final_equity": 110799.13,
+    "years": 4.0,
+    "rejected_heat": 592,
+    "rejected_other": 0
+  },
+  "scenario_b": {
+    "label": "B: 0.04%/side maker",
+    "cost_per_side": 0.0004,
+    "slip_per_side": 0.0,
+    "symbols": [
+      "BTC/USDT",
+      "SOL/USDT",
+      "ETH/USDT"
+    ],
+    "n_trades": 1275,
+    "win_rate": 0.5639,
+    "profit_factor": 0.9572,
+    "cagr": -0.0617,
+    "max_drawdown": -0.4198,
+    "avg_r": 0.0129,
+    "final_equity": 77520.88,
+    "years": 4.0,
+    "rejected_heat": 592,
+    "rejected_other": 0
+  },
+  "reference": {
+    "cagr": 0.5041,
+    "pf": 1.2975,
+    "wr": 0.611,
+    "mdd": -0.2066,
+    "n": 1476,
+    "note": "BTC only, zero fees, research script v7_final"
+  }
+}

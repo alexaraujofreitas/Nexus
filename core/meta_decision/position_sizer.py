@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Module-level import to avoid import lock contention at runtime.
@@ -121,6 +122,21 @@ class PositionSizer:
     # Risk-Based Sizing (PRODUCTION DEFAULT)
     # ──────────────────────────────────────────────────────────────
 
+    # ── Tiered capital limits (Phase 2 — gated behind capital.scaling_enabled) ──
+    # Activated only when config capital.scaling_enabled = true.
+    # Maps (open_position_count, high_conviction) → max_capital_pct override.
+    _TIER_CAPS: dict[tuple, float] = {
+        (0, False): 0.12,   # no open position, standard   → 12%
+        (0, True):  0.18,   # no open position, high-conv  → 18%
+        (1, False): 0.12,   # 1 open, standard             → 12%
+        (1, True):  0.18,   # 1 open, high-conviction       → 18%
+        (2, False): 0.08,   # 2 open                       →  8%
+        (2, True):  0.08,
+        (3, False): 0.05,   # 3+ open                      →  5%
+        (3, True):  0.05,
+    }
+    _HIGH_CONVICTION_THRESHOLD: float = 0.70  # score ≥ 0.70 = high-conviction
+
     def calculate_risk_based(
         self,
         capital_usdt: float,
@@ -129,21 +145,26 @@ class PositionSizer:
         risk_pct: float = 0.75,
         regime: str = "",
         drawdown_pct: float = 0.0,
+        open_positions_count: int = 0,
+        conviction_score: float = 0.0,
     ) -> float:
         """
         Calculate position size using risk-based formula.
 
         size = (risk_pct% × capital) / stop_distance × entry_price
-        Capped at 25% of capital.  Floored at min_size_usdt.
+        Capped at max_capital_pct (4% Phase 1; tiered when capital.scaling_enabled=true).
+        Floored at min_size_usdt.
 
         Parameters
         ----------
-        capital_usdt     : float  — current total capital (USDT)
-        entry_price      : float  — expected fill price
-        stop_price       : float  — stop-loss price
-        risk_pct         : float  — % of capital to risk per trade (e.g. 0.75 = 0.75%)
-        regime           : str    — market regime for halt check
-        drawdown_pct     : float  — current drawdown % for circuit-breaker check
+        capital_usdt         : float — current total capital (USDT)
+        entry_price          : float — expected fill price
+        stop_price           : float — stop-loss price
+        risk_pct             : float — % of capital to risk per trade (e.g. 0.75 = 0.75%)
+        regime               : str   — market regime for halt check
+        drawdown_pct         : float — current drawdown % for circuit-breaker check
+        open_positions_count : int   — number of currently open positions (for tiered cap)
+        conviction_score     : float — confluence score 0–1 (≥0.70 = high conviction tier)
         """
         if capital_usdt <= 0 or entry_price <= 0 or stop_price <= 0:
             return 0.0
@@ -163,10 +184,27 @@ class PositionSizer:
         qty       = risk_usdt / stop_distance
         size_usdt = qty * entry_price
 
+        # ── Tiered capital cap (Phase 2, gated behind capital.scaling_enabled) ──────
+        # When enabled, overrides max_capital_pct with a concurrency-aware tier cap.
+        # Default is Phase 1: self.max_capital_pct (4%).
+        effective_max_pct = self.max_capital_pct
+        try:
+            from config.settings import settings as _s_cap
+            if bool(_s_cap.get("capital.scaling_enabled", False)):
+                _hi  = conviction_score >= self._HIGH_CONVICTION_THRESHOLD
+                _cnt = min(open_positions_count, 3)   # cap at 3 for dict lookup
+                effective_max_pct = self._TIER_CAPS.get((_cnt, _hi),
+                                    self._TIER_CAPS[(3, _hi)])
+                logger.debug(
+                    "PositionSizer tiered cap: open=%d hi_conv=%s → max_cap=%.0f%%",
+                    open_positions_count, _hi, effective_max_pct * 100,
+                )
+        except Exception:
+            pass  # Fallback: use self.max_capital_pct
+
         # Cap at max_capital_pct of capital (e.g. 4% hard cap).
-        # Using self.max_capital_pct instead of a hardcoded constant ensures the
-        # same concentration limit applies whether sizing_mode is "risk_based" or "kelly".
-        cap_max = capital_usdt * self.max_capital_pct
+        # Using effective_max_pct ensures tiered model works correctly when enabled.
+        cap_max = capital_usdt * effective_max_pct
         size_usdt = min(size_usdt, cap_max)
 
         # Absolute max_size_usdt cap — only applied when explicitly set (> 0).
@@ -382,3 +420,106 @@ class PositionSizer:
     def get_regime_multiplier(self, regime: str) -> float:
         """Return the risk multiplier for a given regime."""
         return self.REGIME_RISK_MULTIPLIERS.get(regime, 0.4)
+
+    # ──────────────────────────────────────────────────────────────
+    # Pos-Frac Sizing (v1.3 — PBL + SLC models)
+    # Active ONLY when mr_pbl_slc.enabled = true in config.yaml.
+    # This is the EXACT sizing model from Phase 5 backtest (v7_final)
+    # that produced CAGR=50.41% (zero fees) / CAGR=35.67% (maker fees).
+    # ──────────────────────────────────────────────────────────────
+
+    def calculate_pos_frac(
+        self,
+        capital_usdt: float,
+        open_positions_count: int = 0,
+        open_positions_by_symbol: Optional[dict] = None,
+        symbol: str = "",
+    ) -> float:
+        """
+        Calculate position size using pos-frac sizing from Phase 5 backtest.
+
+        Formula:
+          proposed_size = pos_frac × equity
+          heat_after    = (deployed_est + proposed_size) / equity
+          Rejected if heat_after > max_heat
+          Rejected if open_positions_count >= max_positions
+          Rejected if positions in `symbol` >= max_per_asset
+
+        Parameters
+        ----------
+        capital_usdt : float
+            Current total equity.
+        open_positions_count : int
+            Number of currently open positions across all symbols.
+        open_positions_by_symbol : dict, optional
+            symbol -> open position count (for max_per_asset check).
+        symbol : str
+            Symbol being evaluated.
+
+        Returns
+        -------
+        float
+            Position size in USDT, or 0.0 if a constraint is violated.
+        """
+        if capital_usdt <= 0:
+            return 0.0
+
+        try:
+            from config.settings import settings as _s
+            pos_frac      = float(_s.get("mr_pbl_slc.pos_frac",      0.35))
+            max_heat      = float(_s.get("mr_pbl_slc.max_heat",      0.80))
+            max_positions = int(  _s.get("mr_pbl_slc.max_positions", 10))
+            max_per_asset = int(  _s.get("mr_pbl_slc.max_per_asset",  3))
+        except Exception:
+            pos_frac      = 0.35
+            max_heat      = 0.80
+            max_positions = 10
+            max_per_asset = 3
+
+        # ── Max positions gate ─────────────────────────────────────
+        if open_positions_count >= max_positions:
+            logger.debug(
+                "PositionSizer.pos_frac: max_positions (%d/%d) — reject",
+                open_positions_count, max_positions,
+            )
+            return 0.0
+
+        # ── Max per asset gate ─────────────────────────────────────
+        if symbol and open_positions_by_symbol:
+            sym_count = open_positions_by_symbol.get(symbol, 0)
+            if sym_count >= max_per_asset:
+                logger.debug(
+                    "PositionSizer.pos_frac: max_per_asset %s (%d/%d) — reject",
+                    symbol, sym_count, max_per_asset,
+                )
+                return 0.0
+
+        # ── Proposed size ──────────────────────────────────────────
+        proposed_size = pos_frac * capital_usdt
+
+        # ── Heat gate ─────────────────────────────────────────────
+        # Conservative estimate: assume each open position uses pos_frac of equity.
+        deployed_est = open_positions_count * pos_frac * capital_usdt
+        heat_after   = (deployed_est + proposed_size) / capital_usdt
+        if heat_after > max_heat:
+            logger.debug(
+                "PositionSizer.pos_frac: heat gate %.1f%% > %.1f%% — reject",
+                heat_after * 100, max_heat * 100,
+            )
+            return 0.0
+
+        logger.debug(
+            "PositionSizer.pos_frac: equity=%.0f pos_frac=%.0f%% "
+            "→ size=%.0f | heat=%.1f%% | open=%d",
+            capital_usdt, pos_frac * 100, proposed_size,
+            heat_after * 100, open_positions_count,
+        )
+        return round(proposed_size, 2)
+
+    def is_pos_frac_mode_active(self) -> bool:
+        """Return True when mr_pbl_slc pos-frac sizing should override risk-pct sizing."""
+        try:
+            from config.settings import settings as _s
+            return bool(_s.get("mr_pbl_slc.enabled", False))
+        except Exception:
+            return False
