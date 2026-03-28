@@ -96,6 +96,16 @@ def _card(title: str) -> tuple[QGroupBox, QVBoxLayout]:
     return gb, lay
 
 
+def _hsep() -> "QFrame":
+    """Thin 1 px horizontal separator — matches the Data Status table grid lines."""
+    sep = QFrame()
+    sep.setFrameShape(QFrame.HLine)
+    sep.setFrameShadow(QFrame.Plain)
+    sep.setFixedHeight(1)
+    sep.setStyleSheet("background:#2d2d2d; border:none;")
+    return sep
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Isolated state object
 # ─────────────────────────────────────────────────────────────────────────────
@@ -124,6 +134,9 @@ class _LabState:
     date_start:         str  = "2022-03-22"
     date_end:           str  = "2026-03-21"
     selected_symbols:   list = field(default_factory=lambda: ["BTC/USDT", "SOL/USDT", "ETH/USDT"])
+    # Phase 2 additions: unified engine mode
+    backtest_mode:      str  = "pbl_slc"    # BacktestRunner.MODE_* constant
+    strategy_subset:    list = field(default_factory=list)  # non-empty only for "custom" mode
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -176,10 +189,14 @@ class SweepWorkerThread(QThread):
         # Phase 1 — load data (indeterminate, long)
         self.indeterminate.emit(True)
         self.progress.emit(0, PHASES, 0.0, "Phase 1/4 — Loading historical data…")
+        _mode   = getattr(state, "backtest_mode", "pbl_slc")
+        _subset = getattr(state, "strategy_subset", []) or None
         runner = BacktestRunner(
-            date_start = state.date_start,
-            date_end   = state.date_end,
-            symbols    = state.selected_symbols,
+            date_start      = state.date_start,
+            date_end        = state.date_end,
+            symbols         = state.selected_symbols,
+            mode            = _mode,
+            strategy_subset = _subset,
         )
         runner.load_data()
         if self._cancel:
@@ -238,11 +255,15 @@ class SweepWorkerThread(QThread):
 
         exp_id = state.current_experiment or ExperimentStore.new_id()
         store  = ExperimentStore(exp_id)
+        _sw_mode   = getattr(state, "backtest_mode", "pbl_slc")
+        _sw_subset = getattr(state, "strategy_subset", []) or None
         engine = SweepEngine(
-            n_workers  = state.n_workers,
-            date_start = state.date_start,
-            date_end   = state.date_end,
-            symbols    = state.selected_symbols or None,
+            n_workers       = state.n_workers,
+            date_start      = state.date_start,
+            date_end        = state.date_end,
+            symbols         = state.selected_symbols or None,
+            mode            = _sw_mode,
+            strategy_subset = _sw_subset,
         )
         best_pf = 0.0
 
@@ -375,12 +396,15 @@ class _ParamRow(QWidget):
         self._build()
 
     def _build(self):
+        # Give each row a dark background so no blue gap bleeds through
+        self.setStyleSheet(f"background:{_DARK};")
         h = QHBoxLayout(self)
-        h.setContentsMargins(6, 3, 6, 3)
+        h.setContentsMargins(8, 5, 8, 5)
         h.setSpacing(6)
 
         # Description — stretches to fill available space
         name = _label(self._p.description, color=_TEXT)
+        name.setStyleSheet(f"color:{_TEXT}; background:transparent;")  # inherit row bg
         name.setMinimumWidth(130)
         name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         h.addWidget(name, 1)
@@ -406,7 +430,7 @@ class _ParamRow(QWidget):
         )
         range_lbl.setFixedWidth(100)
         range_lbl.setAlignment(Qt.AlignCenter)
-        range_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+        range_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px; background:transparent;")
         h.addWidget(range_lbl)
 
         # FIXED / OPTIMIZE toggle
@@ -446,39 +470,209 @@ class _ParamRow(QWidget):
         return round(self._spin.value(), 6)
 
 
-class _ParameterPanel(QWidget):
+# ─────────────────────────────────────────────────────────────────────────────
+# Strategy Selection Panel (Phase 2 — unified engine)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STRATEGY_OPTIONS: list[tuple[str, str, str]] = [
+    # (mode_key, display_label, description)
+    ("pbl_slc",     "PBL + SLC",       "Pullback Long + Swing Low Continuation  [research regime]"),
+    ("pbl",         "PBL only",        "PullbackLong only  [research bull_trend regime]"),
+    ("slc",         "SLC only",        "SwingLowContinuation only  [research bear_trend regime]"),
+    ("trend",       "Trend Model",     "TrendModel — directional trend following  [HMM regime]"),
+    ("momentum",    "Momentum",        "MomentumBreakout — vol-expansion breakouts  [HMM regime]"),
+    ("full_system", "Full System",     "All strategies: PBL + SLC + Trend + Momentum"),
+    ("custom",      "Custom ▾",        "Choose individual models below"),
+]
+
+_CUSTOM_MODELS: list[tuple[str, str]] = [
+    ("pullback_long",          "PBL  (Pullback Long)"),
+    ("swing_low_continuation", "SLC  (Swing Low Continuation)"),
+    ("trend",                  "Trend Model"),
+    ("momentum_breakout",      "Momentum Breakout"),
+]
+
+
+class _StrategyPanel(QWidget):
+    """
+    Radio-button strategy selector feeding the unified BacktestRunner.
+
+    Signals
+    -------
+    mode_changed(mode: str, subset: list[str])
+        Emitted whenever the user changes mode or custom checkboxes.
+        - mode   : BacktestRunner.MODE_* constant string
+        - subset : non-empty list only when mode=="custom", else []
+    """
+
+    mode_changed = Signal(str, list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from research.engine.parameter_registry import ALL_PARAMS
-        self._rows: list[_ParamRow] = []
-        self._build(ALL_PARAMS)
+        self._radios:         dict[str, "QRadioButton"] = {}   # mode_key → radio
+        self._custom_checks:  dict[str, QCheckBox]      = {}   # model_name → checkbox
+        self._custom_box:     Optional[QWidget]          = None
+        self._build()
 
-    def _build(self, params):
-        card, vlay = _card("⊙  Parameters")
+    # ── Build ────────────────────────────────────────────────────────────────
+
+    def _build(self):
+        # Import here to avoid circular at module parse time
+        from PySide6.QtWidgets import QRadioButton, QButtonGroup
+
+        card, vlay = _card("🎯  Strategy")
+        vlay.setSpacing(0)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
 
-        # Section headers
-        pbl_hdr = _label("PBL (Pullback Long)", bold=True, color=_BLUE)
-        vlay.addWidget(pbl_hdr)
+        self._btn_group = QButtonGroup(self)
+        self._btn_group.setExclusive(True)
 
-        for p in [pp for pp in params if pp.model == "pbl"]:
-            row = _ParamRow(p)
-            self._rows.append(row)
-            vlay.addWidget(row)
+        for mode_key, label, desc in _STRATEGY_OPTIONS:
+            row_w = QWidget()
+            row_w.setStyleSheet(f"background:{_DARK};")
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(8, 5, 8, 5)
+            row_h.setSpacing(8)
 
-        vlay.addSpacing(6)
-        slc_hdr = _label("SLC (Swing Low Continuation)", bold=True, color=_AMBER)
-        vlay.addWidget(slc_hdr)
+            rb = QRadioButton(label)
+            rb.setStyleSheet(
+                f"QRadioButton {{ color:{_TEXT}; font-size:13px; background:transparent; }}"
+                f" QRadioButton::indicator {{ width:13px; height:13px; }}"
+            )
+            rb.setChecked(mode_key == "pbl_slc")
+            rb.toggled.connect(lambda checked, k=mode_key: self._on_radio(k, checked))
+            self._radios[mode_key] = rb
+            self._btn_group.addButton(rb)
+            row_h.addWidget(rb)
 
-        for p in [pp for pp in params if pp.model == "slc"]:
-            row = _ParamRow(p)
-            self._rows.append(row)
-            vlay.addWidget(row)
+            desc_lbl = _label(desc, color=_DIM)
+            desc_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px; background:transparent;")
+            row_h.addWidget(desc_lbl, 1)
 
-        # Reset to defaults
+            vlay.addWidget(row_w)
+            vlay.addWidget(_hsep())
+
+        # Custom model checkboxes (initially hidden)
+        self._custom_box = QWidget()
+        self._custom_box.setStyleSheet(f"background:{_PANEL}; border-left:3px solid {_BLUE};")
+        cbox_v = QVBoxLayout(self._custom_box)
+        cbox_v.setContentsMargins(14, 6, 8, 6)
+        cbox_v.setSpacing(4)
+
+        for model_name, model_label in _CUSTOM_MODELS:
+            cb = QCheckBox(model_label)
+            cb.setChecked(model_name in ("pullback_long", "swing_low_continuation"))
+            cb.setStyleSheet(
+                f"QCheckBox {{ color:{_TEXT}; font-size:12px; background:transparent; }}"
+            )
+            cb.toggled.connect(self._on_custom_changed)
+            self._custom_checks[model_name] = cb
+            cbox_v.addWidget(cb)
+
+        self._custom_box.setVisible(False)
+        vlay.addWidget(self._custom_box)
+
+    # ── Slots ────────────────────────────────────────────────────────────────
+
+    def _on_radio(self, mode_key: str, checked: bool):
+        if not checked:
+            return
+        is_custom = (mode_key == "custom")
+        if self._custom_box is not None:
+            self._custom_box.setVisible(is_custom)
+        subset = self._custom_subset() if is_custom else []
+        self.mode_changed.emit(mode_key, subset)
+
+    def _on_custom_changed(self):
+        self.mode_changed.emit("custom", self._custom_subset())
+
+    def _custom_subset(self) -> list[str]:
+        return [m for m, cb in self._custom_checks.items() if cb.isChecked()]
+
+    # ── Public API ───────────────────────────────────────────────────────────
+
+    def current_mode(self) -> str:
+        for mode_key, rb in self._radios.items():
+            if rb.isChecked():
+                return mode_key
+        return "pbl_slc"
+
+    def current_subset(self) -> list[str]:
+        if self.current_mode() == "custom":
+            return self._custom_subset()
+        return []
+
+
+class _ParameterPanel(QWidget):
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows: list[_ParamRow] = []
+        self._card_widget: Optional[QWidget] = None
+        self._build_for_mode("pbl_slc")
+
+    def rebuild(self, mode: str) -> None:
+        """Rebuild parameter rows for the given engine mode."""
+        # Remove old card
+        old = self.layout()
+        if old:
+            while old.count():
+                item = old.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+        self._rows = []
+        self._build_for_mode(mode)
+
+    def _build_for_mode(self, mode: str):
+        from research.engine.parameter_registry import params_for_mode
+
+        params = params_for_mode(mode)
+
+        card, vlay = _card("⊙  Parameters")
+        vlay.setSpacing(0)
+
+        if self.layout() is None:
+            outer = QVBoxLayout(self)
+            outer.setContentsMargins(0, 0, 0, 0)
+        else:
+            outer = self.layout()
+
+        outer.addWidget(card)
+
+        # ── Section colours ───────────────────────────────────────────────
+        _SEC_COLORS = {
+            "pbl":      (_BLUE,   "PBL — Pullback Long"),
+            "slc":      (_AMBER,  "SLC — Swing Low Continuation"),
+            "trend":    ("#7ecbff","Trend Model"),
+            "momentum": ("#c8a0f0","Momentum Breakout"),
+        }
+
+        # Group params by model family, preserve original order
+        seen_models: list[str] = []
+        for p in params:
+            if p.model not in seen_models:
+                seen_models.append(p.model)
+
+        for model_key in seen_models:
+            color, title = _SEC_COLORS.get(model_key, (_TEXT, model_key.upper()))
+            hdr = _label(title, bold=True, color=color)
+            hdr.setStyleSheet(
+                f"color:{color}; font-weight:bold; background:{_PANEL};"
+                f" padding:4px 8px; font-size:12px;"
+            )
+            vlay.addWidget(hdr)
+            vlay.addWidget(_hsep())
+
+            for p in [pp for pp in params if pp.model == model_key]:
+                row = _ParamRow(p)
+                self._rows.append(row)
+                vlay.addWidget(row)
+                vlay.addWidget(_hsep())
+
+        vlay.addSpacing(4)
+
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.setStyleSheet(
             f"background:#333; color:{_TEXT}; border-radius:3px; padding:4px; font-size:13px;"
@@ -750,6 +944,8 @@ class _AssetPanel(QWidget):
 
     def _build(self):
         card, vlay = _card("📊  Assets")
+        # Zero spacing — thin separators inserted manually between rows
+        vlay.setSpacing(0)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
@@ -759,10 +955,18 @@ class _AssetPanel(QWidget):
         for sym in _ALL_SYMBOLS:
             cb = QCheckBox(sym)
             cb.setChecked(sym in _DEFAULT_SYMBOLS)
-            cb.setStyleSheet(f"color:{_TEXT}; font-size:13px;")
+            # Style: transparent bg inherits the _DARK row bg, padded like a table cell
+            cb.setStyleSheet(
+                f"QCheckBox {{ color:{_TEXT}; font-size:13px; padding:5px 6px;"
+                f" background:{_DARK}; }}"
+                f" QCheckBox::indicator {{ width:14px; height:14px; }}"
+            )
             cb.toggled.connect(self._on_changed)
             self._checkboxes[sym] = cb
             vlay.addWidget(cb)
+            vlay.addWidget(_hsep())
+
+        vlay.addSpacing(6)
 
         # ── Select all / clear all ───────────────────────────────────────
         sel_row = QHBoxLayout()
@@ -824,15 +1028,21 @@ class _AssetPanel(QWidget):
         if symbol in self._checkboxes:
             self._checkboxes[symbol].setChecked(True)
             return
-        # Insert checkbox before the add-asset section
+        # Insert checkbox + separator before the spacing/sel_row section
         layout = self.layout().itemAt(0).widget().layout()
         cb = QCheckBox(symbol)
         cb.setChecked(True)
-        cb.setStyleSheet(f"color:{_TEXT}; font-size:13px;")
+        cb.setStyleSheet(
+            f"QCheckBox {{ color:{_TEXT}; font-size:13px; padding:5px 6px;"
+            f" background:{_DARK}; }}"
+            f" QCheckBox::indicator {{ width:14px; height:14px; }}"
+        )
         cb.toggled.connect(self._on_changed)
         self._checkboxes[symbol] = cb
-        # Insert at position len(original symbols) (before the sel_row)
-        layout.insertWidget(len(self._checkboxes) - 1, cb)
+        # Each original symbol took 2 items (checkbox + separator) in the layout
+        insert_pos = (len(self._checkboxes) - 1) * 2
+        layout.insertWidget(insert_pos, cb)
+        layout.insertWidget(insert_pos + 1, _hsep())
         self._on_changed()
 
     def _on_validate_add(self):
@@ -1359,6 +1569,11 @@ class ResearchLabPage(QWidget):
         self._data_status_panel.check_requested.connect(self._on_check_data)
         left_layout.addWidget(self._data_status_panel)
 
+        # ── Strategy selection (Phase 2 — unified engine) ─────────────────
+        self._strategy_panel = _StrategyPanel()
+        self._strategy_panel.mode_changed.connect(self._on_strategy_mode_changed)
+        left_layout.addWidget(self._strategy_panel)
+
         self._param_panel = _ParameterPanel()
         left_layout.addWidget(self._param_panel)
 
@@ -1414,6 +1629,18 @@ class ResearchLabPage(QWidget):
     @Slot(list)
     def _on_assets_changed(self, symbols: list):
         self._state.selected_symbols = symbols
+
+    @Slot(str, list)
+    def _on_strategy_mode_changed(self, mode: str, subset: list):
+        """User changed the strategy selection — update state and rebuild params."""
+        self._state.backtest_mode   = mode
+        self._state.strategy_subset = subset
+        # Rebuild parameter rows to show only relevant params for the new mode
+        self._param_panel.rebuild(mode)
+        # Update the experiment label to reflect the active strategy
+        label_map = {k: lbl for k, lbl, _ in _STRATEGY_OPTIONS}
+        lbl = label_map.get(mode, mode)
+        self._exp_lbl.setText(f"Strategy: {lbl}")
 
     @Slot()
     def _on_check_data(self):

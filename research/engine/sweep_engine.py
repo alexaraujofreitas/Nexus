@@ -36,12 +36,14 @@ sys.path.insert(0, str(ROOT))
 _worker_runner = None
 
 
-def _init_worker(date_start: str = "2022-03-22",
-                 date_end:   str = "2026-03-21",
-                 symbols:    list | None = None):
+def _init_worker(date_start:       str        = "2022-03-22",
+                 date_end:         str        = "2026-03-21",
+                 symbols:          list | None = None,
+                 mode:             str        = "pbl_slc",
+                 strategy_subset:  list | None = None):
     """
-    Called once per worker process — loads BacktestRunner with the given period
-    and symbol set.  date_start/date_end/symbols are passed as Pool initargs.
+    Called once per worker process — loads BacktestRunner with the given period,
+    symbol set, and engine mode.  All args are passed as Pool initargs.
     """
     global _worker_runner
     try:
@@ -49,9 +51,11 @@ def _init_worker(date_start: str = "2022-03-22",
         import logging
         logging.disable(logging.WARNING)   # suppress per-trial noise
         _worker_runner = BacktestRunner(
-            date_start = date_start,
-            date_end   = date_end,
-            symbols    = symbols or SYMBOLS,
+            date_start      = date_start,
+            date_end        = date_end,
+            symbols         = symbols or SYMBOLS,
+            mode            = mode,
+            strategy_subset = strategy_subset or None,
         )
         _worker_runner.load_data()
     except Exception as e:
@@ -153,16 +157,20 @@ class SweepEngine:
 
     def __init__(
         self,
-        n_workers:  int  = 2,
-        date_start: str  = "2022-03-22",
-        date_end:   str  = "2026-03-21",
-        symbols:    list | None = None,
+        n_workers:       int        = 2,
+        date_start:      str        = "2022-03-22",
+        date_end:        str        = "2026-03-21",
+        symbols:         list | None = None,
+        mode:            str        = "pbl_slc",
+        strategy_subset: list | None = None,
     ):
-        self.n_workers   = max(1, min(n_workers, mp.cpu_count()))
-        self.date_start  = date_start
-        self.date_end    = date_end
-        self.symbols     = symbols
-        self._cancelled  = False
+        self.n_workers       = max(1, min(n_workers, mp.cpu_count()))
+        self.date_start      = date_start
+        self.date_end        = date_end
+        self.symbols         = symbols
+        self.mode            = mode
+        self.strategy_subset = strategy_subset
+        self._cancelled      = False
 
     def cancel(self):
         self._cancelled = True
@@ -189,7 +197,8 @@ class SweepEngine:
         pool = mp.Pool(
             processes   = self.n_workers,
             initializer = _init_worker,
-            initargs    = (self.date_start, self.date_end, self.symbols),
+            initargs    = (self.date_start, self.date_end, self.symbols,
+                           self.mode, self.strategy_subset),
         )
         try:
             for result in pool.imap_unordered(_worker_run, args, chunksize=1):
