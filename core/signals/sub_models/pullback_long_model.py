@@ -1,29 +1,32 @@
 # ============================================================
 # NEXUS TRADER — Pullback Long Model (Sub-Model 6)
 #
-# Active in: bull_trend
+# Active in: bull_trend (research regime integer = 1)
 # Timeframe: 30m (primary); requires 4h HTF confirmation
 #
-# Logic — EXACT reproduction of Phase 5 backtest (v7_final):
-#   Regime gate:    bull_trend only
-#   4h HTF gate:    4h EMA20 > 4h EMA50  (bullish higher-TF bias)
-#   EMA50 proximity: |close − EMA50| ≤ 0.5 × ATR14  (pulling back)
-#   Rejection candle: close > open  (bullish candle body)
-#   RSI gate:       RSI14 > 40  (momentum not oversold)
-#   Stop-loss:      entry − 2.5 × ATR14
-#   Take-profit:    entry + 3.0 × ATR14
+# Logic — EXACT reproduction of Phase 5 backtest gen_pbl() in
+# scripts/mr_pbl_slc_research/backtest_v7_final.py:
 #
-# Strength calculation:
-#   base      = 0.25
-#   RSI bonus = (RSI14 − 40) / 60 × 0.25  (scaled 0→0.25 as RSI 40→100)
-#   prox_bonus = max(0, 0.5 − prox_ratio) / 0.5 × 0.25 (closer → bonus)
-#   HTF bonus = 0.15 if 4h EMA spread > 1%
-#   Capped at 0.90
+#   Regime gate:    research BULL_TREND (ADX≥22, EMA20>EMA50,
+#                   price>EMA200, ATR_ratio<1.80) on 30m series
+#   4h HTF gate:    4h EMA20 > 4h EMA50  (bullish higher-TF bias)
+#   EMA50 proximity: |close − EMA50| ≤ 0.5 × ATR14
+#   Rejection candle (ALL three required):
+#                   (a) close > open        — bullish body
+#                   (b) lower_wick > upper_wick  — tail rejection
+#                   (c) lower_wick > body         — tail dominates
+#   RSI gate:       RSI14 > 40
+#   Stop-loss:      close_signal − 2.5 × ATR14
+#   Take-profit:    close_signal + 3.0 × ATR14
+#
+# Regime source (priority):
+#   1. context["research_regime_30m"]  (int from ResearchRegimeClassifier)
+#      → set by scanner / backtest at each bar
+#   2. Fallback: NexusTrader regime string (for test compatibility)
 #
 # HTF data injection:
-#   The scanner passes pre-fetched 4h OHLCV as context["df_4h"].
-#   If absent, HTF gate is bypassed with a debug warning
-#   (graceful degradation, no hard failure).
+#   Scanner passes pre-fetched 4h OHLCV as context["df_4h"].
+#   If absent, HTF gate is bypassed with a debug warning.
 # ============================================================
 from __future__ import annotations
 
@@ -34,32 +37,39 @@ import pandas as pd
 from core.signals.sub_models.base import BaseSubModel
 from core.meta_decision.order_candidate import ModelSignal
 from core.regime.regime_classifier import REGIME_BULL_TREND
+from core.regime.research_regime_classifier import BULL_TREND as _RES_BULL_TREND
 
 logger = logging.getLogger(__name__)
 
-# ── Tunable constants (can be overridden via config.yaml: mr_pbl_slc.*) ──────
-_EMA50_PROX_ATR_MULT   = 0.5    # |close − EMA50| ≤ mult × ATR14
+# ── Tunable constants ─────────────────────────────────────────────────────────
+_EMA50_PROX_ATR_MULT   = 0.5
 _SL_ATR_MULT           = 2.5
 _TP_ATR_MULT           = 3.0
 _RSI_MIN               = 40.0
-_HTF_EMA_FAST          = 20     # 4h fast EMA for HTF gate
-_HTF_EMA_SLOW          = 50     # 4h slow EMA for HTF gate
+_HTF_EMA_FAST          = 20
+_HTF_EMA_SLOW          = 50
 
 
 class PullbackLongModel(BaseSubModel):
     """
-    Pullback-to-EMA50 long model active in bull_trend regime.
+    Pullback-to-EMA50 long model active in research BULL_TREND regime.
 
-    Fires when price pulls back to the 30m EMA50 during a bullish 4h trend,
-    then shows a rejection (bullish) candle with RSI above 40.
+    Fires when price pulls back to 30m EMA50 during a bullish 4h trend,
+    then shows a REJECTION candle (long lower wick, short upper wick,
+    lower wick dominates body) with RSI > 40.
+
+    Regime is read from context["research_regime_30m"] (int, preferred)
+    or falls back to the NexusTrader regime string for test compatibility.
     """
 
-    ACTIVE_REGIMES = [REGIME_BULL_TREND]
-
-    # Pullback model waits for price to come to it — no entry buffer
+    # ACTIVE_REGIMES is empty so the SignalGenerator ACTIVE_REGIMES hard gate
+    # always passes — regime control is handled entirely inside evaluate() via
+    # context["research_regime_30m"] (primary) or the NexusTrader regime string
+    # (fallback).  REGIME_AFFINITY still applies via adaptive activation so the
+    # model is suppressed in crisis / liquidation_cascade regimes as expected.
+    ACTIVE_REGIMES: list[str] = []
     ENTRY_BUFFER_ATR: float = 0.0
 
-    # High affinity only in bull_trend; near-zero elsewhere
     REGIME_AFFINITY: dict[str, float] = {
         "bull_trend":             1.0,
         "bear_trend":             0.0,
@@ -92,16 +102,30 @@ class PullbackLongModel(BaseSubModel):
 
         Parameters
         ----------
+        regime : str
+            NexusTrader regime string — used as FALLBACK if research regime
+            is not in context.
         context : dict, optional
-            May contain 'df_4h': pre-fetched 4h DataFrame with at least 60 rows,
-            already through calculate_scan_mode(). If absent, HTF gate is skipped
-            (graceful degradation — signal may still fire, at reduced strength).
+            Expected keys:
+              "research_regime_30m" : int  — regime from ResearchRegimeClassifier
+              "df_4h"               : pd.DataFrame  — 4h OHLCV with indicators
         """
-        # ── Regime guard (hard gate — evaluate() can be called directly in tests) ──
-        if regime != REGIME_BULL_TREND:
-            return None
+        ctx = context or {}
 
-        # ── Read config overrides ──────────────────────────────────────
+        # ── Regime gate (research regime takes priority) ──────────────
+        res_regime = ctx.get("research_regime_30m")
+        if res_regime is not None:
+            # Use research integer regime
+            if int(res_regime) != _RES_BULL_TREND:
+                logger.debug("PBL %s: research_regime_30m=%d ≠ BULL_TREND — skip", symbol, res_regime)
+                return None
+        else:
+            # Fallback: NexusTrader string (test compatibility)
+            if regime != REGIME_BULL_TREND:
+                logger.debug("PBL %s: NexusTrader regime=%s ≠ bull_trend — skip", symbol, regime)
+                return None
+
+        # ── Read config overrides ─────────────────────────────────────
         try:
             from config.settings import settings as _s
             ema_prox_mult = float(_s.get("mr_pbl_slc.pullback_long.ema_prox_atr_mult", _EMA50_PROX_ATR_MULT))
@@ -114,14 +138,17 @@ class PullbackLongModel(BaseSubModel):
             tp_mult       = _TP_ATR_MULT
             rsi_min       = _RSI_MIN
 
-        # Need at least 60 bars for EMA50
         if len(df) < 60:
             logger.debug("PBL %s: insufficient bars (%d < 60)", symbol, len(df))
             return None
 
-        # ── Extract indicators ────────────────────────────────────────
-        close = float(df["close"].iloc[-1])
-        open_ = float(df["open"].iloc[-1])
+        # ── Extract OHLC for current (last) bar ──────────────────────
+        last       = df.iloc[-1]
+        close      = float(last["close"])
+        open_      = float(last["open"])
+        high_bar   = float(last["high"])
+        low_bar    = float(last["low"])
+
         atr   = self._atr(df, 14)
         ema50 = self._col(df, "ema_50")
         rsi   = self._col(df, "rsi_14")
@@ -135,14 +162,29 @@ class PullbackLongModel(BaseSubModel):
         prox_threshold = ema_prox_mult * atr
         if prox_distance > prox_threshold:
             logger.debug(
-                "PBL %s: prox fail |%.4f − %.4f| = %.4f > %.4f (%.1f×ATR)",
-                symbol, close, ema50, prox_distance, prox_threshold, ema_prox_mult,
+                "PBL %s: prox fail |%.4f−%.4f|=%.4f > %.4f",
+                symbol, close, ema50, prox_distance, prox_threshold,
             )
             return None
 
-        # ── Condition 2: Rejection (bullish) candle ───────────────────
+        # ── Condition 2: Rejection candle (3 sub-conditions) ─────────
+        # Research gen_pbl():
+        #   body = abs(close - open)
+        #   lw   = min(open, close) - low   (lower wick length)
+        #   uw   = high - max(open, close)  (upper wick length)
+        #   rej  = (close > open) & (lw > uw) & (lw > body)
+        body = abs(close - open_)
+        lw   = min(close, open_) - low_bar      # lower wick
+        uw   = high_bar - max(close, open_)     # upper wick
+
         if close <= open_:
-            logger.debug("PBL %s: non-bullish candle close=%.4f open=%.4f", symbol, close, open_)
+            logger.debug("PBL %s: candle not bullish (close=%.4f ≤ open=%.4f)", symbol, close, open_)
+            return None
+        if lw <= uw:
+            logger.debug("PBL %s: lower_wick=%.4f ≤ upper_wick=%.4f (not rejection)", symbol, lw, uw)
+            return None
+        if lw <= body:
+            logger.debug("PBL %s: lower_wick=%.4f ≤ body=%.4f (not rejection)", symbol, lw, body)
             return None
 
         # ── Condition 3: RSI gate ─────────────────────────────────────
@@ -151,13 +193,12 @@ class PullbackLongModel(BaseSubModel):
             return None
 
         # ── Condition 4: 4h HTF gate ──────────────────────────────────
-        htf_confirmed = False
+        htf_confirmed      = False
         htf_strength_bonus = 0.0
-        df_4h: Optional[pd.DataFrame] = (context or {}).get("df_4h")
+        df_4h: Optional[pd.DataFrame] = ctx.get("df_4h")
 
         if df_4h is not None and len(df_4h) >= max(_HTF_EMA_FAST, _HTF_EMA_SLOW) + 5:
             try:
-                # EMA columns should already be computed by calculate_scan_mode()
                 ema_fast_col = f"ema_{_HTF_EMA_FAST}"
                 ema_slow_col = f"ema_{_HTF_EMA_SLOW}"
 
@@ -165,73 +206,59 @@ class PullbackLongModel(BaseSubModel):
                     htf_ema_fast = float(df_4h[ema_fast_col].iloc[-1])
                     htf_ema_slow = float(df_4h[ema_slow_col].iloc[-1])
                 else:
-                    # Compute inline if missing
-                    htf_close = df_4h["close"]
+                    htf_close    = df_4h["close"]
                     htf_ema_fast = float(htf_close.ewm(span=_HTF_EMA_FAST, adjust=False).mean().iloc[-1])
                     htf_ema_slow = float(htf_close.ewm(span=_HTF_EMA_SLOW, adjust=False).mean().iloc[-1])
 
                 if htf_ema_fast > htf_ema_slow:
                     htf_confirmed = True
-                    # Bonus proportional to spread — wider spread = stronger trend
                     spread_pct = (htf_ema_fast - htf_ema_slow) / htf_ema_slow
                     htf_strength_bonus = 0.15 if spread_pct > 0.01 else 0.08
                     logger.debug(
-                        "PBL %s: 4h HTF gate PASS — EMA%d=%.2f > EMA%d=%.2f (spread=%.2f%%)",
+                        "PBL %s: 4h HTF PASS EMA%d=%.4f > EMA%d=%.4f",
                         symbol, _HTF_EMA_FAST, htf_ema_fast, _HTF_EMA_SLOW, htf_ema_slow,
-                        spread_pct * 100,
                     )
                 else:
                     logger.debug(
-                        "PBL %s: 4h HTF gate FAIL — EMA%d=%.2f ≤ EMA%d=%.2f",
+                        "PBL %s: 4h HTF FAIL EMA%d=%.4f ≤ EMA%d=%.4f",
                         symbol, _HTF_EMA_FAST, htf_ema_fast, _HTF_EMA_SLOW, htf_ema_slow,
                     )
-                    return None  # HTF gate required — reject if bearish 4h
+                    return None  # HTF gate required
             except Exception as exc:
-                logger.warning("PBL %s: HTF gate compute error: %s — bypassing", symbol, exc)
-                htf_confirmed = False  # bypass on error, don't block
+                logger.warning("PBL %s: HTF gate error: %s — bypassing", symbol, exc)
         else:
-            # No 4h data available — bypass HTF gate with warning
-            logger.debug(
-                "PBL %s: no 4h data in context (df_4h=%s) — HTF gate bypassed",
-                symbol, type(df_4h).__name__ if df_4h is not None else "None",
-            )
-            # Still allow signal but with reduced strength (no HTF bonus)
-            htf_confirmed = False
+            # No 4h data — bypass (graceful degradation)
+            logger.debug("PBL %s: no df_4h in context — HTF gate bypassed", symbol)
 
         # ── Strength calculation ──────────────────────────────────────
-        strength = 0.25  # base for passing all 3 primary conditions
+        strength = 0.25  # base
 
-        # RSI bonus: RSI 40→100 maps to 0→0.25
-        rsi_bonus = (min(rsi, 100.0) - rsi_min) / (100.0 - rsi_min) * 0.25
-        strength += rsi_bonus
+        # RSI bonus: 0 at RSI=40, +0.25 at RSI=100
+        rsi_bonus  = (min(rsi, 100.0) - rsi_min) / (100.0 - rsi_min) * 0.25
+        strength  += rsi_bonus
 
-        # Proximity bonus: closer to EMA50 = better entry quality
+        # Proximity bonus: 0 at threshold, +0.25 exactly at EMA50
         if prox_threshold > 0:
-            prox_ratio = prox_distance / prox_threshold  # 0 (at EMA) → 1 (at threshold)
-            prox_bonus = (1.0 - prox_ratio) * 0.25       # max 0.25 when exactly at EMA
+            prox_bonus = (1.0 - prox_distance / prox_threshold) * 0.25
         else:
             prox_bonus = 0.0
         strength += prox_bonus
 
-        # HTF bonus
         strength += htf_strength_bonus
+        strength  = round(min(0.90, strength), 4)
 
-        strength = round(min(0.90, strength), 4)
+        # ── Price levels (match research: SL/TP from signal-bar close+ATR) ──
+        entry_price = close
+        stop_loss   = close - sl_mult * atr
+        take_profit = close + tp_mult * atr
 
-        # ── Price levels ──────────────────────────────────────────────
-        entry_price = close  # at-close market-order entry (no buffer for pullback)
-        stop_loss   = entry_price - sl_mult * atr
-        take_profit = entry_price + tp_mult * atr
-
-        # ── Rationale ────────────────────────────────────────────────
-        htf_str = "4h HTF confirmed ✓" if htf_confirmed else "4h HTF bypassed (no data)"
         rationale = (
-            f"[PullbackLong | {regime}] "
-            f"EMA50={ema50:.4f} prox={prox_distance:.4f}≤{prox_threshold:.4f}({ema_prox_mult}×ATR) ✓ | "
-            f"Bullish candle close={close:.4f}>open={open_:.4f} ✓ | "
-            f"RSI14={rsi:.1f}>{rsi_min:.0f} ✓ | "
-            f"{htf_str} | "
-            f"SL={stop_loss:.4f}(-{sl_mult}×ATR) TP={take_profit:.4f}(+{tp_mult}×ATR)"
+            f"[PBL | regime={res_regime if res_regime is not None else regime}] "
+            f"EMA50={ema50:.4f} prox={prox_distance:.4f}≤{prox_threshold:.4f} ✓ | "
+            f"Rejection: lw={lw:.4f}>uw={uw:.4f}>body={body:.4f} ✓ | "
+            f"RSI={rsi:.1f}>{rsi_min:.0f} ✓ | "
+            f"HTF={'confirmed' if htf_confirmed else 'bypassed'} | "
+            f"SL={stop_loss:.4f} TP={take_profit:.4f}"
         )
 
         logger.info(
@@ -245,8 +272,8 @@ class PullbackLongModel(BaseSubModel):
             direction   = "long",
             strength    = strength,
             entry_price = round(entry_price, 8),
-            stop_loss   = round(stop_loss, 8),
-            take_profit = round(take_profit, 8),
+            stop_loss   = round(stop_loss,   8),
+            take_profit = round(take_profit,  8),
             timeframe   = timeframe,
             regime      = regime,
             rationale   = rationale,

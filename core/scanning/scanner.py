@@ -629,6 +629,13 @@ class ScanWorker(QThread):
         # PullbackLongModel:          needs df_4h for HTF gate (4h EMA20 > EMA50)
         # SwingLowContinuationModel:  needs df_1h as its primary signal dataframe
         # Both are fetched here and passed as context["df_4h"] / context["df_1h"].
+        #
+        # Research regime injection (v1.3):
+        #   context["research_regime_30m"] — int from ResearchRegimeClassifier on 30m
+        #   context["research_regime_1h"]  — int from ResearchRegimeClassifier on 1h
+        # These are checked FIRST inside evaluate() so the models use the same
+        # vectorized labeler as the research system (btc_regime_labeler.py logic).
+        #
         # Failures are non-fatal — models degrade gracefully when data is absent.
         _signal_context: dict = {}
         try:
@@ -682,6 +689,40 @@ class ScanWorker(QThread):
                             )
                 finally:
                     _pool_ctx.shutdown(wait=False, cancel_futures=True)
+
+                # ── Research regime injection ───────────────────────────
+                # Compute research regime for 30m (PBL) and 1h (SLC) using
+                # the same vectorized labeler as the research script.
+                # classify_latest_bar() is O(n) over the window — call once
+                # per symbol per scan cycle.
+                try:
+                    from core.regime.research_regime_classifier import (
+                        classify_latest_bar as _res_classify,
+                    )
+                    # 30m research regime (PBL gate)
+                    try:
+                        _signal_context["research_regime_30m"] = _res_classify(df)
+                        logger.debug(
+                            "Scanner: %s research_regime_30m=%d",
+                            symbol, _signal_context["research_regime_30m"],
+                        )
+                    except Exception as _e30:
+                        logger.debug("Scanner: %s research_regime_30m error: %s", symbol, _e30)
+
+                    # 1h research regime (SLC gate) — only if 1h data was fetched
+                    _df_1h_ctx = _signal_context.get("df_1h")
+                    if _df_1h_ctx is not None and len(_df_1h_ctx) >= 20:
+                        try:
+                            _signal_context["research_regime_1h"] = _res_classify(_df_1h_ctx)
+                            logger.debug(
+                                "Scanner: %s research_regime_1h=%d",
+                                symbol, _signal_context["research_regime_1h"],
+                            )
+                        except Exception as _e1h:
+                            logger.debug("Scanner: %s research_regime_1h error: %s", symbol, _e1h)
+                except Exception as _res_exc:
+                    logger.debug("Scanner: %s research regime error: %s", symbol, _res_exc)
+
         except Exception as _ctx_outer:
             logger.debug("Scanner: context fetch outer error for %s: %s", symbol, _ctx_outer)
 

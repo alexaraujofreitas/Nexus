@@ -1,32 +1,27 @@
 # ============================================================
 # NEXUS TRADER — Swing Low Continuation Model (Sub-Model 7)
 #
-# Active in: bear_trend
+# Active in: bear_trend (research regime integer = 2)
 # Timeframe: 1h (requires df_1h in context)
 #
-# Logic — EXACT reproduction of Phase 5 backtest (v7_final):
-#   Regime gate:     bear_trend only
-#   ADX gate:        ADX14 ≥ 28  (confirmed downtrend strength)
-#   Swing-low gate:  close < min(close[-10:-1]) on 1h bars
-#                    (current bar makes a new 10-bar closing low)
-#   Stop-loss:       entry + 2.5 × ATR14  (above entry, short trade)
-#   Take-profit:     entry − 2.0 × ATR14  (below entry, short trade)
+# Logic — EXACT reproduction of Phase 5 backtest gen_slc() in
+# scripts/mr_pbl_slc_research/backtest_v7_final.py:
 #
-# Strength calculation:
-#   base       = 0.30
-#   ADX bonus  = (ADX14 − 28) / 72 × 0.30  (scaled 0→0.30 as ADX 28→100)
-#   swing_depth = (min10 − close) / (ATR14 × 2) clamped [0,1]  (depth bonus)
-#   depth bonus = swing_depth × 0.25
-#   Capped at 0.85
+#   Regime gate:     research BEAR_TREND on 1h series (NOT 30m)
+#                    (ADX≥22, EMA20≤EMA50, price≤EMA200, ATR_ratio<1.80)
+#   ADX gate:        1h ADX14 (Wilder) ≥ 28
+#   Swing-low gate:  1h close < shift(1).rolling(10).min()
+#                    i.e. close < min(close[-10], …, close[-1])
+#   Stop-loss:       entry + 2.5 × 1h ATR14  (above entry, short)
+#   Take-profit:     entry − 2.0 × 1h ATR14  (below entry, short)
 #
-# Timeframe routing:
-#   The scanner's primary TF is 30m.  SLC requires 1h data.
-#   The scanner fetches 1h OHLCV as a secondary fetch and passes it
-#   as context["df_1h"].  If absent, model returns None (hard requirement
-#   — SLC cannot synthesize 1h data from 30m alone without resampling
-#   and without knowing which bars are complete).
+# Regime source (priority):
+#   1. context["research_regime_1h"]  (int from ResearchRegimeClassifier
+#      applied to the 1h series — set by scanner / backtest)
+#   2. Fallback: NexusTrader regime string (test compatibility)
 #
-# Direction: SHORT only (bear-trend continuation)
+# CRITICAL: regime is for the 1h series, NOT the 30m primary series.
+# The research classifies regime on 1h OHLCV independently.
 # ============================================================
 from __future__ import annotations
 
@@ -37,30 +32,34 @@ import pandas as pd
 from core.signals.sub_models.base import BaseSubModel
 from core.meta_decision.order_candidate import ModelSignal
 from core.regime.regime_classifier import REGIME_BEAR_TREND
+from core.regime.research_regime_classifier import BEAR_TREND as _RES_BEAR_TREND
 
 logger = logging.getLogger(__name__)
 
-# ── Tunable constants (can be overridden via config.yaml: mr_pbl_slc.*) ──────
+# ── Tunable constants ─────────────────────────────────────────────────────────
 _ADX_MIN          = 28.0
-_SWING_BARS       = 10       # look-back bars for new closing low
+_SWING_BARS       = 10
 _SL_ATR_MULT      = 2.5
 _TP_ATR_MULT      = 2.0
 
 
 class SwingLowContinuationModel(BaseSubModel):
     """
-    Swing-low continuation short model active in bear_trend regime.
+    Swing-low continuation short model active in research BEAR_TREND regime
+    on the 1h series.
 
-    Fires when price makes a new 10-bar closing low on 1h data during a
-    confirmed bear trend (ADX ≥ 28), indicating downtrend continuation.
+    Regime is read from context["research_regime_1h"] (int, preferred)
+    or falls back to the NexusTrader regime string for test compatibility.
     """
 
-    ACTIVE_REGIMES = [REGIME_BEAR_TREND]
-
-    # Short trade: entry is set at or below close — no buffer needed
+    # ACTIVE_REGIMES is empty so the SignalGenerator ACTIVE_REGIMES hard gate
+    # always passes — regime control is handled entirely inside evaluate() via
+    # context["research_regime_1h"] (primary) or the NexusTrader regime string
+    # (fallback).  REGIME_AFFINITY still applies via adaptive activation so the
+    # model is suppressed in crisis / liquidation_cascade regimes as expected.
+    ACTIVE_REGIMES: list[str] = []
     ENTRY_BUFFER_ATR: float = 0.0
 
-    # High affinity only in bear_trend; zero in anything bullish
     REGIME_AFFINITY: dict[str, float] = {
         "bull_trend":             0.0,
         "bear_trend":             1.0,
@@ -89,23 +88,45 @@ class SwingLowContinuationModel(BaseSubModel):
         context: Optional[dict] = None,
     ) -> Optional[ModelSignal]:
         """
-        Evaluate swing-low continuation (short) opportunity.
+        Evaluate swing-low continuation (short) on 1h data.
 
         Parameters
         ----------
-        df : pd.DataFrame
-            Primary timeframe data (30m).  Not used for SLC signal logic —
-            only used as fallback if df_1h is absent.
+        regime : str
+            NexusTrader 30m regime string — used as FALLBACK only.
         context : dict, optional
-            Must contain 'df_1h': pre-fetched 1h DataFrame with at least
-            _SWING_BARS + 20 rows and indicators computed.
-            If absent, model returns None (1h data is mandatory for SLC).
+            Expected keys:
+              "research_regime_1h" : int  — regime from ResearchRegimeClassifier
+                                            applied to the 1h series
+              "df_1h"              : pd.DataFrame  — 1h OHLCV with indicators
         """
-        # ── Regime guard (hard gate) ──────────────────────────────────────
-        if regime != REGIME_BEAR_TREND:
+        ctx = context or {}
+
+        # ── 1h data is mandatory ──────────────────────────────────────
+        df_1h: Optional[pd.DataFrame] = ctx.get("df_1h")
+        if df_1h is None or len(df_1h) < _SWING_BARS + 20:
+            logger.debug(
+                "SLC %s: no 1h data (len=%s) — skipping",
+                symbol, len(df_1h) if df_1h is not None else "N/A",
+            )
             return None
 
-        # ── Read config overrides ──────────────────────────────────────
+        # ── Regime gate (research 1h regime takes priority) ──────────
+        res_regime_1h = ctx.get("research_regime_1h")
+        if res_regime_1h is not None:
+            if int(res_regime_1h) != _RES_BEAR_TREND:
+                logger.debug(
+                    "SLC %s: research_regime_1h=%d ≠ BEAR_TREND — skip",
+                    symbol, res_regime_1h,
+                )
+                return None
+        else:
+            # Fallback: NexusTrader 30m regime string
+            if regime != REGIME_BEAR_TREND:
+                logger.debug("SLC %s: NexusTrader regime=%s ≠ bear_trend — skip", symbol, regime)
+                return None
+
+        # ── Read config overrides ─────────────────────────────────────
         try:
             from config.settings import settings as _s
             adx_min    = float(_s.get("mr_pbl_slc.swing_low_continuation.adx_min",    _ADX_MIN))
@@ -118,90 +139,71 @@ class SwingLowContinuationModel(BaseSubModel):
             sl_mult    = _SL_ATR_MULT
             tp_mult    = _TP_ATR_MULT
 
-        # ── Require 1h DataFrame from context ─────────────────────────
-        df_1h: Optional[pd.DataFrame] = (context or {}).get("df_1h")
-
-        if df_1h is None or len(df_1h) < swing_bars + 20:
-            logger.debug(
-                "SLC %s: no 1h data in context (df_1h=%s, len=%s) — skipping",
-                symbol,
-                type(df_1h).__name__ if df_1h is not None else "None",
-                len(df_1h) if df_1h is not None else "N/A",
-            )
-            return None
-
-        # Work on 1h data for all signal logic
+        # Work on 1h data
         df_work = df_1h
 
-        # ── Extract indicators ────────────────────────────────────────
-        close  = float(df_work["close"].iloc[-1])
-        atr    = self._atr(df_work, 14)
-        adx    = self._col(df_work, "adx")
+        # ── Extract indicators from 1h data ───────────────────────────
+        close = float(df_work["close"].iloc[-1])
+        atr   = self._atr(df_work, 14)
+        adx   = self._col(df_work, "adx")
         if adx is None:
             adx = self._col(df_work, "adx_14")
-
         if adx is None:
-            logger.debug("SLC %s: missing ADX indicator on 1h data", symbol)
+            logger.debug("SLC %s: missing ADX on 1h data", symbol)
             return None
 
-        # ── Condition 1: ADX gate ─────────────────────────────────────
+        # ── Condition 1: ADX gate (Wilder ADX14 from indicator library) ─
         if adx < adx_min:
-            logger.debug("SLC %s: ADX=%.1f < %.1f — no trend strength", symbol, adx, adx_min)
+            logger.debug("SLC %s: ADX=%.1f < %.1f", symbol, adx, adx_min)
             return None
 
         # ── Condition 2: New 10-bar closing low ───────────────────────
-        # Current bar close < all previous 10 closes (bars −10 to −1 inclusive)
-        # "Previous" means bars BEFORE the current bar (no lookahead).
+        # Research: sw10 = close.shift(1).rolling(10).min()
+        # i.e. sw10[i] = min(close[i-10], ..., close[i-1])
+        # Signal: close[i] < sw10[i]
         if len(df_work) < swing_bars + 2:
             logger.debug("SLC %s: insufficient 1h bars for swing_bars=%d", symbol, swing_bars)
             return None
 
-        prev_closes = df_work["close"].iloc[-(swing_bars + 1):-1]   # last `swing_bars` before current
+        prev_closes = df_work["close"].iloc[-(swing_bars + 1):-1]  # bars i-10 to i-1
         prev_min    = float(prev_closes.min())
 
         if close >= prev_min:
-            logger.debug(
-                "SLC %s: close=%.4f ≥ min10=%.4f — not a new 10-bar low",
-                symbol, close, prev_min,
-            )
+            logger.debug("SLC %s: close=%.4f ≥ prev_min10=%.4f", symbol, close, prev_min)
             return None
 
         # ── Strength calculation ──────────────────────────────────────
-        strength = 0.30  # base for passing both primary conditions
+        strength = 0.30
 
-        # ADX bonus: ADX 28→100 maps to 0→0.30
         adx_range = 100.0 - adx_min
         adx_bonus = min(0.30, (adx - adx_min) / adx_range * 0.30)
         strength += adx_bonus
 
-        # Swing depth bonus: how far below the 10-bar min is this close?
-        # depth = (prev_min - close) / (2 × ATR).  Deeper break → more bonus.
         if atr > 0:
             swing_depth = max(0.0, min(1.0, (prev_min - close) / (2.0 * atr)))
         else:
             swing_depth = 0.0
         depth_bonus = swing_depth * 0.25
-        strength += depth_bonus
+        strength   += depth_bonus
 
         strength = round(min(0.85, strength), 4)
 
-        # ── Price levels ──────────────────────────────────────────────
-        entry_price = close  # at-close market entry on 1h signal
-        stop_loss   = entry_price + sl_mult * atr   # above entry (short)
-        take_profit = entry_price - tp_mult * atr   # below entry (short)
+        # ── Price levels (match research: SL/TP from signal-bar close+ATR) ──
+        entry_price = close
+        stop_loss   = entry_price + sl_mult * atr   # above (short)
+        take_profit = entry_price - tp_mult * atr   # below (short)
 
-        # ── Rationale ────────────────────────────────────────────────
         rationale = (
-            f"[SwingLowContinuation | {regime}] "
+            f"[SLC | regime_1h={res_regime_1h if res_regime_1h is not None else regime}] "
             f"ADX14={adx:.1f}≥{adx_min:.0f} ✓ | "
-            f"New 10-bar closing low: close={close:.4f}<prev_min10={prev_min:.4f} ✓ | "
-            f"ADX_bonus={adx_bonus:.3f} depth_bonus={depth_bonus:.3f} | "
-            f"SL={stop_loss:.4f}(+{sl_mult}×ATR) TP={take_profit:.4f}(-{tp_mult}×ATR)"
+            f"New 10-bar low: close={close:.4f}<prev_min={prev_min:.4f} ✓ | "
+            f"adx_bonus={adx_bonus:.3f} depth_bonus={depth_bonus:.3f} | "
+            f"SL={stop_loss:.4f} TP={take_profit:.4f}"
         )
 
         logger.info(
-            "SLC SIGNAL: %s | strength=%.3f | ADX=%.1f | swing_depth=%.3f | SL=%.4f | TP=%.4f",
-            symbol, strength, adx, swing_depth, stop_loss, take_profit,
+            "SLC SIGNAL: %s | strength=%.3f | ADX=%.1f | close=%.4f | SL=%.4f | TP=%.4f",
+            symbol, strength, adx, close, stop_loss, take_profit,
         )
 
         return ModelSignal(
@@ -210,9 +212,9 @@ class SwingLowContinuationModel(BaseSubModel):
             direction   = "short",
             strength    = strength,
             entry_price = round(entry_price, 8),
-            stop_loss   = round(stop_loss, 8),
-            take_profit = round(take_profit, 8),
-            timeframe   = "1h",      # SLC always runs on 1h data
+            stop_loss   = round(stop_loss,   8),
+            take_profit = round(take_profit,  8),
+            timeframe   = "1h",
             regime      = regime,
             rationale   = rationale,
             atr_value   = atr,

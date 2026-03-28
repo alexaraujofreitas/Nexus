@@ -1,52 +1,65 @@
 {
-  "description": "v9 system backtest \u2014 NexusTrader PBL+SLC models, O(n) regime precompute",
-  "commit_reference": "daf41dc (research baseline)",
+  "version": "v9_regime_fixed",
+  "description": "Production pipeline backtest \u2014 research regime aligned",
+  "fixes_applied": [
+    "ResearchRegimeClassifier replaces HMM for PBL(30m) and SLC(1h)",
+    "PBL: full rejection-candle check (close>open AND lw>uw AND lw>body)",
+    "SLC: 1h regime from research labeler on 1h series"
+  ],
+  "modules_used": [
+    "SignalGenerator.generate()",
+    "PositionSizer.calculate_pos_frac()",
+    "RegimeClassifier.classify() [NexusTrader HMM+rule]",
+    "ResearchRegimeClassifier.classify_series() [research labeler]"
+  ],
   "scenario_a": {
     "label": "A: zero fees",
-    "cost_per_side": 0.0,
-    "slip_per_side": 0.0,
-    "symbols": [
-      "BTC/USDT",
-      "SOL/USDT",
-      "ETH/USDT"
+    "modules_used": [
+      "SignalGenerator.generate()",
+      "PositionSizer.calculate_pos_frac()",
+      "RegimeClassifier.classify() [NexusTrader HMM+rule]",
+      "ResearchRegimeClassifier.classify_series() [research labeler]"
     ],
-    "n_trades": 1275,
-    "win_rate": 0.5639,
-    "profit_factor": 1.0179,
-    "cagr": 0.026,
-    "max_drawdown": -0.2978,
-    "avg_r": 0.0528,
-    "final_equity": 110799.13,
+    "n_trades": 1745,
+    "win_rate": 0.561,
+    "profit_factor": 1.3708,
+    "cagr": 0.6644,
+    "max_drawdown": -0.1637,
+    "avg_r": 0.2311,
+    "final_equity": 766393.16,
     "years": 4.0,
-    "rejected_heat": 592,
-    "rejected_other": 0
+    "signals_generated": 2426,
+    "rejected_heat": 669,
+    "rejected_max": 0,
+    "rejected_entry_gap": 12
   },
   "scenario_b": {
     "label": "B: 0.04%/side maker",
-    "cost_per_side": 0.0004,
-    "slip_per_side": 0.0,
-    "symbols": [
-      "BTC/USDT",
-      "SOL/USDT",
-      "ETH/USDT"
+    "modules_used": [
+      "SignalGenerator.generate()",
+      "PositionSizer.calculate_pos_frac()",
+      "RegimeClassifier.classify() [NexusTrader HMM+rule]",
+      "ResearchRegimeClassifier.classify_series() [research labeler]"
     ],
-    "n_trades": 1275,
-    "win_rate": 0.5639,
-    "profit_factor": 0.9572,
-    "cagr": -0.0617,
-    "max_drawdown": -0.4198,
-    "avg_r": 0.0129,
-    "final_equity": 77520.88,
+    "n_trades": 1745,
+    "win_rate": 0.561,
+    "profit_factor": 1.2682,
+    "cagr": 0.4744,
+    "max_drawdown": -0.2033,
+    "avg_r": 0.1671,
+    "final_equity": 472082.96,
     "years": 4.0,
-    "rejected_heat": 592,
-    "rejected_other": 0
+    "signals_generated": 2426,
+    "rejected_heat": 669,
+    "rejected_max": 0,
+    "rejected_entry_gap": 12
   },
   "reference": {
-    "cagr": 0.5041,
     "pf": 1.2975,
+    "cagr": 0.5041,
     "wr": 0.611,
     "mdd": -0.2066,
     "n": 1476,
-    "note": "BTC only, zero fees, research script v7_final"
+    "note": "v7_final BTC only zero fees"
   }
 }

@@ -127,7 +127,17 @@ class TestPullbackLongModel:
     model = PullbackLongModel()
 
     def _make_pbl_df(self, rsi=55.0, bullish_candle=True, ema50_prox=True, n=100):
-        """Helper that builds a DataFrame satisfying all PBL conditions by default."""
+        """
+        Helper that builds a DataFrame satisfying all PBL conditions by default.
+
+        Candle structure for bullish_candle=True (REJECTION candle — all 3 required):
+          close > open  (a) bullish body
+          lw > uw       (b) lower wick dominates upper wick
+          lw > body     (c) lower wick longer than body
+
+        With explicit high/low set to ensure the constraints hold regardless of
+        the randomly-generated base DataFrame values.
+        """
         df = make_df(n=n, trend="up")
         base = float(df["close"].iloc[-1])
         atr  = float(df["atr_14"].iloc[-1])
@@ -141,13 +151,23 @@ class TestPullbackLongModel:
         df["rsi_14"] = rsi
         df["rsi"]    = rsi
 
-        # Make last candle bullish or not
         if bullish_candle:
-            df.iloc[-1, df.columns.get_loc("open")]  = base - 100
+            # Rejection candle: long lower wick, short upper wick, small bullish body
+            #   open  = base - 50   → bullish body = 50
+            #   close = base
+            #   low   = base - 400  → lower wick = (base-50) - (base-400) = 350
+            #   high  = base + 30   → upper wick  = (base+30) - base = 30
+            #   → lw(350) > uw(30) ✓   lw(350) > body(50) ✓
+            df.iloc[-1, df.columns.get_loc("open")]  = base - 50
             df.iloc[-1, df.columns.get_loc("close")] = base
+            df.iloc[-1, df.columns.get_loc("low")]   = base - 400
+            df.iloc[-1, df.columns.get_loc("high")]  = base + 30
         else:
+            # Non-bullish candle: close ≤ open (bearish)
             df.iloc[-1, df.columns.get_loc("open")]  = base + 100
             df.iloc[-1, df.columns.get_loc("close")] = base
+            df.iloc[-1, df.columns.get_loc("low")]   = base - 50
+            df.iloc[-1, df.columns.get_loc("high")]  = base + 200
 
         return df
 
@@ -232,9 +252,13 @@ class TestPullbackLongModel:
         assert sig is not None
         assert 0.0 < sig.strength <= 0.90, f"Strength {sig.strength} out of range"
 
-    def test_active_regimes_declared(self):
-        assert "bull_trend" in PullbackLongModel.ACTIVE_REGIMES
-        assert "bear_trend" not in PullbackLongModel.ACTIVE_REGIMES
+    def test_active_regimes_empty(self):
+        # v1.3: ACTIVE_REGIMES=[] so SignalGenerator hard gate always passes.
+        # Regime control is handled entirely inside evaluate() via context
+        # (research_regime_30m) or NexusTrader regime string fallback.
+        assert PullbackLongModel.ACTIVE_REGIMES == [], (
+            "PBL ACTIVE_REGIMES must be [] — regime gated inside evaluate() via context"
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -340,9 +364,13 @@ class TestSwingLowContinuationModel:
                                   context={"df_1h": df_1h})
         assert 0.0 < sig.strength <= 0.85, f"Strength {sig.strength} out of range"
 
-    def test_active_regimes_declared(self):
-        assert "bear_trend" in SwingLowContinuationModel.ACTIVE_REGIMES
-        assert "bull_trend" not in SwingLowContinuationModel.ACTIVE_REGIMES
+    def test_active_regimes_empty(self):
+        # v1.3: ACTIVE_REGIMES=[] so SignalGenerator hard gate always passes.
+        # Regime control is handled entirely inside evaluate() via context
+        # (research_regime_1h) or NexusTrader regime string fallback.
+        assert SwingLowContinuationModel.ACTIVE_REGIMES == [], (
+            "SLC ACTIVE_REGIMES must be [] — regime gated inside evaluate() via context"
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -404,10 +432,14 @@ class TestPositionSizerPosFrac:
         size = self.sizer.calculate_pos_frac(100_000, open_positions_count=1)
         assert size > 0.0, "One open position should pass heat gate"
 
-    def test_is_pos_frac_mode_active_false_by_default(self):
+    def test_is_pos_frac_mode_active_false_when_disabled(self):
         """When mr_pbl_slc.enabled = false, pos_frac mode must be inactive."""
-        with patch("core.meta_decision.position_sizer.settings") as mock_s:
-            mock_s.get.return_value = False
+        # Patch config.settings.settings directly (is_pos_frac_mode_active imports
+        # settings locally, so patching must target the source module)
+        with patch("config.settings.settings") as mock_s:
+            mock_s.get.side_effect = lambda key, default=None: (
+                False if key == "mr_pbl_slc.enabled" else default
+            )
             assert self.sizer.is_pos_frac_mode_active() is False
 
 
