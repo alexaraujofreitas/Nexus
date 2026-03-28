@@ -36,16 +36,22 @@ sys.path.insert(0, str(ROOT))
 _worker_runner = None
 
 
-def _init_worker():
-    """Called once per worker process — loads BacktestRunner."""
+def _init_worker(date_start: str = "2022-03-22",
+                 date_end:   str = "2026-03-21",
+                 symbols:    list | None = None):
+    """
+    Called once per worker process — loads BacktestRunner with the given period
+    and symbol set.  date_start/date_end/symbols are passed as Pool initargs.
+    """
     global _worker_runner
     try:
-        from research.engine.backtest_runner import BacktestRunner
+        from research.engine.backtest_runner import BacktestRunner, SYMBOLS
         import logging
         logging.disable(logging.WARNING)   # suppress per-trial noise
         _worker_runner = BacktestRunner(
-            date_start="2022-03-22",
-            date_end="2026-03-21",
+            date_start = date_start,
+            date_end   = date_end,
+            symbols    = symbols or SYMBOLS,
         )
         _worker_runner.load_data()
     except Exception as e:
@@ -145,8 +151,17 @@ class SweepEngine:
     In the Research Lab UI, SweepWorkerThread wraps this in a QThread.
     """
 
-    def __init__(self, n_workers: int = 2):
+    def __init__(
+        self,
+        n_workers:  int  = 2,
+        date_start: str  = "2022-03-22",
+        date_end:   str  = "2026-03-21",
+        symbols:    list | None = None,
+    ):
         self.n_workers   = max(1, min(n_workers, mp.cpu_count()))
+        self.date_start  = date_start
+        self.date_end    = date_end
+        self.symbols     = symbols
         self._cancelled  = False
 
     def cancel(self):
@@ -171,10 +186,12 @@ class SweepEngine:
         best_pf = 0.0
         completed = 0
 
-        with mp.Pool(
-            processes=self.n_workers,
-            initializer=_init_worker,
-        ) as pool:
+        pool = mp.Pool(
+            processes   = self.n_workers,
+            initializer = _init_worker,
+            initargs    = (self.date_start, self.date_end, self.symbols),
+        )
+        try:
             for result in pool.imap_unordered(_worker_run, args, chunksize=1):
                 if self._cancelled:
                     pool.terminate()
@@ -187,6 +204,9 @@ class SweepEngine:
                 if progress_cb:
                     progress_cb(completed, total, best_pf)
                 yield result
+        finally:
+            pool.close()
+            pool.join()
 
     def run_baseline(self, cost_per_side: float = 0.0004) -> dict:
         """

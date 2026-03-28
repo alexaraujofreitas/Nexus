@@ -28,11 +28,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from PySide6.QtCore import (
-    QObject, QThread, Qt, QTimer, Signal, Slot,
+    QDate, QObject, QThread, Qt, QTimer, Signal, Slot,
 )
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFrame, QGridLayout, QGroupBox,
+    QAbstractItemView, QComboBox, QDateEdit, QFrame, QGridLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter,
     QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit,
@@ -120,6 +120,10 @@ class _LabState:
     n_workers:          int  = 2
     objective:          str  = "profit_factor"
     cost_per_side:      float= 0.0004
+    # Phase 1 additions: period + asset selection
+    date_start:         str  = "2022-03-22"
+    date_end:           str  = "2026-03-21"
+    selected_symbols:   list = field(default_factory=lambda: ["BTC/USDT", "SOL/USDT", "ETH/USDT"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -167,11 +171,16 @@ class SweepWorkerThread(QThread):
         from research.engine.baseline_registry import load_baseline
 
         PHASES = 4
+        state  = self._state
 
         # Phase 1 — load data (indeterminate, long)
         self.indeterminate.emit(True)
         self.progress.emit(0, PHASES, 0.0, "Phase 1/4 — Loading historical data…")
-        runner = BacktestRunner(date_start="2022-03-22", date_end="2026-03-21")
+        runner = BacktestRunner(
+            date_start = state.date_start,
+            date_end   = state.date_end,
+            symbols    = state.selected_symbols,
+        )
         runner.load_data()
         if self._cancel:
             return
@@ -229,7 +238,12 @@ class SweepWorkerThread(QThread):
 
         exp_id = state.current_experiment or ExperimentStore.new_id()
         store  = ExperimentStore(exp_id)
-        engine = SweepEngine(n_workers=state.n_workers)
+        engine = SweepEngine(
+            n_workers  = state.n_workers,
+            date_start = state.date_start,
+            date_end   = state.date_end,
+            symbols    = state.selected_symbols or None,
+        )
         best_pf = 0.0
 
         for result in engine.run_sweep(trials, state.cost_per_side):
@@ -352,40 +366,43 @@ class _ParamRow(QWidget):
 
     def _build(self):
         h = QHBoxLayout(self)
-        h.setContentsMargins(4, 1, 4, 1)
-        h.setSpacing(4)
+        h.setContentsMargins(6, 3, 6, 3)
+        h.setSpacing(6)
 
         # Description — stretches to fill available space
         name = _label(self._p.description, color=_TEXT)
-        name.setMinimumWidth(120)
+        name.setMinimumWidth(130)
         name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         h.addWidget(name, 1)
 
-        # Value spinbox — compact
+        # Value spinbox — wide enough to show "40.00" without clipping
         self._spin = QDoubleSpinBox()
         self._spin.setDecimals(2)
         self._spin.setRange(self._p.range_min * 0.5, self._p.range_max * 1.5)
         self._spin.setSingleStep(self._p.step)
         self._spin.setValue(float(self._p.default))
-        self._spin.setFixedWidth(62)
+        self._spin.setFixedWidth(78)
+        self._spin.setAlignment(Qt.AlignCenter)
         self._spin.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444; border-radius:3px;"
+            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444;"
+            " border-radius:3px; padding: 0 4px;"
         )
         h.addWidget(self._spin)
 
-        # Range label — compact hint
+        # Range label — wide enough for "[25.0–55.0]"
         range_lbl = _label(
             f"[{self._p.range_min}–{self._p.range_max}]",
-            color=_TEXT,
+            color=_DIM,
         )
-        range_lbl.setFixedWidth(86)
-        range_lbl.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
+        range_lbl.setFixedWidth(100)
+        range_lbl.setAlignment(Qt.AlignCenter)
+        range_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px;")
         h.addWidget(range_lbl)
 
         # FIXED / OPTIMIZE toggle
         self._mode_btn = QPushButton("FIXED")
         self._mode_btn.setCheckable(True)
-        self._mode_btn.setFixedWidth(82)
+        self._mode_btn.setFixedWidth(86)
         self._mode_btn.setStyleSheet(self._btn_style(False))
         self._mode_btn.toggled.connect(self._on_toggle)
         h.addWidget(self._mode_btn)
@@ -595,6 +612,386 @@ class _SearchPanel(QWidget):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Period Panel  (Phase 1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DEFAULT_START = "2022-03-22"
+_DEFAULT_END   = "2026-03-21"
+
+
+class _PeriodPanel(QWidget):
+    """Date-range selector with quick presets and live duration display."""
+
+    period_changed = Signal(str, str)   # date_start, date_end ISO strings
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build()
+
+    def _build(self):
+        card, vlay = _card("📅  Backtest Period")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(card)
+
+        # ── Quick presets ────────────────────────────────────────────────
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(_label("Preset:", color=_DIM))
+        for label, months in [("6m", 6), ("1y", 12), ("2y", 24), ("4y", 48)]:
+            btn = QPushButton(label)
+            btn.setFixedWidth(38)
+            btn.setStyleSheet(
+                f"background:#1a3555; color:{_TEXT}; border-radius:3px; padding:3px;"
+                " font-size:12px;"
+            )
+            btn.clicked.connect(lambda _, m=months: self._apply_preset(m))
+            preset_row.addWidget(btn)
+        preset_row.addStretch()
+        vlay.addLayout(preset_row)
+
+        # ── Date pickers ─────────────────────────────────────────────────
+        picker_grid = QGridLayout()
+        picker_grid.setHorizontalSpacing(8)
+        picker_grid.setVerticalSpacing(4)
+
+        picker_grid.addWidget(_label("Start:", color=_TEXT), 0, 0)
+        self._start_edit = QDateEdit()
+        self._start_edit.setCalendarPopup(True)
+        self._start_edit.setDisplayFormat("yyyy-MM-dd")
+        self._start_edit.setDate(QDate.fromString(_DEFAULT_START, "yyyy-MM-dd"))
+        self._start_edit.setStyleSheet(
+            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444; border-radius:3px;"
+            " padding:2px 4px;"
+        )
+        picker_grid.addWidget(self._start_edit, 0, 1)
+
+        picker_grid.addWidget(_label("End:", color=_TEXT), 1, 0)
+        self._end_edit = QDateEdit()
+        self._end_edit.setCalendarPopup(True)
+        self._end_edit.setDisplayFormat("yyyy-MM-dd")
+        self._end_edit.setDate(QDate.fromString(_DEFAULT_END, "yyyy-MM-dd"))
+        self._end_edit.setStyleSheet(
+            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444; border-radius:3px;"
+            " padding:2px 4px;"
+        )
+        picker_grid.addWidget(self._end_edit, 1, 1)
+        vlay.addLayout(picker_grid)
+
+        # ── Duration display ─────────────────────────────────────────────
+        self._dur_lbl = _label("", color=_DIM)
+        self._dur_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px; padding-top:2px;")
+        vlay.addWidget(self._dur_lbl)
+
+        self._start_edit.dateChanged.connect(self._on_changed)
+        self._end_edit.dateChanged.connect(self._on_changed)
+        self._on_changed()   # initialise duration label
+
+    def _apply_preset(self, months: int):
+        from PySide6.QtCore import QDate
+        end   = QDate.fromString(_DEFAULT_END, "yyyy-MM-dd")
+        start = end.addMonths(-months)
+        self._start_edit.setDate(start)
+        self._end_edit.setDate(end)
+
+    def _on_changed(self):
+        start = self._start_edit.date()
+        end   = self._end_edit.date()
+        if start >= end:
+            self._dur_lbl.setText("⚠ Start must be before End")
+            self._dur_lbl.setStyleSheet(f"color:{_RED}; font-size:11px;")
+            return
+        days  = start.daysTo(end)
+        years = days / 365.25
+        self._dur_lbl.setText(f"Duration: {years:.1f} years  ({days:,} days)")
+        self._dur_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+        self.period_changed.emit(
+            start.toString("yyyy-MM-dd"),
+            end.toString("yyyy-MM-dd"),
+        )
+
+    @property
+    def date_start(self) -> str:
+        return self._start_edit.date().toString("yyyy-MM-dd")
+
+    @property
+    def date_end(self) -> str:
+        return self._end_edit.date().toString("yyyy-MM-dd")
+
+    def is_valid(self) -> bool:
+        return self._start_edit.date() < self._end_edit.date()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Asset Panel  (Phase 1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ALL_SYMBOLS     = ["BTC/USDT", "SOL/USDT", "ETH/USDT", "XRP/USDT", "BNB/USDT"]
+_DEFAULT_SYMBOLS = ["BTC/USDT", "SOL/USDT", "ETH/USDT"]
+
+
+class _AssetPanel(QWidget):
+    """Multi-asset selector with checkboxes and Add Asset workflow."""
+
+    assets_changed = Signal(list)   # list of selected symbol strings
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build()
+
+    def _build(self):
+        card, vlay = _card("📊  Assets")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(card)
+
+        # ── Checkboxes ───────────────────────────────────────────────────
+        self._checkboxes: dict[str, QCheckBox] = {}
+        for sym in _ALL_SYMBOLS:
+            cb = QCheckBox(sym)
+            cb.setChecked(sym in _DEFAULT_SYMBOLS)
+            cb.setStyleSheet(f"color:{_TEXT}; font-size:13px;")
+            cb.toggled.connect(self._on_changed)
+            self._checkboxes[sym] = cb
+            vlay.addWidget(cb)
+
+        # ── Select all / clear all ───────────────────────────────────────
+        sel_row = QHBoxLayout()
+        all_btn = QPushButton("Select All")
+        all_btn.setStyleSheet(
+            f"background:#1a3555; color:{_TEXT}; border-radius:3px; padding:3px; font-size:12px;"
+        )
+        all_btn.clicked.connect(lambda: self._set_all(True))
+        sel_row.addWidget(all_btn)
+        clear_btn = QPushButton("Clear All")
+        clear_btn.setStyleSheet(
+            f"background:#2a1515; color:{_TEXT}; border-radius:3px; padding:3px; font-size:12px;"
+        )
+        clear_btn.clicked.connect(lambda: self._set_all(False))
+        sel_row.addWidget(clear_btn)
+        vlay.addLayout(sel_row)
+
+        # ── Add asset ────────────────────────────────────────────────────
+        vlay.addSpacing(4)
+        add_hdr = _label("Add asset (e.g. DOGE/USDT):", color=_DIM)
+        add_hdr.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+        vlay.addWidget(add_hdr)
+
+        add_row = QHBoxLayout()
+        self._add_input = QLineEdit()
+        self._add_input.setPlaceholderText("SYMBOL/USDT")
+        self._add_input.setStyleSheet(
+            f"background:{_DARK}; color:{_TEXT}; border:1px solid #444; border-radius:3px;"
+            " padding:2px 6px; font-size:12px;"
+        )
+        add_row.addWidget(self._add_input)
+
+        self._add_btn = QPushButton("Validate")
+        self._add_btn.setFixedWidth(70)
+        self._add_btn.setStyleSheet(
+            f"background:{_BLUE}; color:white; border-radius:3px; padding:3px; font-size:12px;"
+        )
+        self._add_btn.clicked.connect(self._on_validate_add)
+        add_row.addWidget(self._add_btn)
+        vlay.addLayout(add_row)
+
+        self._add_status_lbl = _label("", color=_DIM)
+        self._add_status_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+        self._add_status_lbl.setWordWrap(True)
+        vlay.addWidget(self._add_status_lbl)
+
+    def _set_all(self, state: bool):
+        for cb in self._checkboxes.values():
+            cb.setChecked(state)
+
+    def _on_changed(self):
+        self.assets_changed.emit(self.selected_symbols())
+
+    def selected_symbols(self) -> list[str]:
+        return [sym for sym, cb in self._checkboxes.items() if cb.isChecked()]
+
+    def add_symbol(self, symbol: str):
+        """Add a new checkbox for a symbol not in the default list."""
+        if symbol in self._checkboxes:
+            self._checkboxes[symbol].setChecked(True)
+            return
+        # Insert checkbox before the add-asset section
+        layout = self.layout().itemAt(0).widget().layout()
+        cb = QCheckBox(symbol)
+        cb.setChecked(True)
+        cb.setStyleSheet(f"color:{_TEXT}; font-size:13px;")
+        cb.toggled.connect(self._on_changed)
+        self._checkboxes[symbol] = cb
+        # Insert at position len(original symbols) (before the sel_row)
+        layout.insertWidget(len(self._checkboxes) - 1, cb)
+        self._on_changed()
+
+    def _on_validate_add(self):
+        """Validate that the entered symbol exists on Bybit (background)."""
+        sym = self._add_input.text().strip().upper()
+        if not sym or "/" not in sym:
+            self._add_status_lbl.setText("⚠ Enter a symbol like DOGE/USDT")
+            self._add_status_lbl.setStyleSheet(f"color:{_AMBER}; font-size:11px;")
+            return
+
+        self._add_btn.setEnabled(False)
+        self._add_status_lbl.setText("Checking exchange…")
+        self._add_status_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+
+        # Run in thread to avoid blocking UI
+        from research.engine.data_manager import DataManager
+        import threading
+
+        def _check():
+            dm = DataManager()
+            ok, reason = dm.validate_exchange_symbol(sym)
+            # Return to main thread via QTimer
+            if ok:
+                QTimer.singleShot(0, lambda: self._on_validate_ok(sym))
+            else:
+                QTimer.singleShot(0, lambda: self._on_validate_fail(reason))
+
+        t = threading.Thread(target=_check, daemon=True)
+        t.start()
+
+    def _on_validate_ok(self, symbol: str):
+        self._add_btn.setEnabled(True)
+        self._add_status_lbl.setText(f"✅ {symbol} confirmed on Bybit. Data must be fetched before use.")
+        self._add_status_lbl.setStyleSheet(f"color:{_GREEN}; font-size:11px;")
+        self.add_symbol(symbol)
+
+    def _on_validate_fail(self, reason: str):
+        self._add_btn.setEnabled(True)
+        self._add_status_lbl.setText(f"❌ {reason}")
+        self._add_status_lbl.setStyleSheet(f"color:{_RED}; font-size:11px;")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data Status Panel  (Phase 2 / 4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DataWorkerThread(QThread):
+    """Background thread for data registry scan and fetch operations."""
+    progress_sig = Signal(float, str)   # pct [0-1], message
+    done_sig     = Signal(bool, str)    # success, message
+
+    def __init__(self, mode: str, symbols: list, date_start: str, date_end: str,
+                 target_symbol: str = "", parent=None):
+        super().__init__(parent)
+        self._mode    = mode    # "check" | "fetch"
+        self._symbols = symbols
+        self._date_start = date_start
+        self._date_end   = date_end
+        self._target     = target_symbol
+
+    def run(self):
+        try:
+            from research.engine.data_manager import DataManager
+            dm = DataManager()
+
+            if self._mode == "check":
+                self.progress_sig.emit(0.1, "Scanning local data files…")
+                dm.refresh_registry(
+                    progress_cb=lambda sym, done, total: self.progress_sig.emit(
+                        done / total, f"Scanned {sym} ({done}/{total})"
+                    )
+                )
+                result = dm.check(self._symbols, self._date_start, self._date_end)
+                self.done_sig.emit(result.ok, result.summary())
+
+            elif self._mode == "fetch":
+                ok, msg = dm.add_asset(
+                    self._target,
+                    date_start   = self._date_start,
+                    date_end     = self._date_end,
+                    progress_cb  = lambda pct, msg: self.progress_sig.emit(pct, msg),
+                )
+                self.done_sig.emit(ok, msg)
+        except Exception as exc:
+            logger.exception("DataWorkerThread error")
+            self.done_sig.emit(False, str(exc))
+
+
+class _DataStatusPanel(QWidget):
+    """
+    Shows per-symbol data availability and provides Check / Download buttons.
+    """
+
+    check_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build()
+
+    def _build(self):
+        card, vlay = _card("💾  Data Status")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(card)
+
+        # ── Status table ─────────────────────────────────────────────────
+        _COLS = ["Symbol", "Status", "Coverage", "Rows"]
+        self._table = QTableWidget(0, len(_COLS))
+        self._table.setHorizontalHeaderLabels(_COLS)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setSelectionMode(QAbstractItemView.NoSelection)
+        self._table.setMaximumHeight(140)
+        self._table.setStyleSheet(
+            f"background:{_DARK}; color:{_TEXT}; gridline-color:#333;"
+            " font-size:12px; border:none;"
+        )
+        self._table.verticalHeader().setVisible(False)
+        vlay.addWidget(self._table)
+
+        # ── Buttons ──────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        self._check_btn = QPushButton("🔍 Check Data")
+        self._check_btn.setStyleSheet(
+            f"background:{_BLUE}; color:white; font-weight:bold;"
+            " border-radius:3px; padding:5px; font-size:12px;"
+        )
+        self._check_btn.clicked.connect(self.check_requested)
+        btn_row.addWidget(self._check_btn)
+        vlay.addLayout(btn_row)
+
+        # ── Status line ───────────────────────────────────────────────────
+        self._status_lbl = _label("Click Check Data to verify availability.", color=_DIM)
+        self._status_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+        self._status_lbl.setWordWrap(True)
+        vlay.addWidget(self._status_lbl)
+
+    def update_table(self, rows: list[dict]):
+        self._table.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            status = row.get("status", "—")
+            color  = _GREEN if status == "Ready" else (_AMBER if "Missing" in status else _RED)
+            items = [
+                (row.get("symbol", ""), _TEXT),
+                (status, color),
+                (f"{row.get('first_date','—')} → {row.get('last_date','—')}", _TEXT),
+                (f"{row.get('rows_30m', 0):,}", _TEXT),
+            ]
+            for j, (val, col) in enumerate(items):
+                item = QTableWidgetItem(val)
+                item.setForeground(QColor(col))
+                item.setTextAlignment(Qt.AlignCenter)
+                self._table.setItem(i, j, item)
+
+    def set_status(self, msg: str, ok: bool | None = None):
+        self._status_lbl.setText(msg)
+        if ok is True:
+            self._status_lbl.setStyleSheet(f"color:{_GREEN}; font-size:11px;")
+        elif ok is False:
+            self._status_lbl.setStyleSheet(f"color:{_RED}; font-size:11px;")
+        else:
+            self._status_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+
+    def set_checking(self, active: bool):
+        self._check_btn.setEnabled(not active)
+        self._check_btn.setText("Checking…" if active else "🔍 Check Data")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Progress Panel
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -789,15 +1186,29 @@ class _ValidationPanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
 
-        info = QLabel(
-            "IS period: 2022-03-22 → 2025-09-21 (3.5 years)\n"
-            "OOS period: 2025-09-22 → 2026-03-21 (6 months)\n\n"
-            "Select a candidate from Results and click Run OOS to evaluate\n"
-            "on the held-out period."
+        # IS / OOS period info — styled rows
+        periods_frame = QFrame()
+        periods_frame.setStyleSheet(
+            f"background:{_PANEL}; border:1px solid #2a4a7a; border-radius:4px;"
         )
-        info.setStyleSheet(f"color:{_TEXT}; font-size:13px;")
-        info.setWordWrap(True)
-        vlay.addWidget(info)
+        periods_lay = QVBoxLayout(periods_frame)
+        periods_lay.setContentsMargins(10, 8, 10, 8)
+        periods_lay.setSpacing(4)
+
+        lbl_is = _label("IS period:  2022-03-22 → 2025-09-21  (3.5 years)", bold=False, color=_TEXT)
+        lbl_is.setStyleSheet(f"color:{_TEXT}; font-size:13px; padding-left:4px;")
+        periods_lay.addWidget(lbl_is)
+
+        lbl_oos = _label("OOS period:  2025-09-22 → 2026-03-21  (6 months)", bold=False, color=_AMBER)
+        lbl_oos.setStyleSheet(f"color:{_AMBER}; font-size:13px; padding-left:4px;")
+        periods_lay.addWidget(lbl_oos)
+
+        vlay.addWidget(periods_frame)
+
+        hint = QLabel("Select a candidate from Results and click Run OOS to evaluate on the held-out period.")
+        hint.setStyleSheet(f"color:{_DIM}; font-size:12px; padding: 4px 6px;")
+        hint.setWordWrap(True)
+        vlay.addWidget(hint)
 
         self._oos_btn = QPushButton("▶  Run OOS on Selected Candidate")
         self._oos_btn.setStyleSheet(
@@ -836,10 +1247,13 @@ class ResearchLabPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._state   = _LabState()
-        self._worker: Optional[SweepWorkerThread] = None
+        self._state        = _LabState()
+        self._worker:      Optional[SweepWorkerThread] = None
+        self._data_worker: Optional[DataWorkerThread]  = None
         self._build()
         self._restore_baseline_cache()
+        # Kick off a background registry scan so the data table is populated on load
+        QTimer.singleShot(1500, self._auto_check_data)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Baseline cache persistence
@@ -923,6 +1337,18 @@ class ResearchLabPage(QWidget):
         self._baseline_panel.baseline_requested.connect(self._on_run_baseline)
         left_layout.addWidget(self._baseline_panel)
 
+        self._period_panel = _PeriodPanel()
+        self._period_panel.period_changed.connect(self._on_period_changed)
+        left_layout.addWidget(self._period_panel)
+
+        self._asset_panel = _AssetPanel()
+        self._asset_panel.assets_changed.connect(self._on_assets_changed)
+        left_layout.addWidget(self._asset_panel)
+
+        self._data_status_panel = _DataStatusPanel()
+        self._data_status_panel.check_requested.connect(self._on_check_data)
+        left_layout.addWidget(self._data_status_panel)
+
         self._param_panel = _ParameterPanel()
         left_layout.addWidget(self._param_panel)
 
@@ -933,7 +1359,7 @@ class ResearchLabPage(QWidget):
 
         left_layout.addStretch()
         left_scroll.setWidget(left_widget)
-        left_scroll.setMinimumWidth(400)
+        left_scroll.setMinimumWidth(440)
         splitter.addWidget(left_scroll)
 
         # ── RIGHT — results ────────────────────────────────────────────
@@ -958,13 +1384,74 @@ class ResearchLabPage(QWidget):
 
         right_layout.addWidget(results_splitter, 1)  # results table gets all spare height
         splitter.addWidget(right_widget)
-        splitter.setSizes([400, 800])
+        splitter.setSizes([450, 800])
         splitter.setStretchFactor(0, 0)   # left: fixed width
         splitter.setStretchFactor(1, 1)   # right: expands with window
 
     # ─────────────────────────────────────────────────────────────────────────
     # Slots
     # ─────────────────────────────────────────────────────────────────────────
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Period / Asset / Data slots
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @Slot(str, str)
+    def _on_period_changed(self, date_start: str, date_end: str):
+        self._state.date_start = date_start
+        self._state.date_end   = date_end
+
+    @Slot(list)
+    def _on_assets_changed(self, symbols: list):
+        self._state.selected_symbols = symbols
+
+    @Slot()
+    def _on_check_data(self):
+        """Run DataManager.check() in background and update the data status table."""
+        if self._data_worker and self._data_worker.isRunning():
+            return
+        self._data_status_panel.set_checking(True)
+        self._data_status_panel.set_status("Scanning…", None)
+
+        self._data_worker = DataWorkerThread(
+            mode       = "check",
+            symbols    = self._state.selected_symbols,
+            date_start = self._state.date_start,
+            date_end   = self._state.date_end,
+        )
+        self._data_worker.done_sig.connect(self._on_data_check_done)
+        self._data_worker.start()
+
+    @Slot(bool, str)
+    def _on_data_check_done(self, ok: bool, msg: str):
+        self._data_status_panel.set_checking(False)
+        self._data_status_panel.set_status(msg, ok)
+
+        # Refresh the table from the registry
+        try:
+            from research.engine.data_registry import DataRegistry
+            reg = DataRegistry()
+            reg.load()
+            rows = reg.summary_table()
+            self._data_status_panel.update_table(rows)
+        except Exception as exc:
+            logger.warning("Could not refresh data table: %s", exc)
+
+    def _auto_check_data(self):
+        """Silently populate the data table from cached registry on startup."""
+        try:
+            from research.engine.data_registry import DataRegistry, _REGISTRY_PATH
+            reg = DataRegistry()
+            if _REGISTRY_PATH.exists():
+                reg.load()
+            else:
+                reg.build()
+                reg.save()
+            rows = reg.summary_table()
+            self._data_status_panel.update_table(rows)
+            logger.info("DataRegistry auto-loaded %d rows", len(rows))
+        except Exception as exc:
+            logger.warning("Auto data-check failed: %s", exc)
 
     @Slot()
     def _on_run_baseline(self):
@@ -986,6 +1473,24 @@ class ResearchLabPage(QWidget):
     def _on_start_sweep(self):
         if self._state.sweep_running:
             return
+
+        # Sync period + assets from UI into state
+        if self._period_panel.is_valid():
+            self._state.date_start = self._period_panel.date_start
+            self._state.date_end   = self._period_panel.date_end
+        else:
+            self._progress_panel.update_progress(
+                0, 1, 0.0, "⚠ Invalid period: start must be before end."
+            )
+            return
+
+        self._state.selected_symbols = self._asset_panel.selected_symbols()
+        if not self._state.selected_symbols:
+            self._progress_panel.update_progress(
+                0, 1, 0.0, "⚠ No assets selected. Select at least one asset."
+            )
+            return
+
         if not self._param_panel.has_optimize():
             self._progress_panel.update_progress(
                 0, 1, 0.0,
