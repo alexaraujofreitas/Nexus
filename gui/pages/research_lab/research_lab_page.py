@@ -282,14 +282,14 @@ class _BaselinePanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
 
-        self._status_lbl = _label("NOT RUN", bold=True, color=_DIM, size=11)
+        self._status_lbl = _label("NOT RUN", bold=True, color=_TEXT, size=13)
         vlay.addWidget(self._status_lbl)
 
         self._metrics_text = QTextEdit()
         self._metrics_text.setReadOnly(True)
         self._metrics_text.setMaximumHeight(120)
         self._metrics_text.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; border:none; font-size:11px;"
+            f"background:{_DARK}; color:{_TEXT}; border:none; font-size:13px;"
         )
         self._metrics_text.setPlainText("Run baseline to validate canonical engine.")
         vlay.addWidget(self._metrics_text)
@@ -376,10 +376,10 @@ class _ParamRow(QWidget):
         # Range label — compact hint
         range_lbl = _label(
             f"[{self._p.range_min}–{self._p.range_max}]",
-            color=_DIM,
+            color=_TEXT,
         )
         range_lbl.setFixedWidth(86)
-        range_lbl.setStyleSheet(f"color:{_DIM}; font-size:10px;")
+        range_lbl.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
         h.addWidget(range_lbl)
 
         # FIXED / OPTIMIZE toggle
@@ -397,7 +397,7 @@ class _ParamRow(QWidget):
                 " border-radius:3px; padding:4px;"
             )
         return (
-            f"background:#333; color:{_DIM}; font-weight:bold;"
+            f"background:#333; color:{_TEXT}; font-weight:bold;"
             " border-radius:3px; padding:4px;"
         )
 
@@ -454,7 +454,7 @@ class _ParameterPanel(QWidget):
         # Reset to defaults
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.setStyleSheet(
-            f"background:#333; color:{_DIM}; border-radius:3px; padding:4px;"
+            f"background:#333; color:{_TEXT}; border-radius:3px; padding:4px; font-size:13px;"
         )
         reset_btn.clicked.connect(self._reset_defaults)
         vlay.addWidget(reset_btn)
@@ -497,7 +497,7 @@ class _SearchPanel(QWidget):
 
         # Strategy
         row1 = QHBoxLayout()
-        row1.addWidget(_label("Strategy:", color=_DIM))
+        row1.addWidget(_label("Strategy:", color=_TEXT))
         self._strategy_cb = QComboBox()
         self._strategy_cb.addItems(["Coarse Grid Sweep", "Random Search", "Bayesian (coming soon)"])
         self._strategy_cb.setStyleSheet(
@@ -508,7 +508,7 @@ class _SearchPanel(QWidget):
 
         # Random trials (only for random mode)
         row2 = QHBoxLayout()
-        row2.addWidget(_label("Trials:", color=_DIM))
+        row2.addWidget(_label("Trials:", color=_TEXT))
         self._n_trials_spin = QSpinBox()
         self._n_trials_spin.setRange(10, 10000)
         self._n_trials_spin.setValue(200)
@@ -520,7 +520,7 @@ class _SearchPanel(QWidget):
 
         # Workers
         row3 = QHBoxLayout()
-        row3.addWidget(_label("Workers:", color=_DIM))
+        row3.addWidget(_label("Workers:", color=_TEXT))
         self._workers_spin = QSpinBox()
         self._workers_spin.setRange(1, 8)
         self._workers_spin.setValue(2)
@@ -532,7 +532,7 @@ class _SearchPanel(QWidget):
 
         # Objective
         row4 = QHBoxLayout()
-        row4.addWidget(_label("Objective:", color=_DIM))
+        row4.addWidget(_label("Objective:", color=_TEXT))
         self._obj_cb = QComboBox()
         self._obj_cb.addItems(["Profit Factor", "CAGR", "Win Rate"])
         self._obj_cb.setStyleSheet(
@@ -543,7 +543,7 @@ class _SearchPanel(QWidget):
 
         # Fee model
         row5 = QHBoxLayout()
-        row5.addWidget(_label("Fees:", color=_DIM))
+        row5.addWidget(_label("Fees:", color=_TEXT))
         self._fee_cb = QComboBox()
         self._fee_cb.addItems(["0.04%/side (production)", "Zero fees"])
         self._fee_cb.setStyleSheet(
@@ -628,7 +628,7 @@ class _ProgressPanel(QWidget):
         stats_row.addWidget(self._best_lbl)
         vlay.addLayout(stats_row)
 
-        self._msg_lbl = _label("Idle", color=_DIM)
+        self._msg_lbl = _label("Idle", color=_TEXT)
         vlay.addWidget(self._msg_lbl)
 
         # Mini leaderboard (top-5)
@@ -640,7 +640,7 @@ class _ProgressPanel(QWidget):
         self._mini_table.setMaximumHeight(130)
         self._mini_table.setStyleSheet(
             f"background:{_DARK}; color:{_TEXT}; gridline-color:#333;"
-            " font-size:11px; border:none;"
+            " font-size:13px; border:none;"
         )
         self._mini_table.verticalHeader().setVisible(False)
         vlay.addWidget(self._mini_table)
@@ -680,6 +680,7 @@ class _ProgressPanel(QWidget):
         self._bar.setValue(0)
         self._trials_lbl.setText("—")
         self._best_lbl.setText("Best PF: —")
+        self._msg_lbl.setStyleSheet(f"color:{_TEXT};")
         self._msg_lbl.setText("Idle")
 
 
@@ -705,7 +706,7 @@ class _ResultsPanel(QWidget):
 
         # Filter bar
         filter_row = QHBoxLayout()
-        filter_row.addWidget(_label("Min PF:", color=_DIM))
+        filter_row.addWidget(_label("Min PF:", color=_TEXT))
         self._min_pf = QDoubleSpinBox()
         self._min_pf.setRange(0.0, 10.0)
         self._min_pf.setValue(0.0)
@@ -716,7 +717,7 @@ class _ResultsPanel(QWidget):
         self._min_pf.valueChanged.connect(self._apply_filter)
         filter_row.addWidget(self._min_pf)
         filter_row.addStretch()
-        self._count_lbl = _label("0 trials", color=_DIM)
+        self._count_lbl = _label("0 trials", color=_TEXT)
         filter_row.addWidget(self._count_lbl)
         vlay.addLayout(filter_row)
 
@@ -727,7 +728,7 @@ class _ResultsPanel(QWidget):
         self._table.setSortingEnabled(True)
         self._table.setStyleSheet(
             f"background:{_DARK}; color:{_TEXT}; gridline-color:#333;"
-            " font-size:11px; border:none;"
+            " font-size:13px; border:none;"
         )
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
@@ -794,7 +795,7 @@ class _ValidationPanel(QWidget):
             "Select a candidate from Results and click Run OOS to evaluate\n"
             "on the held-out period."
         )
-        info.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+        info.setStyleSheet(f"color:{_TEXT}; font-size:13px;")
         info.setWordWrap(True)
         vlay.addWidget(info)
 
@@ -809,7 +810,7 @@ class _ValidationPanel(QWidget):
         self._oos_result.setReadOnly(True)
         self._oos_result.setMaximumHeight(100)
         self._oos_result.setStyleSheet(
-            f"background:{_DARK}; color:{_TEXT}; border:none; font-size:11px;"
+            f"background:{_DARK}; color:{_TEXT}; border:none; font-size:13px;"
         )
         self._oos_result.setPlainText("OOS not yet run.")
         vlay.addWidget(self._oos_result)
@@ -886,7 +887,7 @@ class ResearchLabPage(QWidget):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _build(self):
-        self.setStyleSheet(f"background:{_DARK}; color:{_TEXT};")
+        self.setStyleSheet(f"background:{_DARK}; color:{_TEXT}; font-size:13px;")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
@@ -904,7 +905,7 @@ class ResearchLabPage(QWidget):
         # ── Horizontal splitter (left config | right results) ──────────
         splitter = QSplitter(Qt.Horizontal)
         splitter.setStyleSheet("QSplitter::handle { background: #2a4a7a; width: 2px; }")
-        root.addWidget(splitter)
+        root.addWidget(splitter, 1)          # stretch=1 → fills all remaining height
 
         # ── LEFT — configuration ───────────────────────────────────────
         left_scroll = QScrollArea()
@@ -955,9 +956,11 @@ class ResearchLabPage(QWidget):
         results_splitter.addWidget(self._validation_panel)
         results_splitter.setSizes([700, 300])
 
-        right_layout.addWidget(results_splitter)
+        right_layout.addWidget(results_splitter, 1)  # results table gets all spare height
         splitter.addWidget(right_widget)
-        splitter.setSizes([380, 820])
+        splitter.setSizes([400, 800])
+        splitter.setStretchFactor(0, 0)   # left: fixed width
+        splitter.setStretchFactor(1, 1)   # right: expands with window
 
     # ─────────────────────────────────────────────────────────────────────────
     # Slots
