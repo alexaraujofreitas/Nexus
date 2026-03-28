@@ -37,6 +37,7 @@ NAV_ITEMS = [
     ("news_sentiment",       "News & Sentiment",      "⊠", None),
     # ── ANALYSIS — post-trade review ──────────────────────────
     ("orders_positions",     "Orders & Positions",    "⊕", "ANALYSIS"),
+    ("proposals",            "Tuning Proposals",      "⊙", None),
     ("performance_analytics","Performance Analytics", "◈", None),
     # ── SYSTEM — infrastructure & configuration ───────────────
     ("notifications",        "Notifications",         "⊕", "SYSTEM"),
@@ -355,6 +356,7 @@ class MainWindow(QMainWindow):
         from gui.pages.risk_management.risk_page          import RiskManagementPage
         from gui.pages.orders_positions.orders_page       import OrdersPositionsPage
         from gui.pages.performance_analytics.analytics_page import PerformanceAnalyticsPage
+        from gui.pages.proposals.proposals_page            import ProposalsPage
         from gui.pages.logs.logs_page                     import LogsPage
         from gui.pages.settings.settings_page             import SettingsPage
         from gui.pages.exchange_management.exchange_page  import ExchangeManagementPage
@@ -382,6 +384,7 @@ class MainWindow(QMainWindow):
             "regime":                RegimePage,
             "risk_management":       RiskManagementPage,
             "orders_positions":      OrdersPositionsPage,
+            "proposals":             ProposalsPage,
             "performance_analytics": PerformanceAnalyticsPage,
             "notifications":         NotificationsPage,
             "system_health":         SystemHealthPage,

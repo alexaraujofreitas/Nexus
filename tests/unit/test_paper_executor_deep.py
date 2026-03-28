@@ -17,6 +17,20 @@ from core.execution.paper_executor import (
 from core.meta_decision.order_candidate import OrderCandidate
 
 
+@pytest.fixture(autouse=True)
+def _no_real_db_history(monkeypatch):
+    """
+    Prevent PaperExecutor.__init__ from loading real trade history from
+    the on-disk SQLite DB.  Without this, any test that calls PaperExecutor()
+    directly inherits the production DB state (including closed trades that may
+    trigger the rolling-PF hard block added in v1.2 Section 5).
+
+    This fixture patches _load_history to a no-op for every test in this file,
+    ensuring tests start with a clean _closed_trades list regardless of DB state.
+    """
+    monkeypatch.setattr(PaperExecutor, "_load_history", lambda self: None)
+
+
 def make_candidate(symbol="BTC/USDT", side="buy", size_usdt=1000.0, score=0.75):
     """Create a minimal valid OrderCandidate for testing."""
     return OrderCandidate(

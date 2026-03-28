@@ -105,9 +105,12 @@ class GeminiChannel:
         """
         Send a notification email via Gmail.
         Optionally enriches body with Gemini AI analysis.
+
+        message   : plain-text body (the 'body' template key)
+        subject   : email subject line
         html_body : rich HTML body from template; when supplied the channel
-                    uses it directly (AI enrichment appended in a separate card
-                    below if available).
+                    uses it directly (AI enrichment appended as a styled card
+                    before </body> if available).
         Returns True on success.
         """
         if not self._enabled:
@@ -120,16 +123,21 @@ class GeminiChannel:
             )
             return False
 
-        subject = subject or "NexusTrader — Gemini Notification"
-        body    = message
+        subject    = subject or "NexusTrader — Gemini Notification"
+        plain_body = message
 
-        # Optional Gemini AI enrichment (plain-text only)
+        # Optional Gemini AI enrichment — appended to plain-text; injected
+        # as an HTML card into the rich email body when html_body is provided.
         enrichment_html = ""
         if self._ai_enrich and self._api_key:
             try:
                 enriched = self._ai_enrich_text(message)
                 if enriched:
-                    body = message + "\n\n── Gemini Analysis ───────────────────\n" + enriched
+                    plain_body = (
+                        message
+                        + "\n\n── Gemini Analysis ───────────────────\n"
+                        + enriched
+                    )
                     import html as _h
                     enrichment_html = (
                         "<div style='margin-top:14px;border:1px solid #1A3050;"
@@ -152,17 +160,19 @@ class GeminiChannel:
                 msg["To"]      = ", ".join(self._to)
 
                 # Plain text
-                text_part = MIMEText(body, "plain", "utf-8")
+                text_part = MIMEText(plain_body, "plain", "utf-8")
 
-                # HTML — use rich template when provided; insert Gemini card
+                # HTML — use rich template when provided; inject Gemini card
                 # before the closing </body> tag if enrichment is available.
                 if html_body:
                     if enrichment_html and "</body>" in html_body:
-                        _html = html_body.replace("</body>", enrichment_html + "</body>", 1)
+                        rendered_html = html_body.replace(
+                            "</body>", enrichment_html + "</body>", 1
+                        )
                     else:
-                        _html = html_body
+                        rendered_html = html_body
                 else:
-                    _html = (
+                    rendered_html = (
                         "<html><body style='font-family:monospace;background:#0A0E1A;"
                         "color:#C8D0E0;padding:20px'>"
                         "<div style='border-left:3px solid #4285F4;padding-left:12px;"
@@ -170,11 +180,11 @@ class GeminiChannel:
                         "<span style='color:#4285F4;font-size:11px;font-weight:bold;"
                         "letter-spacing:1px'>NEXUSTRADER  ·  GEMINI CHANNEL</span>"
                         "</div>"
-                        f"<pre style='color:#C8D0E0;white-space:pre-wrap'>{body}</pre>"
-                        + enrichment_html +
-                        "</body></html>"
-                )
-                html_part = MIMEText(_html, "html", "utf-8")
+                        f"<pre style='color:#C8D0E0;white-space:pre-wrap'>{plain_body}</pre>"
+                        + enrichment_html
+                        + "</body></html>"
+                    )
+                html_part = MIMEText(rendered_html, "html", "utf-8")
 
                 msg.attach(text_part)
                 msg.attach(html_part)

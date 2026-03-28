@@ -45,6 +45,12 @@ class CrashDefenseController:
     """
     Executes graduated defensive actions in response to crash tier escalations.
     Stateful: tracks current defensive tier to avoid duplicate actions.
+
+    Auto-execute mode (gated behind config crash_defense.auto_execute: true):
+      DEFENSIVE  → move all long SLs to breakeven
+      HIGH_ALERT → partial close 50% of all longs
+      EMERGENCY  → close all longs
+      SYSTEMIC   → close all positions
     """
 
     def __init__(self):
@@ -53,6 +59,24 @@ class CrashDefenseController:
         self._actions_log: list[dict] = []
         self._defensive_mode_active: bool = False
         self._safe_mode_active: bool = False
+        # Injected reference to PaperExecutor for auto-execute.
+        # Set via set_executor() after PaperExecutor is instantiated.
+        self._executor = None
+
+    def set_executor(self, executor) -> None:
+        """Inject PaperExecutor reference for auto-execute actions. Thread-safe."""
+        with self._lock:
+            self._executor = executor
+            logger.info("CrashDefenseController: executor reference set — auto-execute ready")
+
+    @property
+    def _auto_execute_enabled(self) -> bool:
+        """Returns True if crash_defense.auto_execute is enabled in config."""
+        try:
+            from config.settings import settings as _s
+            return bool(_s.get("crash_defense.auto_execute", False))
+        except Exception:
+            return False
 
     @property
     def current_tier(self) -> str:
@@ -133,67 +157,131 @@ class CrashDefenseController:
 
     def _apply_defensive_tier1(self, actions: list[str]) -> None:
         """
-        Tier 1: MONITOR-ONLY — log crash alert, do NOT auto-modify execution.
+        Tier 1: DEFENSIVE — alert + optional auto-breakeven SL.
 
-        Production hardening decision (Study 4 + Session 24):
-        Automatic execution intervention based on unvalidated crash scores caused
-        false positives during normal market volatility. The 10% drawdown circuit
-        breaker in PaperExecutor.submit() is the ONLY automatic execution block.
-        CrashDefense tiers are now diagnostic/notification only.
+        When crash_defense.auto_execute=true: moves ALL open long stop-losses
+        to breakeven immediately (protects unrealised profit at zero cost).
+        When auto_execute=false: monitor-only (log + notify, no execution change).
         """
         logger.warning(
             "CrashDefense TIER-1 DEFENSIVE: crash score elevated. "
-            "Monitoring only — execution unchanged. "
             "Review System Health > Crash Status for details."
         )
         bus.publish(Topics.DRAWDOWN_ALERT, {
             "type":    "crash_detection",
             "tier":    "DEFENSIVE",
-            "message": "Crash score DEFENSIVE tier — monitor open positions",
+            "message": "Crash score DEFENSIVE tier — monitoring positions",
         }, source="crash_defense")
-        actions.append("MONITOR: crash score reached DEFENSIVE tier — no auto-intervention")
+
+        if self._auto_execute_enabled and self._executor is not None:
+            try:
+                moved = self._executor.move_all_longs_to_breakeven()
+                msg = f"AUTO-EXECUTE: moved {moved} long SL(s) to breakeven"
+                logger.warning("CrashDefense TIER-1: %s", msg)
+                actions.append(msg)
+            except Exception as exc:
+                logger.error("CrashDefense TIER-1: breakeven SL move failed: %s", exc)
+                actions.append(f"AUTO-EXECUTE FAILED: breakeven SL move — {exc}")
+        else:
+            actions.append("MONITOR: DEFENSIVE tier — no auto-intervention (auto_execute=false)")
 
     def _apply_defensive_tier2(self, actions: list[str]) -> None:
-        """Tier 2: HIGH_ALERT — monitor only. No automatic position changes."""
+        """
+        Tier 2: HIGH_ALERT — alert + optional 50% partial close of all longs.
+
+        When crash_defense.auto_execute=true: closes 50% of every open long
+        position at current price, locking in partial profit before further decline.
+        When auto_execute=false: monitor-only.
+        """
         logger.warning(
             "CrashDefense TIER-2 HIGH_ALERT: crash score high. "
-            "Monitoring only — review positions manually."
+            "Partial position reduction recommended."
         )
         bus.publish(Topics.RISK_LIMIT_HIT, {
             "type":    "crash_detection",
             "tier":    "HIGH_ALERT",
-            "message": "Crash score HIGH_ALERT tier — review positions manually",
+            "message": "Crash score HIGH_ALERT tier — partial position reduction",
         }, source="crash_defense")
-        actions.append("MONITOR: crash score reached HIGH_ALERT tier — manual review recommended")
+
+        if self._auto_execute_enabled and self._executor is not None:
+            try:
+                count = 0
+                for symbol, pos_list in list(self._executor._positions.items()):
+                    for pos in pos_list:
+                        if pos.side == "buy":
+                            ok = self._executor.partial_close(symbol, 0.50)
+                            if ok:
+                                count += 1
+                msg = f"AUTO-EXECUTE: partial-closed 50% of {count} long position(s)"
+                logger.warning("CrashDefense TIER-2: %s", msg)
+                actions.append(msg)
+            except Exception as exc:
+                logger.error("CrashDefense TIER-2: partial close failed: %s", exc)
+                actions.append(f"AUTO-EXECUTE FAILED: partial close — {exc}")
+        else:
+            actions.append("MONITOR: HIGH_ALERT tier — manual review recommended (auto_execute=false)")
 
     def _apply_defensive_tier3(self, actions: list[str]) -> None:
-        """Tier 3: EMERGENCY — monitor only. No automatic position closure."""
+        """
+        Tier 3: EMERGENCY — alert + optional full long book closure.
+
+        When crash_defense.auto_execute=true: closes ALL open long positions
+        immediately at current mark price.
+        When auto_execute=false: monitor-only, critical alert.
+        """
         logger.error(
             "CrashDefense TIER-3 EMERGENCY: crash score critical. "
-            "Monitoring only — manual intervention required."
+            "Immediate action required."
         )
         bus.publish(Topics.RISK_LIMIT_HIT, {
             "type":    "crash_detection",
             "tier":    "EMERGENCY",
-            "message": "Crash score EMERGENCY tier — MANUAL intervention required",
+            "message": "Crash score EMERGENCY tier — closing all longs",
             "severity": "critical",
         }, source="crash_defense")
-        actions.append("ALERT: crash score reached EMERGENCY tier — manual action required")
+
+        if self._auto_execute_enabled and self._executor is not None:
+            try:
+                closed = self._executor.close_all_longs(exit_reason="crash_defense_emergency")
+                msg = f"AUTO-EXECUTE: closed {closed} long position(s) — EMERGENCY"
+                logger.error("CrashDefense TIER-3: %s", msg)
+                actions.append(msg)
+            except Exception as exc:
+                logger.error("CrashDefense TIER-3: close_all_longs failed: %s", exc)
+                actions.append(f"AUTO-EXECUTE FAILED: close all longs — {exc}")
+        else:
+            actions.append("ALERT: EMERGENCY tier — MANUAL intervention required (auto_execute=false)")
 
     def _apply_defensive_tier4(self, actions: list[str]) -> None:
-        """Tier 4: SYSTEMIC — monitor only. Log critical event, notify channels."""
+        """
+        Tier 4: SYSTEMIC — alert + optional full book closure (all sides).
+
+        When crash_defense.auto_execute=true: closes ALL open positions
+        including shorts. Full account de-risk.
+        When auto_execute=false: critical log + EMERGENCY_STOP event.
+        """
         logger.critical(
             "CrashDefense TIER-4 SYSTEMIC: systemic crash score. "
-            "This is a monitoring alert only — no auto-trading changes. "
-            "Manually evaluate all open positions immediately."
+            "Evaluate all open positions immediately."
         )
         bus.publish(Topics.EMERGENCY_STOP, {
-            "reason":   "SYSTEMIC crash detection alert — manual evaluation required",
+            "reason":   "SYSTEMIC crash detection — closing all positions",
             "source":   "crash_defense_controller",
             "tier":     "SYSTEMIC",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }, source="crash_defense")
-        actions.append("CRITICAL ALERT: crash score reached SYSTEMIC tier — evaluate immediately")
+
+        if self._auto_execute_enabled and self._executor is not None:
+            try:
+                closed = self._executor.close_all()
+                msg = f"AUTO-EXECUTE: closed ALL {closed} position(s) — SYSTEMIC"
+                logger.critical("CrashDefense TIER-4: %s", msg)
+                actions.append(msg)
+            except Exception as exc:
+                logger.error("CrashDefense TIER-4: close_all failed: %s", exc)
+                actions.append(f"AUTO-EXECUTE FAILED: close all — {exc}")
+        else:
+            actions.append("CRITICAL ALERT: SYSTEMIC tier — manual evaluation required (auto_execute=false)")
 
     def _deactivate_defensive_mode(self, actions: list[str]) -> None:
         """Deactivate defensive mode when crash score returns to NORMAL."""

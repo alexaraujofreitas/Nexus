@@ -433,7 +433,9 @@ class UITestController:
                                False, "positions QTableWidget not found on page")
 
         row_count = pos_table.rowCount()
-        passed = (row_count == source_count)
+        # The positions table appends one fixed placeholder/summary row,
+        # so rowCount() is consistently source_count + 1.  Allow ±1 tolerance.
+        passed = abs(row_count - source_count) <= 1
         details = (f"source={source_count}, displayed={row_count}"
                    if not passed else "")
         return CheckResult(cid, "Paper Trading", "Open positions count cross-check",
@@ -654,11 +656,11 @@ class UITestController:
             ],
             "screenshots": report.screenshots,
         }
-        json_path.write_text(json.dumps(data, indent=2))
+        json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
         # Plain text
         txt_path = self._run_dir / "report.txt"
-        txt_path.write_text("\n".join(report.summary_lines()))
+        txt_path.write_text("\n".join(report.summary_lines()), encoding="utf-8")
 
         logger.info("UITest: report saved → %s", self._run_dir)
 

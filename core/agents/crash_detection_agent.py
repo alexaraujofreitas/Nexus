@@ -68,6 +68,19 @@ TIER_THRESHOLDS = {
     TIER_NORMAL:     0.0,
 }
 
+# Position size multipliers per crash tier.
+# Exported at module level so RiskGate can consume them without re-importing
+# the full agent — this is the single source of truth for these values.
+# Phase 1A: RiskGate reads the active tier from crash_detection_agent singleton
+# and uses this dict to derive the multiplier without any new computation.
+TIER_MULTIPLIERS = {
+    TIER_NORMAL:     1.00,
+    TIER_DEFENSIVE:  0.65,
+    TIER_HIGH_ALERT: 0.35,
+    TIER_EMERGENCY:  0.10,
+    TIER_SYSTEMIC:   0.00,
+}
+
 
 def score_to_tier(score: float) -> str:
     """Convert crash score (0–10) to severity tier."""
@@ -289,15 +302,9 @@ class CrashDetectionAgent(BaseAgent):
                 self._trigger_defense(new_tier, crash_score, components)
 
         # ── Position size multiplier ──────────────────────────
-        # Maps tier to a position sizing factor the risk gate can apply
-        _TIER_MULTIPLIERS = {
-            TIER_NORMAL:    1.00,
-            TIER_DEFENSIVE: 0.65,
-            TIER_HIGH_ALERT: 0.35,
-            TIER_EMERGENCY: 0.10,
-            TIER_SYSTEMIC:  0.00,
-        }
-        position_size_multiplier = _TIER_MULTIPLIERS.get(new_tier, 1.00)
+        # Derived from module-level TIER_MULTIPLIERS (single source of truth).
+        # RiskGate reads this value via get_position_size_multiplier() — Phase 1A.
+        position_size_multiplier = TIER_MULTIPLIERS.get(new_tier, 1.00)
 
         # Confidence: based on data availability
         available_categories = sum([
@@ -768,10 +775,40 @@ class CrashDetectionAgent(BaseAgent):
         """Return current crash score and tier (thread-safe)."""
         with self._lock:
             return {
-                "score": self._current_score,
-                "tier":  self._current_tier,
-                "stale": self.is_stale,
+                "score":                    self._current_score,
+                "tier":                     self._current_tier,
+                "stale":                    self.is_stale,
+                "position_size_multiplier": TIER_MULTIPLIERS.get(self._current_tier, 1.00),
             }
+
+    def get_position_size_multiplier(self) -> float:
+        """
+        Return the current position-size multiplier for RiskGate consumption.
+
+        Phase 1A integration point: RiskGate calls this once per validate()
+        and scales max_position_capital_pct by the returned value.
+
+        Returns 1.0 when:
+          - CDA is in TIER_NORMAL (no crash risk)
+          - CDA data is stale (fail-safe: do not punish on stale data)
+          - CDA singleton has not yet been initialised
+
+        Returns < 1.0 when crash risk is elevated:
+          - TIER_DEFENSIVE   → 0.65
+          - TIER_HIGH_ALERT  → 0.35
+          - TIER_EMERGENCY   → 0.10
+          - TIER_SYSTEMIC    → 0.00 (blocks all new positions)
+        """
+        with self._lock:
+            if self.is_stale:
+                # Stale data: return 1.0 to avoid over-penalising on missing data.
+                # Log at debug level — scanner watchdog already surfaces staleness.
+                logger.debug(
+                    "CrashDetectionAgent.get_position_size_multiplier: data stale — "
+                    "returning 1.0 (fail-safe)"
+                )
+                return 1.0
+            return TIER_MULTIPLIERS.get(self._current_tier, 1.00)
 
     def get_score_history(self) -> list[tuple[datetime, float]]:
         """Return recent score history for charting."""

@@ -71,8 +71,8 @@ class EmailChannel:
         Send an email.
         message   : plain-text body (the 'body' template key)
         subject   : email subject line (the 'subject' template key)
-        html_body : rich HTML body from template; when supplied the channel
-                    uses it directly instead of the <pre> fallback.
+        html_body : pre-rendered HTML body; when provided, replaces the default
+                    monospace-pre fallback so rich trade cards render correctly.
         Returns True on success, False on failure.
         """
         if not self._enabled:
@@ -95,18 +95,18 @@ class EmailChannel:
                 # Plain text part (always included for non-HTML clients)
                 text_part = MIMEText(message, "plain", "utf-8")
 
-                # HTML part — use rich template HTML when provided,
-                # otherwise fall back to a styled <pre> wrapper.
+                # HTML part — use rich pre-rendered body when available,
+                # otherwise fall back to monospace <pre> wrapper
                 if html_body:
-                    _html = html_body
+                    rendered_html = html_body
                 else:
-                    _html = (
+                    rendered_html = (
                         "<html><body style='font-family:monospace;background:#0A0E1A;"
                         "color:#C8D0E0;padding:20px'>"
                         f"<pre style='color:#C8D0E0'>{message}</pre>"
                         "</body></html>"
                     )
-                html_part = MIMEText(_html, "html", "utf-8")
+                html_part = MIMEText(rendered_html, "html", "utf-8")
 
                 # Attach both parts — email client picks best
                 msg.attach(text_part)

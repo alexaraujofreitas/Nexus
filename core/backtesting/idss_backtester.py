@@ -96,7 +96,7 @@ class IDSSBacktester:
         symbol:          str,
         timeframe:       str,
         initial_capital: float = 10_000.0,
-        fee_pct:         float = 0.10,
+        fee_pct:         float = 0.04,
         slippage_pct:    float = 0.05,
         spread_pct:      float = 0.05,
         progress_cb:     Optional[Callable[[str], None]] = None,
@@ -116,7 +116,9 @@ class IDSSBacktester:
         initial_capital : float
             Starting equity in USDT.
         fee_pct : float
-            Round-trip fee per side in percent (e.g. 0.10 for 0.10 %).
+            Round-trip fee per side in percent.  Default 0.04 % matches Bybit Demo
+            blended rate (maker 0.02 %, taker 0.055 %).  The former default of
+            0.10 % (5× actual) was audit finding BACK-02 and inflated costs by ~5×.
         slippage_pct : float
             Slippage applied against the fill direction (e.g. 0.05 for 0.05 %).
         spread_pct : float
@@ -130,6 +132,13 @@ class IDSSBacktester:
             trades, equity_curve, chart_equity, equity_timestamps,
             metrics, candle_count, symbol, timeframe, strategy_name,
             initial_capital, loaded_timeframes, parse_warnings.
+
+        Fill model (audit finding BACK-03 — same-bar fill eliminated)
+        ---------------------------------------------------------------
+        Signal generated on bar ``i`` → stored as ``pending_candidate``.
+        Entry executes on bar ``i+1`` at bar ``i+1``'s **open** price plus
+        slippage/spread.  SL/TP price levels from the signal are kept as-is
+        (ATR-based absolute levels remain valid across a ~1-bar lag).
         """
         if df is None or df.empty:
             return self._empty_result(symbol, timeframe, initial_capital)
@@ -139,9 +148,10 @@ class IDSSBacktester:
         slip      = slippage_pct / 100.0
         spread    = spread_pct   / 100.0
 
-        equity         = initial_capital
-        position       = None          # None or dict when in a trade
-        equity_curve   = [initial_capital]
+        equity            = initial_capital
+        position          = None          # None or dict when in a trade
+        pending_candidate = None          # signal from previous bar awaiting fill
+        equity_curve:  list[float] = [initial_capital]
         chart_equity:  list[float] = [initial_capital]
         eq_timestamps: list       = [df.index[0]]
         trades:        list[dict] = []
@@ -152,6 +162,9 @@ class IDSSBacktester:
             row = df.iloc[i]
             ts  = df.index[i]
 
+            # Recompute drawdown at bar start (used by sizer and risk gate below)
+            drawdown_pct = max(0.0, (1.0 - equity / initial_capital) * 100.0)
+
             # ── Progress reporting ────────────────────────────
             if progress_cb and i % _report_every == 0:
                 pct = int(i / n * 100)
@@ -159,9 +172,50 @@ class IDSSBacktester:
                     f"IDSS backtest: {symbol} [{timeframe}] — bar {i:,}/{n:,}  ({pct}%)"
                 )
 
-            # ── In a position: check SL / TP ─────────────────
+            # ── STEP 1: Fill pending signal at this bar's open ─
+            # (audit fix BACK-03: signal on bar i-1 → entry at bar i open,
+            #  eliminating same-bar look-ahead bias)
+            if pending_candidate is not None and position is None:
+                cand      = pending_candidate
+                direction = "long" if cand.side == "buy" else "short"
+                open_px   = float(row["open"])
+
+                if direction == "long":
+                    entry_fill = open_px * (1.0 + slip + spread / 2)
+                else:
+                    entry_fill = open_px * (1.0 - slip - spread / 2)
+
+                atr_val     = cand.atr_value or (entry_fill * 0.008)
+                trade_value = self._sizer.calculate(
+                    available_capital_usdt=equity,
+                    atr_value=atr_val,
+                    entry_price=entry_fill,
+                    score=cand.score,
+                    regime=cand.regime or "uncertain",
+                    drawdown_pct=drawdown_pct,
+                )
+                if trade_value > 0:
+                    qty       = trade_value / entry_fill
+                    entry_fee = trade_value * fee
+                    position  = {
+                        "entry_i":      i,
+                        "entry_time":   ts,
+                        "entry_price":  entry_fill,
+                        "quantity":     qty,
+                        "entry_fee":    entry_fee,
+                        "direction":    direction,
+                        "sl":           cand.stop_loss_price,
+                        "tp":           cand.take_profit_price,
+                        "regime":       cand.regime,
+                        "models_fired": list(cand.models_fired),
+                        "score":        cand.score,
+                    }
+                    equity -= entry_fee
+                pending_candidate = None   # consumed regardless of sizer outcome
+
+            # ── STEP 2: In a position — check SL / TP ─────────
             if position is not None:
-                direction = position["direction"]
+                direction   = position["direction"]
                 triggered   = False
                 exit_reason = "end_of_data"
                 exit_px     = float(row["close"])
@@ -183,9 +237,9 @@ class IDSSBacktester:
 
                 if triggered:
                     if direction == "long":
-                        exit_fill = exit_px * (1.0 - slip - spread/2)
+                        exit_fill = exit_px * (1.0 - slip - spread / 2)
                     else:
-                        exit_fill = exit_px * (1.0 + slip + spread/2)
+                        exit_fill = exit_px * (1.0 + slip + spread / 2)
 
                     qty      = position["quantity"]
                     exit_fee = exit_fill * qty * fee
@@ -217,56 +271,15 @@ class IDSSBacktester:
                     equity_curve.append(round(equity, 4))
                     position = None
 
-            # ── Not in position + past warmup: run IDSS pipeline ──
-            if position is None and i >= self._warmup_bars:
-                candidate = self._run_pipeline(
-                    df.iloc[: i + 1], symbol, timeframe
-                )
+            # ── STEP 3: No position + past warmup → run pipeline ──
+            # Signal stored as pending; fills at NEXT bar's open (BACK-03 fix).
+            if position is None and pending_candidate is None and i >= self._warmup_bars:
+                candidate = self._run_pipeline(df.iloc[: i + 1], symbol, timeframe)
                 # Use live RiskGate for filtering (spread_map empty — no live tickers)
-                drawdown_pct = max(0.0, (1.0 - equity / initial_capital) * 100.0)
                 if candidate is not None and self._passes_risk(
                     candidate, equity, drawdown_pct
                 ):
-                    direction = "long" if candidate.side == "buy" else "short"
-
-                    if direction == "long":
-                        entry_fill = float(row["close"]) * (1.0 + slip + spread/2)
-                    else:
-                        entry_fill = float(row["close"]) * (1.0 - slip - spread/2)
-
-                    # Live PositionSizer: quarter-Kelly with vol/regime/score scalars.
-                    # calculate() returns position size in USDT directly (not a fraction).
-                    atr_val     = candidate.atr_value or (entry_fill * 0.008)
-                    trade_value = self._sizer.calculate(
-                        available_capital_usdt=equity,
-                        atr_value=atr_val,
-                        entry_price=entry_fill,
-                        score=candidate.score,
-                        regime=candidate.regime or "uncertain",
-                        drawdown_pct=drawdown_pct,
-                    )
-                    if trade_value <= 0:
-                        continue  # sizer rejected (halt regime / drawdown limit)
-                    qty       = trade_value / entry_fill
-                    entry_fee = trade_value * fee
-
-                    sl_price = candidate.stop_loss_price
-                    tp_price = candidate.take_profit_price
-
-                    position = {
-                        "entry_i":     i,
-                        "entry_time":  ts,
-                        "entry_price": entry_fill,
-                        "quantity":    qty,
-                        "entry_fee":   entry_fee,
-                        "direction":   direction,
-                        "sl":          sl_price,
-                        "tp":          tp_price,
-                        "regime":      candidate.regime,
-                        "models_fired": list(candidate.models_fired),
-                        "score":       candidate.score,
-                    }
-                    equity -= entry_fee
+                    pending_candidate = candidate  # will fill at bar i+1's open
 
             # ── Per-bar mark-to-market for chart ─────────────
             if position is not None:
@@ -666,7 +679,7 @@ class WalkForwardValidator:
         symbol:          str,
         timeframe:       str,
         initial_capital: float = 10_000.0,
-        fee_pct:         float = 0.10,
+        fee_pct:         float = 0.04,
         slippage_pct:    float = 0.05,
         progress_cb:     Optional[Callable[[str], None]] = None,
     ) -> dict:
