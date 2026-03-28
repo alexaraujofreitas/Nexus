@@ -46,7 +46,7 @@ When user says "Nexus Trader restarted", run full validation automatically. No s
 
 ---
 
-## Current System State (v1.3 Session 36 — 2026-03-28)
+## Current System State (v1.3 Session 37 — 2026-03-28)
 
 ### Production Config (`config.yaml` — runtime only, NOT `config/settings.yaml`)
 ```yaml
@@ -129,6 +129,8 @@ direction/SL/TP, PositionSizer path validated, no context injection.
 - **85 passed**, 0 failed (mr_pbl_slc suite post-fix; full regression from Session 35: 1,652 passed, 11 skipped)
 - Session 36 updated: `test_mr_pbl_slc_models.py` — fixed rejection candle helper (`_make_pbl_df` explicit high/low), updated `test_active_regimes_restored` assertions for ACTIVE_REGIMES=[REGIME_BULL_TREND]/[REGIME_BEAR_TREND], corrected settings mock namespace in pos-sizer test
 - **Stage 8 runtime validation**: `scripts/stage8_runtime_validation.py` — **52 passed, 0 failed** (13 sections; no runtime fixes required)
+- Session 37 added: `test_session37_reset_and_ui_fixes.py` (16 tests) + `test_session37_scan_error_fix.py` (7 tests)
+- **Full suite (Session 37)**: 1558 passed, 11 skipped, 0 failed
 
 ---
 
@@ -250,6 +252,12 @@ OHLCV (1h, 300 bars) → HMM+RuleBased Regime → SignalGenerator (5 models)
 - **Hysteresis init fixed**: `_committed_regime` is now initialized to `""` (empty string, not `"uncertain"`). `_apply_hysteresis()` returns the raw signal (confidence × 0.9) on startup until the 3-bar commitment window fills — prevents all early calls from being forced to `"uncertain"`.
 - **risk_pct default fixed**: Both `confluence_scorer.py` and `position_sizer.py` now default `risk_pct_per_trade` to `0.5` (was `0.75`). If `config.yaml` cannot be read at runtime, the fallback now matches production config instead of over-sizing by 50%.
 - **Reproduction tests**: `tests/unit/test_session33_regime_fixes.py` — 31 tests, all must pass. Run after any regime/sizing change.
+
+### Scanner Pre-Filter Return Contract (Session 37 fix)
+- **`_scan_symbol_with_regime()` return shape**: MUST be `(Optional[OrderCandidate], str, float, Optional[pd.DataFrame], str, dict)` — any early return MUST use `None` as the first element (not `symbol` string). The caller's `if candidate:` evaluates non-empty strings as truthy and calls `candidate.to_dict()`.
+- **Pre-filter rejection return**: `return None, "", 0.0, df, _pf_reason, _sym_diag` — pass `df` so the df_cache can be populated, pass `_sym_diag` for diagnostics.
+- **`DEFAULT_CONFIG filters.time_of_day.enabled`**: MUST be `False`. When `config.yaml` is corrupt/missing, the fallback default must not block scans. Time-of-day filter is an unvalidated hypothesis — opt-in only.
+- **"Scan error" status**: Only set by the `except Exception` clause in `ScanWorker.run()`. Pre-filter rejections show the rejection reason string (e.g. "Volatility filter: ATR ratio 0.30 < min 0.50").
 
 ### Misc
 - **OrderBook TF gate**: Never fires at 1h+ because `min_confidence/tf_weight = 0.60/0.55 = 1.09 > 1.0`. This is structural, not a bug.
