@@ -128,10 +128,11 @@ class SweepWorkerThread(QThread):
     Runs baseline or sweep in background thread.
     All results → main thread via queued signals.
     """
-    progress     = Signal(int, int, float, str)   # completed, total, best_pf, msg
-    trial_done   = Signal(dict)                   # one trial result
-    finished_ok  = Signal(dict)                   # final summary
-    error_signal = Signal(str)                    # error message
+    progress      = Signal(int, int, float, str)   # completed, total, best_pf, msg
+    indeterminate = Signal(bool)                   # True → pulsing bar, False → normal
+    trial_done    = Signal(dict)                   # one trial result
+    finished_ok   = Signal(dict)                  # final summary
+    error_signal  = Signal(str)                   # error message
 
     def __init__(
         self,
@@ -162,21 +163,29 @@ class SweepWorkerThread(QThread):
         from research.engine.backtest_runner import BacktestRunner
         from research.engine.baseline_registry import load_baseline
 
-        self.progress.emit(0, 2, 0.0, "Loading data…")
+        PHASES = 4
+
+        # Phase 1 — load data (indeterminate, long)
+        self.indeterminate.emit(True)
+        self.progress.emit(0, PHASES, 0.0, "Phase 1/4 — Loading historical data…")
         runner = BacktestRunner(date_start="2022-03-22", date_end="2026-03-21")
+        runner.load_data()
+        if self._cancel:
+            return
 
-        def _cb(msg, pct):
-            self.progress.emit(int(pct / 2), 100, 0.0, msg)
-            if self._cancel:
-                raise RuntimeError("Cancelled")
-
-        runner.load_data(progress_cb=_cb)
-        self.progress.emit(50, 100, 0.0, "Running zero-fee scenario…")
+        # Phase 2 — zero-fee scenario (indeterminate, long)
+        self.progress.emit(1, PHASES, 0.0, "Phase 2/4 — Running zero-fee scenario (may take 2–4 min)…")
         r0 = runner.run(params={}, cost_per_side=0.0)
-        self.progress.emit(75, 100, 0.0, "Running fee scenario…")
-        r1 = runner.run(params={}, cost_per_side=0.0004)
-        self.progress.emit(95, 100, 0.0, "Validating…")
+        if self._cancel:
+            return
 
+        # Phase 3 — fee scenario (indeterminate, long)
+        self.progress.emit(2, PHASES, 0.0, "Phase 3/4 — Running fee scenario…")
+        r1 = runner.run(params={}, cost_per_side=0.0004)
+
+        # Phase 4 — validate (fast)
+        self.indeterminate.emit(False)
+        self.progress.emit(3, PHASES, 0.0, "Phase 4/4 — Validating against baseline lock…")
         bl = load_baseline()
         passed, failures = bl.check(r0, r1)
         summary = {
@@ -185,7 +194,7 @@ class SweepWorkerThread(QThread):
             "r0":       {k: v for k, v in r0.items() if k != "all_trades"},
             "r1":       {k: v for k, v in r1.items() if k != "all_trades"},
         }
-        self.progress.emit(100, 100, r0.get("profit_factor", 0.0), "Done")
+        self.progress.emit(PHASES, PHASES, r0.get("profit_factor", 0.0), "Done")
         self.finished_ok.emit(summary)
 
     def _run_sweep(self):
@@ -338,43 +347,43 @@ class _ParamRow(QWidget):
 
     def _build(self):
         h = QHBoxLayout(self)
-        h.setContentsMargins(4, 2, 4, 2)
-        h.setSpacing(6)
+        h.setContentsMargins(4, 1, 4, 1)
+        h.setSpacing(4)
 
-        # Description
+        # Description — stretches to fill available space
         name = _label(self._p.description, color=_TEXT)
-        name.setFixedWidth(200)
-        h.addWidget(name)
+        name.setMinimumWidth(120)
+        name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        h.addWidget(name, 1)
 
-        # Value spinbox
+        # Value spinbox — compact
         self._spin = QDoubleSpinBox()
         self._spin.setDecimals(2)
         self._spin.setRange(self._p.range_min * 0.5, self._p.range_max * 1.5)
         self._spin.setSingleStep(self._p.step)
         self._spin.setValue(float(self._p.default))
-        self._spin.setFixedWidth(70)
+        self._spin.setFixedWidth(62)
         self._spin.setStyleSheet(
             f"background:{_DARK}; color:{_TEXT}; border:1px solid #444; border-radius:3px;"
         )
         h.addWidget(self._spin)
 
-        # Range label
+        # Range label — compact hint
         range_lbl = _label(
             f"[{self._p.range_min}–{self._p.range_max}]",
             color=_DIM,
         )
-        range_lbl.setFixedWidth(100)
+        range_lbl.setFixedWidth(86)
+        range_lbl.setStyleSheet(f"color:{_DIM}; font-size:10px;")
         h.addWidget(range_lbl)
 
         # FIXED / OPTIMIZE toggle
         self._mode_btn = QPushButton("FIXED")
         self._mode_btn.setCheckable(True)
-        self._mode_btn.setFixedWidth(90)
+        self._mode_btn.setFixedWidth(82)
         self._mode_btn.setStyleSheet(self._btn_style(False))
         self._mode_btn.toggled.connect(self._on_toggle)
         h.addWidget(self._mode_btn)
-
-        h.addStretch()
 
     def _btn_style(self, optimize: bool) -> str:
         if optimize:
@@ -631,10 +640,26 @@ class _ProgressPanel(QWidget):
         self._mini_table.verticalHeader().setVisible(False)
         vlay.addWidget(self._mini_table)
 
+    @Slot(bool)
+    def set_indeterminate(self, active: bool):
+        """Switch between pulsing animation (active=True) and normal bar."""
+        if active:
+            self._bar.setRange(0, 0)   # Qt pulse animation
+        else:
+            self._bar.setRange(0, 100)
+
     def update_progress(self, completed: int, total: int, best_pf: float, msg: str):
-        pct = int(completed / total * 100) if total else 0
-        self._bar.setValue(pct)
-        self._trials_lbl.setText(f"{completed} / {total} trials")
+        if self._bar.maximum() != 0:   # determinate mode
+            pct = int(completed / total * 100) if total else 0
+            self._bar.setValue(pct)
+
+        # For baseline (total ≤ 10) show phases; for sweeps show trial counter
+        if total > 10:
+            self._trials_lbl.setText(f"{completed} / {total} trials")
+        else:
+            phase_txt = f"Phase {completed}/{total}" if total > 0 else "—"
+            self._trials_lbl.setText(phase_txt)
+
         self._best_lbl.setText(f"Best PF: {best_pf:.4f}" if best_pf else "Best PF: —")
         self._msg_lbl.setText(msg)
 
@@ -646,8 +671,9 @@ class _ProgressPanel(QWidget):
             self._mini_table.setItem(i, 2, QTableWidgetItem(str(row.get('n_trades', 0))))
 
     def reset(self):
+        self._bar.setRange(0, 100)
         self._bar.setValue(0)
-        self._trials_lbl.setText("0 / 0 trials")
+        self._trials_lbl.setText("—")
         self._best_lbl.setText("Best PF: —")
         self._msg_lbl.setText("Idle")
 
@@ -859,8 +885,7 @@ class ResearchLabPage(QWidget):
 
         left_layout.addStretch()
         left_scroll.setWidget(left_widget)
-        left_scroll.setMinimumWidth(340)
-        left_scroll.setMaximumWidth(420)
+        left_scroll.setMinimumWidth(400)
         splitter.addWidget(left_scroll)
 
         # ── RIGHT — results ────────────────────────────────────────────
@@ -902,6 +927,7 @@ class ResearchLabPage(QWidget):
 
         self._worker = SweepWorkerThread("baseline", self._state)
         self._worker.progress.connect(self._on_progress)
+        self._worker.indeterminate.connect(self._progress_panel.set_indeterminate)
         self._worker.finished_ok.connect(self._on_baseline_done)
         self._worker.error_signal.connect(self._on_error)
         self._worker.start()
@@ -939,6 +965,7 @@ class ResearchLabPage(QWidget):
 
         self._worker = SweepWorkerThread("sweep", self._state)
         self._worker.progress.connect(self._on_progress)
+        self._worker.indeterminate.connect(self._progress_panel.set_indeterminate)
         self._worker.trial_done.connect(self._on_trial_done)
         self._worker.finished_ok.connect(self._on_sweep_done)
         self._worker.error_signal.connect(self._on_error)
