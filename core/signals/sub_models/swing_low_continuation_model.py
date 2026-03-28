@@ -1,24 +1,31 @@
 # ============================================================
 # NEXUS TRADER — Swing Low Continuation Model (Sub-Model 7)
 #
-# Active in: bear_trend (research regime integer = 2)
+# Active in: bear_trend — ACTIVE_REGIMES gate enforced by SignalGenerator
 # Timeframe: 1h (requires df_1h in context)
 #
 # Logic — EXACT reproduction of Phase 5 backtest gen_slc() in
 # scripts/mr_pbl_slc_research/backtest_v7_final.py:
 #
-#   Regime gate:     research BEAR_TREND on 1h series (NOT 30m)
-#                    (ADX≥22, EMA20≤EMA50, price≤EMA200, ATR_ratio<1.80)
+#   Regime gate:     ACTIVE_REGIMES=["bear_trend"] — SignalGenerator blocks
+#                    the model unless regime=="bear_trend".  The caller
+#                    (scanner/backtest) must pass regime from
+#                    ResearchRegimeClassifier.regime_to_string(
+#                        classify_latest_bar(df_1h)) so only real
+#                    research BEAR_TREND 1h bars reach evaluate().
 #   ADX gate:        1h ADX14 (Wilder) ≥ 28
 #   Swing-low gate:  1h close < shift(1).rolling(10).min()
 #                    i.e. close < min(close[-10], …, close[-1])
 #   Stop-loss:       entry + 2.5 × 1h ATR14  (above entry, short)
 #   Take-profit:     entry − 2.0 × 1h ATR14  (below entry, short)
 #
-# Regime source (priority):
-#   1. context["research_regime_1h"]  (int from ResearchRegimeClassifier
-#      applied to the 1h series — set by scanner / backtest)
-#   2. Fallback: NexusTrader regime string (test compatibility)
+# Regime source:
+#   ResearchRegimeClassifier.regime_to_string(classify_latest_bar(df_1h))
+#   → called by scanner (live) and backtest (historical) on 1h data
+#   → passed as the `regime` parameter to generate(), which applies the
+#     ACTIVE_REGIMES gate before calling evaluate().
+#   NO context injection of regime integers — regime comes through the
+#   official generate() → evaluate() interface only.
 #
 # CRITICAL: regime is for the 1h series, NOT the 30m primary series.
 # The research classifies regime on 1h OHLCV independently.
@@ -32,7 +39,6 @@ import pandas as pd
 from core.signals.sub_models.base import BaseSubModel
 from core.meta_decision.order_candidate import ModelSignal
 from core.regime.regime_classifier import REGIME_BEAR_TREND
-from core.regime.research_regime_classifier import BEAR_TREND as _RES_BEAR_TREND
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +54,18 @@ class SwingLowContinuationModel(BaseSubModel):
     Swing-low continuation short model active in research BEAR_TREND regime
     on the 1h series.
 
-    Regime is read from context["research_regime_1h"] (int, preferred)
-    or falls back to the NexusTrader regime string for test compatibility.
+    Regime enforcement:
+      SignalGenerator.generate() checks ACTIVE_REGIMES=["bear_trend"] before
+      calling evaluate().  The caller (scanner/backtest) must pass
+      ResearchRegimeClassifier.regime_to_string(classify_latest_bar(df_1h))
+      as the regime argument so only research BEAR_TREND 1h bars reach this
+      model.
     """
 
-    # ACTIVE_REGIMES is empty so the SignalGenerator ACTIVE_REGIMES hard gate
-    # always passes — regime control is handled entirely inside evaluate() via
-    # context["research_regime_1h"] (primary) or the NexusTrader regime string
-    # (fallback).  REGIME_AFFINITY still applies via adaptive activation so the
-    # model is suppressed in crisis / liquidation_cascade regimes as expected.
-    ACTIVE_REGIMES: list[str] = []
+    # Restored: SignalGenerator hard-gates this model to bear_trend only.
+    # The caller supplies regime from ResearchRegimeClassifier applied to
+    # the 1h series so the gate maps cleanly onto research BEAR_TREND bars.
+    ACTIVE_REGIMES: list[str] = [REGIME_BEAR_TREND]
     ENTRY_BUFFER_ATR: float = 0.0
 
     REGIME_AFFINITY: dict[str, float] = {
@@ -93,12 +101,14 @@ class SwingLowContinuationModel(BaseSubModel):
         Parameters
         ----------
         regime : str
-            NexusTrader 30m regime string — used as FALLBACK only.
+            NexusTrader regime string, supplied by the caller from
+            ResearchRegimeClassifier.regime_to_string(classify_latest_bar(df_1h)).
+            The ACTIVE_REGIMES gate in SignalGenerator guarantees this equals
+            REGIME_BEAR_TREND when called via generate().  The explicit check
+            below is retained as a defensive guard for direct (test) calls.
         context : dict, optional
             Expected keys:
-              "research_regime_1h" : int  — regime from ResearchRegimeClassifier
-                                            applied to the 1h series
-              "df_1h"              : pd.DataFrame  — 1h OHLCV with indicators
+              "df_1h" : pd.DataFrame  — 1h OHLCV with indicators (mandatory)
         """
         ctx = context or {}
 
@@ -111,20 +121,12 @@ class SwingLowContinuationModel(BaseSubModel):
             )
             return None
 
-        # ── Regime gate (research 1h regime takes priority) ──────────
-        res_regime_1h = ctx.get("research_regime_1h")
-        if res_regime_1h is not None:
-            if int(res_regime_1h) != _RES_BEAR_TREND:
-                logger.debug(
-                    "SLC %s: research_regime_1h=%d ≠ BEAR_TREND — skip",
-                    symbol, res_regime_1h,
-                )
-                return None
-        else:
-            # Fallback: NexusTrader 30m regime string
-            if regime != REGIME_BEAR_TREND:
-                logger.debug("SLC %s: NexusTrader regime=%s ≠ bear_trend — skip", symbol, regime)
-                return None
+        # ── Regime gate ────────────────────────────────────────────────
+        # ACTIVE_REGIMES=["bear_trend"] ensures this is only reached via
+        # generate() when regime=="bear_trend".  Guard retained for direct calls.
+        if regime != REGIME_BEAR_TREND:
+            logger.debug("SLC %s: regime=%s ≠ bear_trend — skip", symbol, regime)
+            return None
 
         # ── Read config overrides ─────────────────────────────────────
         try:
@@ -194,7 +196,7 @@ class SwingLowContinuationModel(BaseSubModel):
         take_profit = entry_price - tp_mult * atr   # below (short)
 
         rationale = (
-            f"[SLC | regime_1h={res_regime_1h if res_regime_1h is not None else regime}] "
+            f"[SLC | regime_1h={regime}] "
             f"ADX14={adx:.1f}≥{adx_min:.0f} ✓ | "
             f"New 10-bar low: close={close:.4f}<prev_min={prev_min:.4f} ✓ | "
             f"adx_bonus={adx_bonus:.3f} depth_bonus={depth_bonus:.3f} | "

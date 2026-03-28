@@ -625,27 +625,32 @@ class ScanWorker(QThread):
         _sym_diag["regime_confidence"] = round(confidence, 3)
         _sym_diag["regime_probs"]      = regime_probs
 
-        # ── PBL/SLC context: fetch 4h and 1h data when mr_pbl_slc is enabled ───
+        # ── PBL/SLC data fetch (when mr_pbl_slc is enabled) ──────────────────────
         # PullbackLongModel:          needs df_4h for HTF gate (4h EMA20 > EMA50)
         # SwingLowContinuationModel:  needs df_1h as its primary signal dataframe
-        # Both are fetched here and passed as context["df_4h"] / context["df_1h"].
         #
-        # Research regime injection (v1.3):
-        #   context["research_regime_30m"] — int from ResearchRegimeClassifier on 30m
-        #   context["research_regime_1h"]  — int from ResearchRegimeClassifier on 1h
-        # These are checked FIRST inside evaluate() so the models use the same
-        # vectorized labeler as the research system (btc_regime_labeler.py logic).
+        # Regime for PBL/SLC comes from ResearchRegimeClassifier applied to the
+        # appropriate timeframe series.  The regime STRING (from regime_to_string())
+        # is passed directly to their generate() calls so the ACTIVE_REGIMES gate
+        # functions as the single filtering mechanism — no regime integers injected
+        # into context.
         #
         # Failures are non-fatal — models degrade gracefully when data is absent.
-        _signal_context: dict = {}
+        _pbl_slc_enabled:    bool                  = False
+        _df_4h_ctx:          Optional[pd.DataFrame] = None
+        _df_1h_ctx:          Optional[pd.DataFrame] = None
+        _res_regime_30m_str: str                    = "ranging"
+        _res_regime_1h_str:  str                    = "ranging"
+
         try:
             from config.settings import settings as _sc_pbl
             if bool(_sc_pbl.get("mr_pbl_slc.enabled", False)):
+                _pbl_slc_enabled = True
                 _slc_bars = int(_sc_pbl.get("mr_pbl_slc.slc_1h_bars", 150))
 
-                # ── 4h fetch (reuse from MTF pool) ─────────────────────
+                # ── Concurrent 4h + 1h fetch ────────────────────────────
                 _pool_ctx = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-                _futs = {}
+                _futs: dict = {}
                 try:
                     _futs["4h"] = _pool_ctx.submit(
                         self._exchange.fetch_ohlcv, symbol, "4h", limit=60
@@ -671,8 +676,10 @@ class ScanWorker(QThread):
                                 _df_tf = _df_tf.set_index("timestamp").astype(float)
                                 from core.features.indicator_library import calculate_scan_mode
                                 _df_tf = calculate_scan_mode(_df_tf)
-                                _ctx_key = f"df_{_tf_key}"  # "df_4h" or "df_1h"
-                                _signal_context[_ctx_key] = _df_tf
+                                if _tf_key == "4h":
+                                    _df_4h_ctx = _df_tf
+                                else:
+                                    _df_1h_ctx = _df_tf
                                 logger.debug(
                                     "Scanner: %s context %s — %d bars fetched",
                                     symbol, _tf_key, len(_df_tf),
@@ -690,48 +697,80 @@ class ScanWorker(QThread):
                 finally:
                     _pool_ctx.shutdown(wait=False, cancel_futures=True)
 
-                # ── Research regime injection ───────────────────────────
-                # Compute research regime for 30m (PBL) and 1h (SLC) using
-                # the same vectorized labeler as the research script.
-                # classify_latest_bar() is O(n) over the window — call once
-                # per symbol per scan cycle.
+                # ── Research regime strings (no context injection) ──────
+                # ResearchRegimeClassifier is the single authoritative regime
+                # provider for PBL and SLC.  regime_to_string() converts its
+                # integer output to the NexusTrader string format that the
+                # ACTIVE_REGIMES gate consumes.  These strings are passed as
+                # the `regime` parameter to the per-model generate() calls
+                # below — NOT injected into context.
                 try:
                     from core.regime.research_regime_classifier import (
                         classify_latest_bar as _res_classify,
+                        regime_to_string    as _res_to_str,
                     )
-                    # 30m research regime (PBL gate)
-                    try:
-                        _signal_context["research_regime_30m"] = _res_classify(df)
-                        logger.debug(
-                            "Scanner: %s research_regime_30m=%d",
-                            symbol, _signal_context["research_regime_30m"],
-                        )
-                    except Exception as _e30:
-                        logger.debug("Scanner: %s research_regime_30m error: %s", symbol, _e30)
-
-                    # 1h research regime (SLC gate) — only if 1h data was fetched
-                    _df_1h_ctx = _signal_context.get("df_1h")
+                    _res_regime_30m_str = _res_to_str(_res_classify(df))
+                    logger.debug(
+                        "Scanner: %s research_regime_30m=%s", symbol, _res_regime_30m_str,
+                    )
                     if _df_1h_ctx is not None and len(_df_1h_ctx) >= 20:
-                        try:
-                            _signal_context["research_regime_1h"] = _res_classify(_df_1h_ctx)
-                            logger.debug(
-                                "Scanner: %s research_regime_1h=%d",
-                                symbol, _signal_context["research_regime_1h"],
-                            )
-                        except Exception as _e1h:
-                            logger.debug("Scanner: %s research_regime_1h error: %s", symbol, _e1h)
+                        _res_regime_1h_str = _res_to_str(_res_classify(_df_1h_ctx))
+                        logger.debug(
+                            "Scanner: %s research_regime_1h=%s", symbol, _res_regime_1h_str,
+                        )
                 except Exception as _res_exc:
                     logger.debug("Scanner: %s research regime error: %s", symbol, _res_exc)
 
         except Exception as _ctx_outer:
             logger.debug("Scanner: context fetch outer error for %s: %s", symbol, _ctx_outer)
 
-        # Signal generation with regime probabilities and HTF/1h context
+        # ── Main model signal generation (NexusTrader HMM regime) ────────────
+        # TrendModel, MomentumBreakout, FundingRate, Sentiment, RL use the
+        # HMM+rule-based blended regime from classify_combined() above.
+        # PBL and SLC are excluded here: their ACTIVE_REGIMES=["bull_trend"] /
+        # ["bear_trend"] will block them against the HMM regime string reliably,
+        # but they are given dedicated calls below with the correct classifier.
         signals = self._sig_gen.generate(
             symbol, df, regime, self._timeframe,
             regime_probs=regime_probs,
-            context=_signal_context,
+            context={},
         )
+
+        # ── PBL dedicated call (ResearchRegimeClassifier 30m → ACTIVE_REGIMES gate)
+        if _pbl_slc_enabled:
+            try:
+                _pbl_raw = self._sig_gen.generate(
+                    symbol, df, _res_regime_30m_str, "30m",
+                    regime_probs={},
+                    context={"df_4h": _df_4h_ctx} if _df_4h_ctx is not None else {},
+                ) or []
+                _pbl_only = [s for s in _pbl_raw if s.model_name == "pullback_long"]
+                if _pbl_only:
+                    signals = list(signals or []) + _pbl_only
+                    logger.debug(
+                        "Scanner: %s PBL signal (%s) — regime=%s",
+                        symbol, _pbl_only[0].direction, _res_regime_30m_str,
+                    )
+            except Exception as _pbl_exc:
+                logger.debug("Scanner: PBL generate error %s: %s", symbol, _pbl_exc)
+
+            # ── SLC dedicated call (ResearchRegimeClassifier 1h → ACTIVE_REGIMES gate)
+            if _df_1h_ctx is not None:
+                try:
+                    _slc_raw = self._sig_gen.generate(
+                        symbol, df, _res_regime_1h_str, "1h",
+                        regime_probs={},
+                        context={"df_1h": _df_1h_ctx},
+                    ) or []
+                    _slc_only = [s for s in _slc_raw if s.model_name == "swing_low_continuation"]
+                    if _slc_only:
+                        signals = list(signals or []) + _slc_only
+                        logger.debug(
+                            "Scanner: %s SLC signal (%s) — regime_1h=%s",
+                            symbol, _slc_only[0].direction, _res_regime_1h_str,
+                        )
+                except Exception as _slc_exc:
+                    logger.debug("Scanner: SLC generate error %s: %s", symbol, _slc_exc)
 
         # ── Model-level diagnostics for rationale panel ───────────────
         try:

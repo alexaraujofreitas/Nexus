@@ -1,14 +1,18 @@
 # ============================================================
 # NEXUS TRADER — Pullback Long Model (Sub-Model 6)
 #
-# Active in: bull_trend (research regime integer = 1)
+# Active in: bull_trend — ACTIVE_REGIMES gate enforced by SignalGenerator
 # Timeframe: 30m (primary); requires 4h HTF confirmation
 #
 # Logic — EXACT reproduction of Phase 5 backtest gen_pbl() in
 # scripts/mr_pbl_slc_research/backtest_v7_final.py:
 #
-#   Regime gate:    research BULL_TREND (ADX≥22, EMA20>EMA50,
-#                   price>EMA200, ATR_ratio<1.80) on 30m series
+#   Regime gate:    ACTIVE_REGIMES=["bull_trend"] — SignalGenerator blocks
+#                   the model unless regime=="bull_trend".  The caller
+#                   (scanner/backtest) must pass regime from
+#                   ResearchRegimeClassifier.regime_to_string(
+#                       classify_latest_bar(df_30m)) so only real
+#                   research BULL_TREND bars reach evaluate().
 #   4h HTF gate:    4h EMA20 > 4h EMA50  (bullish higher-TF bias)
 #   EMA50 proximity: |close − EMA50| ≤ 0.5 × ATR14
 #   Rejection candle (ALL three required):
@@ -19,10 +23,13 @@
 #   Stop-loss:      close_signal − 2.5 × ATR14
 #   Take-profit:    close_signal + 3.0 × ATR14
 #
-# Regime source (priority):
-#   1. context["research_regime_30m"]  (int from ResearchRegimeClassifier)
-#      → set by scanner / backtest at each bar
-#   2. Fallback: NexusTrader regime string (for test compatibility)
+# Regime source:
+#   ResearchRegimeClassifier.regime_to_string(classify_latest_bar(df_30m))
+#   → called by scanner (live) and backtest (historical)
+#   → passed as the `regime` parameter to generate(), which applies the
+#     ACTIVE_REGIMES gate before calling evaluate().
+#   NO context injection of regime integers — regime comes through the
+#   official generate() → evaluate() interface only.
 #
 # HTF data injection:
 #   Scanner passes pre-fetched 4h OHLCV as context["df_4h"].
@@ -37,7 +44,6 @@ import pandas as pd
 from core.signals.sub_models.base import BaseSubModel
 from core.meta_decision.order_candidate import ModelSignal
 from core.regime.regime_classifier import REGIME_BULL_TREND
-from core.regime.research_regime_classifier import BULL_TREND as _RES_BULL_TREND
 
 logger = logging.getLogger(__name__)
 
@@ -58,16 +64,17 @@ class PullbackLongModel(BaseSubModel):
     then shows a REJECTION candle (long lower wick, short upper wick,
     lower wick dominates body) with RSI > 40.
 
-    Regime is read from context["research_regime_30m"] (int, preferred)
-    or falls back to the NexusTrader regime string for test compatibility.
+    Regime enforcement:
+      SignalGenerator.generate() checks ACTIVE_REGIMES=["bull_trend"] before
+      calling evaluate().  The caller (scanner/backtest) must pass
+      ResearchRegimeClassifier.regime_to_string(classify_latest_bar(df_30m))
+      as the regime argument so only research BULL_TREND bars reach this model.
     """
 
-    # ACTIVE_REGIMES is empty so the SignalGenerator ACTIVE_REGIMES hard gate
-    # always passes — regime control is handled entirely inside evaluate() via
-    # context["research_regime_30m"] (primary) or the NexusTrader regime string
-    # (fallback).  REGIME_AFFINITY still applies via adaptive activation so the
-    # model is suppressed in crisis / liquidation_cascade regimes as expected.
-    ACTIVE_REGIMES: list[str] = []
+    # Restored: SignalGenerator hard-gates this model to bull_trend only.
+    # The caller supplies regime from ResearchRegimeClassifier so the gate
+    # maps cleanly onto research BULL_TREND bars.
+    ACTIVE_REGIMES: list[str] = [REGIME_BULL_TREND]
     ENTRY_BUFFER_ATR: float = 0.0
 
     REGIME_AFFINITY: dict[str, float] = {
@@ -103,27 +110,23 @@ class PullbackLongModel(BaseSubModel):
         Parameters
         ----------
         regime : str
-            NexusTrader regime string — used as FALLBACK if research regime
-            is not in context.
+            NexusTrader regime string, supplied by the caller from
+            ResearchRegimeClassifier.regime_to_string(classify_latest_bar(df_30m)).
+            The ACTIVE_REGIMES gate in SignalGenerator guarantees this equals
+            REGIME_BULL_TREND when called via generate().  The explicit check
+            below is retained as a defensive guard for direct (test) calls.
         context : dict, optional
             Expected keys:
-              "research_regime_30m" : int  — regime from ResearchRegimeClassifier
-              "df_4h"               : pd.DataFrame  — 4h OHLCV with indicators
+              "df_4h" : pd.DataFrame  — 4h OHLCV with indicators (HTF gate)
         """
         ctx = context or {}
 
-        # ── Regime gate (research regime takes priority) ──────────────
-        res_regime = ctx.get("research_regime_30m")
-        if res_regime is not None:
-            # Use research integer regime
-            if int(res_regime) != _RES_BULL_TREND:
-                logger.debug("PBL %s: research_regime_30m=%d ≠ BULL_TREND — skip", symbol, res_regime)
-                return None
-        else:
-            # Fallback: NexusTrader string (test compatibility)
-            if regime != REGIME_BULL_TREND:
-                logger.debug("PBL %s: NexusTrader regime=%s ≠ bull_trend — skip", symbol, regime)
-                return None
+        # ── Regime gate ────────────────────────────────────────────────
+        # ACTIVE_REGIMES=["bull_trend"] ensures this is only reached via
+        # generate() when regime=="bull_trend".  Guard retained for direct calls.
+        if regime != REGIME_BULL_TREND:
+            logger.debug("PBL %s: regime=%s ≠ bull_trend — skip", symbol, regime)
+            return None
 
         # ── Read config overrides ─────────────────────────────────────
         try:
@@ -253,7 +256,7 @@ class PullbackLongModel(BaseSubModel):
         take_profit = close + tp_mult * atr
 
         rationale = (
-            f"[PBL | regime={res_regime if res_regime is not None else regime}] "
+            f"[PBL | regime={regime}] "
             f"EMA50={ema50:.4f} prox={prox_distance:.4f}≤{prox_threshold:.4f} ✓ | "
             f"Rejection: lw={lw:.4f}>uw={uw:.4f}>body={body:.4f} ✓ | "
             f"RSI={rsi:.1f}>{rsi_min:.0f} ✓ | "

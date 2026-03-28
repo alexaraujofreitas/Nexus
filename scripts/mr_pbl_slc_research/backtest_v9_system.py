@@ -86,9 +86,14 @@ from core.regime.regime_classifier   import RegimeClassifier
 from core.signals.signal_generator   import SignalGenerator
 from core.meta_decision.position_sizer import PositionSizer
 
-# Research regime (Stage 1 fix)
+# Research regime — ResearchRegimeClassifier is the single explicit provider
+# for PBL/SLC regime.  regime_to_string() is the authoritative conversion from
+# the classifier's integer space to NexusTrader regime strings; these strings
+# are passed to SignalGenerator.generate() so the ACTIVE_REGIMES gate (not
+# context injection) is what filters the models.
 from core.regime.research_regime_classifier import (
     classify_series   as research_classify_series,
+    regime_to_string  as research_regime_to_string,
     BULL_TREND        as RES_BULL_TREND,
     BEAR_TREND        as RES_BEAR_TREND,
 )
@@ -237,13 +242,15 @@ def run_scenario(
     Modules used (Stage 3 compliance):
       - SignalGenerator.generate()         ← production signal pipeline
       - PositionSizer.calculate_pos_frac() ← production sizing
-      - ResearchRegimeClassifier result    ← used DIRECTLY as regime string
-        (no NexusTrader HMM gate — matches research script exactly)
+      - ResearchRegimeClassifier           ← regime_to_string(classify_series())
+        provides the regime string passed to generate(); the ACTIVE_REGIMES gate
+        is the filtering mechanism — no context injection of regime integers.
 
-    KEY FIX: generate() is called with the research regime string directly:
-      - "bull_trend" when research 30m == BULL_TREND  → PBL can fire
-      - "bear_trend" when research 1h  == BEAR_TREND  → SLC can fire
-    This eliminates the extra NexusTrader HMM gate that was blocking SLC.
+    Regime flow per bar:
+      res_regime_30m  = research_regime_to_string(precomputed_int_30m)  → "bull_trend" etc.
+      res_regime_1h   = research_regime_to_string(precomputed_int_1h)   → "bear_trend" etc.
+      PBL call: generate(sym, df, res_regime_30m_str, ...) — ACTIVE_REGIMES=["bull_trend"]
+      SLC call: generate(sym, df, res_regime_1h_str,  ...) — ACTIVE_REGIMES=["bear_trend"]
     """
     # ── Production instances ──────────────────────────────────────────
     sig_gen  = SignalGenerator()
@@ -407,23 +414,24 @@ def run_scenario(
             if loc < warmup_bars:
                 continue
 
-            # Research regime for 30m (PBL gate via context)
-            res_30m_arr = research_regimes_30m.get(sym, np.array([]))
+            # ── Research regime integers for this bar ──────────────────
+            res_30m_arr    = research_regimes_30m.get(sym, np.array([]))
             res_regime_30m = int(res_30m_arr[loc]) if loc < len(res_30m_arr) else 0
 
-            # Skip quickly if neither bull nor bear (for efficiency)
-            if res_regime_30m not in (RES_BULL_TREND,):
-                # Also check if we might need SLC (bear_trend on 1h)
-                # SLC check: get current 1h bar regime
-                loc1h = int(idx1h[sym].searchsorted(ts, side="right")) - 1
-                res_1h_arr = research_regimes_1h.get(sym, np.array([]))
-                res_regime_1h = int(res_1h_arr[loc1h]) if 0 <= loc1h < len(res_1h_arr) else 0
-                if res_regime_1h != RES_BEAR_TREND:
-                    continue   # neither PBL nor SLC will fire
-            else:
-                loc1h = int(idx1h[sym].searchsorted(ts, side="right")) - 1
-                res_1h_arr = research_regimes_1h.get(sym, np.array([]))
-                res_regime_1h = int(res_1h_arr[loc1h]) if 0 <= loc1h < len(res_1h_arr) else 0
+            loc1h      = int(idx1h[sym].searchsorted(ts, side="right")) - 1
+            res_1h_arr = research_regimes_1h.get(sym, np.array([]))
+            res_regime_1h = int(res_1h_arr[loc1h]) if 0 <= loc1h < len(res_1h_arr) else 0
+
+            # Skip quickly if neither model will fire
+            if res_regime_30m != RES_BULL_TREND and res_regime_1h != RES_BEAR_TREND:
+                continue
+
+            # ── Convert integers to NexusTrader regime strings ─────────
+            # regime_to_string() is the authoritative mapper; the resulting
+            # strings are passed to generate() so the ACTIVE_REGIMES gate
+            # (not context integers) is the filtering mechanism.
+            res_regime_30m_str = research_regime_to_string(res_regime_30m)
+            res_regime_1h_str  = research_regime_to_string(res_regime_1h)
 
             # Fixed-lookback 30m window (iloc — O(1))
             s30 = max(0, loc - MODEL_LOOKBACK + 1)
@@ -431,51 +439,42 @@ def run_scenario(
             if len(df_window) < 70:
                 continue
 
-            # Build context dict — research regimes + HTF dataframes
-            context: dict = {
-                "research_regime_30m": res_regime_30m,
-                "research_regime_1h":  res_regime_1h,
-            }
-
-            # 4h context for PBL
-            if res_regime_30m == RES_BULL_TREND and loc1h >= 0:
-                loc4h = int(idx4h[sym].searchsorted(ts, side="right"))
-                if loc4h >= HTF_LOOKBACK:
-                    context["df_4h"] = ind_data[sym][HTF_4H_TF].iloc[
-                        max(0, loc4h - HTF_LOOKBACK) : loc4h
-                    ]
-
-            # 1h context for SLC
-            if loc1h >= 15:
-                context["df_1h"] = ind_data[sym][SLC_1H_TF].iloc[
-                    max(0, loc1h - SLC_1H_LOOKBACK + 1) : loc1h + 1
-                ]
-
             # ── Call production SignalGenerator (research-regime-driven) ──
-            # Pass the RESEARCH regime string directly so the SignalGenerator
-            # ACTIVE_REGIMES hard gate passes for the correct model:
-            #   "bull_trend" → PBL can fire (ACTIVE_REGIMES=[REGIME_BULL_TREND])
-            #   "bear_trend" → SLC can fire (ACTIVE_REGIMES=[REGIME_BEAR_TREND])
-            # This matches the research script which only checks research regime.
+            # Each model group gets its own generate() call with the regime
+            # string from ResearchRegimeClassifier.  The ACTIVE_REGIMES gate
+            # is the sole filtering mechanism — no regime integers in context.
             signals = []
 
-            # PBL path: 30m research bull_trend
+            # PBL path: generate() with research 30m regime string
+            # ACTIVE_REGIMES=["bull_trend"] passes only when res_regime_30m_str=="bull_trend"
             if res_regime_30m == RES_BULL_TREND:
+                _pbl_ctx: dict = {}
+                loc4h = int(idx4h[sym].searchsorted(ts, side="right"))
+                if loc4h >= HTF_LOOKBACK:
+                    _pbl_ctx["df_4h"] = ind_data[sym][HTF_4H_TF].iloc[
+                        max(0, loc4h - HTF_LOOKBACK) : loc4h
+                    ]
                 try:
                     raw = sig_gen.generate(
-                        sym, df_window, "bull_trend", PRIMARY_TF,
-                        regime_probs={}, context=context,
+                        sym, df_window, res_regime_30m_str, PRIMARY_TF,
+                        regime_probs={}, context=_pbl_ctx,
                     ) or []
                     signals.extend(s for s in raw if s.model_name == "pullback_long")
                 except Exception as exc:
                     logger.debug("SG PBL error %s: %s", sym, exc)
 
-            # SLC path: 1h research bear_trend
-            if res_regime_1h == RES_BEAR_TREND:
+            # SLC path: generate() with research 1h regime string
+            # ACTIVE_REGIMES=["bear_trend"] passes only when res_regime_1h_str=="bear_trend"
+            if res_regime_1h == RES_BEAR_TREND and loc1h >= 15:
+                _slc_ctx: dict = {
+                    "df_1h": ind_data[sym][SLC_1H_TF].iloc[
+                        max(0, loc1h - SLC_1H_LOOKBACK + 1) : loc1h + 1
+                    ]
+                }
                 try:
                     raw = sig_gen.generate(
-                        sym, df_window, "bear_trend", PRIMARY_TF,
-                        regime_probs={}, context=context,
+                        sym, df_window, res_regime_1h_str, PRIMARY_TF,
+                        regime_probs={}, context=_slc_ctx,
                     ) or []
                     signals.extend(s for s in raw if s.model_name == "swing_low_continuation")
                 except Exception as exc:
@@ -650,37 +649,37 @@ def run_signal_parity(
             if len(df_win) < 70:
                 continue
 
-            ctx: dict = {
-                "research_regime_30m": res30,
-                "research_regime_1h":  res1h,
-            }
+            # PBL: research 30m regime string → ACTIVE_REGIMES gate (no ctx injection)
             if res30 == RES_BULL_TREND:
+                _p_ctx: dict = {}
                 loc4h = int(idx4h_s.searchsorted(ts, side="right"))
                 if loc4h >= HTF_LOOKBACK:
-                    ctx["df_4h"] = ind_data[sym][HTF_4H_TF].iloc[
+                    _p_ctx["df_4h"] = ind_data[sym][HTF_4H_TF].iloc[
                         max(0, loc4h - HTF_LOOKBACK) : loc4h
                     ]
-            if loc1h >= 15:
-                ctx["df_1h"] = ind_data[sym][SLC_1H_TF].iloc[
-                    max(0, loc1h - SLC_1H_LOOKBACK + 1) : loc1h + 1
-                ]
-
-            # PBL: research 30m bull_trend → generate() with "bull_trend"
-            if res30 == RES_BULL_TREND:
                 try:
-                    raw = sg_parity.generate(sym, df_win, "bull_trend", PRIMARY_TF,
-                                             regime_probs={}, context=ctx) or []
+                    raw = sg_parity.generate(
+                        sym, df_win, research_regime_to_string(res30), PRIMARY_TF,
+                        regime_probs={}, context=_p_ctx,
+                    ) or []
                     for s in raw:
                         if s.model_name == "pullback_long":
                             counts[sym]["PBL"] += 1
                 except Exception:
                     pass
 
-            # SLC: research 1h bear_trend → generate() with "bear_trend"
-            if res1h == RES_BEAR_TREND:
+            # SLC: research 1h regime string → ACTIVE_REGIMES gate (no ctx injection)
+            if res1h == RES_BEAR_TREND and loc1h >= 15:
+                _s_ctx: dict = {
+                    "df_1h": ind_data[sym][SLC_1H_TF].iloc[
+                        max(0, loc1h - SLC_1H_LOOKBACK + 1) : loc1h + 1
+                    ]
+                }
                 try:
-                    raw = sg_parity.generate(sym, df_win, "bear_trend", PRIMARY_TF,
-                                             regime_probs={}, context=ctx) or []
+                    raw = sg_parity.generate(
+                        sym, df_win, research_regime_to_string(res1h), PRIMARY_TF,
+                        regime_probs={}, context=_s_ctx,
+                    ) or []
                     for s in raw:
                         if s.model_name == "swing_low_continuation":
                             counts[sym]["SLC"] += 1

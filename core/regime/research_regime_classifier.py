@@ -207,6 +207,48 @@ def classify_latest_bar(df: pd.DataFrame) -> int:
     return int(labels[-1]) if len(labels) > 0 else SIDEWAYS
 
 
+# ── NexusTrader string mapping ───────────────────────────────────────────────
+# Maps ResearchRegimeClassifier integer codes to the canonical NexusTrader
+# regime strings used throughout the signal pipeline (SignalGenerator,
+# ACTIVE_REGIMES gates, REGIME_AFFINITY matrices).
+#
+# Used by scanner and backtest so that regime strings passed to
+# SignalGenerator.generate() always come from this classifier rather than
+# being constructed as literals.
+
+_RESEARCH_TO_NX: dict[int, str] = {
+    SIDEWAYS:       "ranging",
+    BULL_TREND:     "bull_trend",
+    BEAR_TREND:     "bear_trend",
+    BULL_EXPANSION: "volatility_expansion",
+    BEAR_EXPANSION: "volatility_expansion",
+    CRASH_PANIC:    "crisis",
+}
+
+
+def regime_to_string(code: int) -> str:
+    """
+    Convert a ResearchRegimeClassifier integer code to a NexusTrader regime string.
+
+    This is the single authoritative translation between the research labeler's
+    integer space and the string space used by SignalGenerator, ACTIVE_REGIMES
+    gates, and REGIME_AFFINITY matrices.
+
+    Parameters
+    ----------
+    code : int
+        Integer from classify_series() or classify_latest_bar()
+        (SIDEWAYS=0 … CRASH_PANIC=5).
+
+    Returns
+    -------
+    str
+        NexusTrader regime string (e.g. "bull_trend", "bear_trend", "crisis").
+        Returns "ranging" for unknown codes.
+    """
+    return _RESEARCH_TO_NX.get(int(code), "ranging")
+
+
 def _apply_hysteresis(labels: np.ndarray, min_bars: int) -> np.ndarray:
     """
     Merge runs shorter than min_bars into the preceding regime.

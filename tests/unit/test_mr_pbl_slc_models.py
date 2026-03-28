@@ -252,12 +252,14 @@ class TestPullbackLongModel:
         assert sig is not None
         assert 0.0 < sig.strength <= 0.90, f"Strength {sig.strength} out of range"
 
-    def test_active_regimes_empty(self):
-        # v1.3: ACTIVE_REGIMES=[] so SignalGenerator hard gate always passes.
-        # Regime control is handled entirely inside evaluate() via context
-        # (research_regime_30m) or NexusTrader regime string fallback.
-        assert PullbackLongModel.ACTIVE_REGIMES == [], (
-            "PBL ACTIVE_REGIMES must be [] — regime gated inside evaluate() via context"
+    def test_active_regimes_restored(self):
+        # v1.3 refactor: ACTIVE_REGIMES=["bull_trend"] restored.
+        # Scanner/backtest pass regime from ResearchRegimeClassifier.regime_to_string()
+        # so the SignalGenerator ACTIVE_REGIMES gate maps onto research BULL_TREND bars.
+        # evaluate() retains a defensive regime check for direct-call safety.
+        from core.regime.regime_classifier import REGIME_BULL_TREND
+        assert PullbackLongModel.ACTIVE_REGIMES == [REGIME_BULL_TREND], (
+            "PBL ACTIVE_REGIMES must be ['bull_trend'] — restored in v1.3 refactor"
         )
 
 
@@ -364,12 +366,14 @@ class TestSwingLowContinuationModel:
                                   context={"df_1h": df_1h})
         assert 0.0 < sig.strength <= 0.85, f"Strength {sig.strength} out of range"
 
-    def test_active_regimes_empty(self):
-        # v1.3: ACTIVE_REGIMES=[] so SignalGenerator hard gate always passes.
-        # Regime control is handled entirely inside evaluate() via context
-        # (research_regime_1h) or NexusTrader regime string fallback.
-        assert SwingLowContinuationModel.ACTIVE_REGIMES == [], (
-            "SLC ACTIVE_REGIMES must be [] — regime gated inside evaluate() via context"
+    def test_active_regimes_restored(self):
+        # v1.3 refactor: ACTIVE_REGIMES=["bear_trend"] restored.
+        # Scanner/backtest pass regime from ResearchRegimeClassifier.regime_to_string()
+        # applied to the 1h series so the gate maps onto research BEAR_TREND 1h bars.
+        # evaluate() retains a defensive regime check for direct-call safety.
+        from core.regime.regime_classifier import REGIME_BEAR_TREND
+        assert SwingLowContinuationModel.ACTIVE_REGIMES == [REGIME_BEAR_TREND], (
+            "SLC ACTIVE_REGIMES must be ['bear_trend'] — restored in v1.3 refactor"
         )
 
 
