@@ -94,8 +94,38 @@ def _rsi_wilder(c: pd.Series, period: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
+def _apply_hysteresis_vec(labels: np.ndarray, min_bars: int = 3) -> np.ndarray:
+    """
+    Exact port of core/regime/research_regime_classifier.py _apply_hysteresis().
+    Merges runs shorter than min_bars into the preceding regime (two passes).
+    """
+    if min_bars <= 1:
+        return labels.copy()
+    out = labels.copy()
+    n   = len(out)
+    for _ in range(2):
+        i = 0
+        while i < n:
+            j = i + 1
+            while j < n and out[j] == out[i]:
+                j += 1
+            run_len = j - i
+            if run_len < min_bars and i > 0:
+                out[i:j] = out[i - 1]
+            i = j
+    return out
+
+
 def _classify_regimes_vec(df: pd.DataFrame) -> np.ndarray:
-    """Vectorized research regime classifier. Returns int8 array."""
+    """Vectorized research regime classifier. Returns int8 array.
+
+    Exact port of core/regime/research_regime_classifier.py classify_series():
+      - ATR: tr.ewm(span=14, adjust=False)  [NOT Wilder alpha=1/14]
+      - ATR baseline: rolling(100, min_periods=10)
+      - peak_dd: (roll_peak − close) / roll_peak  [positive fraction ≥0]
+      - Hysteresis: _apply_hysteresis_vec (merge short runs, NOT commitment counter)
+      - All thresholds/bars: ADX≥22, 1.80/2.80, 240/96/48
+    """
     c, h, l = df["close"], df["high"], df["low"]
     n = len(df)
     if n < 5:
@@ -105,51 +135,55 @@ def _classify_regimes_vec(df: pd.DataFrame) -> np.ndarray:
     ema20  = _ema(c, 20).values
     ema50  = _ema(c, 50).values
     ema200 = _ema(c, 200).values
-    atr    = _atr_wilder(h, l, c, 14).values
 
-    atr_base = pd.Series(atr).rolling(100, min_periods=1).mean().values
-    atr_ratio = np.where(atr_base > 0, atr / atr_base, 1.0)
+    # ATR: span=14 (alpha≈0.133) — matches classify_series() tr.ewm(span=14).
+    # Do NOT use Wilder alpha=1/14 (≈0.071) — that's for SLC's adx_1h check only.
+    pc = c.shift(1)
+    tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
+    atr_series = tr.ewm(span=14, adjust=False).mean()
+    # ATR baseline: rolling(100, min_periods=10) — matches production min_periods
+    atr_base   = atr_series.rolling(100, min_periods=10).mean()
+    atr_ratio  = (atr_series / atr_base.replace(0, np.nan)).fillna(1.0).clip(0, 20).values
 
     cv     = c.values
-    ret_5d = pd.Series(cv).pct_change(240).values
-    ret_2d = pd.Series(cv).pct_change(96).values
-    roll_max = pd.Series(cv).rolling(48, min_periods=1).max().values
-    peak_dd  = np.where(roll_max > 0, (cv - roll_max) / roll_max, 0.0)
+    ret_5d = c.pct_change(240).values
+    ret_2d = c.pct_change(96).values
 
-    raw = np.zeros(n, dtype=np.int8)
-    m   = np.isnan(ret_5d) | np.isnan(ret_2d)
+    # peak_dd: positive fraction (roll_peak − close) / roll_peak
+    # Matches: roll_peak = close.rolling(48, min_periods=1).max()
+    #          peak_dd   = (roll_peak − close) / roll_peak   (≥ 0)
+    roll_peak = c.rolling(48, min_periods=1).max().values
+    peak_dd   = np.where(roll_peak > 0, (roll_peak - cv) / roll_peak, 0.0)
 
-    # Vectorized rules (priority: highest first)
-    r5 = np.where(m, 0.0, ret_5d)
-    r2 = np.where(m, 0.0, ret_2d)
+    # ── Priority-ordered labeling (matches classify_series()) ────────────
+    labels = np.zeros(n, dtype=np.int8)
 
-    crash  = (peak_dd <= -0.15) | (r2 <= -0.08)
-    crash &= atr_ratio >= 2.80
-    bear_e = (~crash) & (atr_ratio >= 1.80) & (r5 <= -0.06) & (peak_dd > -0.15)
-    bull_e = (~crash) & (~bear_e) & (atr_ratio >= 1.80) & (r5 >= 0.06)
-    bear_t = (~crash) & (~bear_e) & (~bull_e) & (adx >= 22) & (ema20 <= ema50) & (cv <= ema200) & (atr_ratio < 1.80)
-    bull_t = (~crash) & (~bear_e) & (~bull_e) & (~bear_t) & (adx >= 22) & (ema20 > ema50) & (cv > ema200) & (atr_ratio < 1.80)
+    valid5 = ~np.isnan(ret_5d)
+    valid2 = ~np.isnan(ret_2d)
+    ema_bull = ema20 > ema50
+    abv_slow = cv > ema200
 
-    raw[bull_t] = 1
-    raw[bear_t] = 2
-    raw[bull_e] = 3
-    raw[bear_e] = 4
-    raw[crash]  = 5
+    # 1. BULL_TREND
+    bull = (adx >= 22) & ema_bull & abv_slow & (atr_ratio < 1.80)
+    labels[bull] = 1
 
-    # 3-bar hysteresis
-    out = raw.copy()
-    committed = -1
-    count = 0
-    for i in range(n):
-        r = int(raw[i])
-        if r != committed:
-            count += 1
-            if count >= 3:
-                committed = r
-                count = 0
-        out[i] = committed if committed >= 0 else r
+    # 2. BEAR_TREND (overrides BULL_TREND — but conditions are mutually exclusive)
+    bear = (adx >= 22) & (~ema_bull) & (~abv_slow) & (atr_ratio < 1.80)
+    labels[bear] = 2
 
-    return out.astype(np.int8)
+    # 3. BULL_EXPANSION (overrides trend — also mutually exclusive via atr_ratio)
+    bull_exp = valid5 & (atr_ratio >= 1.80) & (ret_5d >= 0.06)
+    labels[bull_exp] = 3
+
+    # 4. BEAR_EXPANSION
+    bear_exp = valid5 & (atr_ratio >= 1.80) & (ret_5d <= -0.06) & (peak_dd < 0.15)
+    labels[bear_exp] = 4
+
+    # 5. CRASH_PANIC (highest priority — overrides everything)
+    crash = valid2 & ((peak_dd >= 0.15) | (ret_2d <= -0.08)) & (atr_ratio >= 2.80)
+    labels[crash] = 5
+
+    return _apply_hysteresis_vec(labels, 3)
 
 
 def _precompute_htf_emas(df_4h: pd.DataFrame) -> dict[str, np.ndarray]:
@@ -270,7 +304,13 @@ class FastBacktestEngine:
                     dfs[tf] = pd.DataFrame()
 
             if not dfs.get("30m", pd.DataFrame()).empty:
-                all_ts_i8.update(dfs["30m"].index.asi8.tolist())
+                # Master timeline: BTC/USDT 30m ONLY — matches research backtest_v9_system.py
+                # line 287: `master_ts = list(btc_30m.index)`.
+                # Using union-of-all-symbols would add SOL/ETH-exclusive timestamps that
+                # never appear in the research run, producing extra SLC signals and a
+                # different position-management cadence (confirmed cause of PF discrepancy).
+                if sym == "BTC/USDT":
+                    all_ts_i8.update(dfs["30m"].index.asi8.tolist())
 
             self._precomputed[sym] = PrecomputedData(
                 sym,
@@ -341,12 +381,62 @@ class FastBacktestEngine:
         positions: dict[str, tuple] = {}
         closed: list = []
 
-        # SLC: last 1h bar index evaluated per symbol
-        slc_last_1h: dict[str, int] = {}
+        # pending_entries: signal buffered at bar i → filled at bar i+1 open
+        # Matches research backtest_v9_system.py pending_entries behaviour:
+        #   signal fires at bar close → enter at NEXT bar's open with sl<ep<tp validation
+        pending_entries: dict[str, dict] = {}
 
-        for ts_i8 in self._ts_master:
+        # NOTE: slc_last_1h dedup is intentionally removed.
+        # The reference backtest_v9_system.py has no per-1h-bar dedup —
+        # dedup is handled naturally by `sym in positions` and `sym in pending_entries`.
+        # Adding explicit dedup blocked SLC from re-firing after a failed pending
+        # fill (which is a valid entry attempt in the reference), producing ~7
+        # fewer SLC trades than the reference.
 
-            # ── Close expired positions ─────────────────────────────────
+        # Warmup: match research backtest_v9_system.py `warmup_bars = 120`
+        # The research skips the ENTIRE bar (fills, SL/TP, signals) for bar_idx < 120.
+        # Using 60 in the harness generated trades in bars 60-119 that don't exist
+        # in the research run.
+        WARMUP_BARS = 120
+
+        for bar_idx, ts_i8 in enumerate(self._ts_master):
+            if bar_idx < WARMUP_BARS:
+                continue
+
+            # ── Fill pending entries at this bar's OPEN ────────────────────
+            # MUST happen BEFORE the SL/TP exit check so that a position
+            # opened at this bar's open can also be closed by this bar's
+            # high/low (same-bar fill+exit).  Matches backtest_v9_system.py
+            # ordering: "Execute pending entries" → "Update open positions".
+            for sym in list(pending_entries.keys()):
+                if sym in positions:
+                    # Another signal already opened this symbol — cancel pending
+                    del pending_entries[sym]
+                    continue
+                pdata = self._precomputed[sym]
+                idx30_pe = np.searchsorted(pdata.ts_30m, ts_i8, side="left")
+                if idx30_pe >= pdata.n_30m or pdata.ts_30m[idx30_pe] != ts_i8:
+                    # No bar for this symbol at this ts — try next bar
+                    continue
+                pe = pending_entries[sym]
+                ep_raw = float(pdata.open_30m[idx30_pe])
+                sl_pe  = pe["sl"]
+                tp_pe  = pe["tp"]
+                direction_pe = pe["direction"]
+                if direction_pe == "long":
+                    valid_pe = sl_pe < ep_raw < tp_pe
+                else:
+                    valid_pe = tp_pe < ep_raw < sl_pe
+                del pending_entries[sym]
+                if valid_pe:
+                    positions[sym] = (
+                        direction_pe, ep_raw, sl_pe, tp_pe,
+                        pe["size"], pe["model"], idx30_pe,
+                    )
+
+            # ── Close expired positions (SL/TP check using this bar's H/L) ──
+            # Runs AFTER pending fills so same-bar open+close is possible,
+            # matching backtest_v9_system.py which does fills then SL/TP.
             to_remove = []
             for sym, pos in positions.items():
                 direction, entry, sl, tp, size, model, _ = pos
@@ -387,7 +477,7 @@ class FastBacktestEngine:
             for sym in to_remove:
                 del positions[sym]
 
-            # ── Portfolio heat check (max-positions guard only) ─────────────
+            # ── Portfolio heat check (max-positions guard) ─────────────
             n_open = len(positions)
             if n_open >= MAX_POS:
                 continue
@@ -397,14 +487,23 @@ class FastBacktestEngine:
                 if sym in positions:
                     continue  # one position per symbol
 
-                # Per-symbol heat check — recompute AFTER each position opens
-                # so the 2nd/3rd symbol sees the exposure from the 1st/2nd.
-                total_exp = sum(p[4] for p in positions.values())
-                size_usdt = capital * POS_FRAC
-                if (total_exp + size_usdt) / max(capital, 1) > MAX_HEAT:
+                # Heat check — matches production PositionSizer.calculate_pos_frac():
+                #   deployed_est = n_open * pos_frac * equity  (ESTIMATED, not actual)
+                # Using actual sum(sizes) diverges as capital grows because old positions
+                # were sized at smaller capital; the sizer uses n_open × pos_frac × equity
+                # which grows with capital, rejecting more signals in later profitable runs.
+                # Reference: core/meta_decision/position_sizer.py lines 502-504.
+                n_open_pre = len(positions)
+                size_usdt  = capital * POS_FRAC
+                deployed_est = n_open_pre * POS_FRAC * capital
+                if (deployed_est + size_usdt) / max(capital, 1) > MAX_HEAT:
                     break  # heat cap reached; no further entries this bar
                 if capital < size_usdt * 0.5:
                     break  # insufficient capital for any more entries
+
+                # Skip symbols that already have a pending entry buffered
+                if sym in pending_entries:
+                    continue
 
                 pdata = self._precomputed[sym]
                 if pdata.n_30m == 0:
@@ -414,7 +513,9 @@ class FastBacktestEngine:
                 idx30 = np.searchsorted(pdata.ts_30m, ts_i8, side="left")
                 if idx30 >= pdata.n_30m or pdata.ts_30m[idx30] != ts_i8:
                     continue
-                if idx30 < 60:
+                # Require at least 70 bars for reliable indicator values —
+                # matches research: `if len(df_window) < 70: continue` (line 439).
+                if idx30 < 70:
                     continue
 
                 # ── PBL signal (30m bar) ────────────────────────────────
@@ -442,49 +543,52 @@ class FastBacktestEngine:
 
                             if prox_ok and rej_ok and rsi_ok and body_ok:
                                 if self._get_pbl_htf_ok(pdata, idx30, params):
-                                    entry = close
                                     sl_p  = close - sl_mult * atr
                                     tp_p  = close + tp_mult * atr
-                                    if sl_p < entry < tp_p:
-                                        positions[sym] = (
-                                            "long", entry, sl_p, tp_p, size_usdt, "pbl", idx30
-                                        )
+                                    if sl_p < close < tp_p:
+                                        # Buffer entry — fill at next bar's open
+                                        # (research enters at o_v[i+1] with sl<ep<tp check)
+                                        pending_entries[sym] = {
+                                            "direction": "long",
+                                            "sl": sl_p, "tp": tp_p,
+                                            "model": "pbl", "size": size_usdt,
+                                        }
                                         continue  # one signal per symbol per bar
 
-                # ── SLC signal (1h bar, deduplicated) ───────────────────
+                # ── SLC signal (1h bar) ──────────────────────────────────
+                # No per-1h-bar dedup here — matches reference backtest_v9_system.py
+                # which relies solely on `sym in positions` / `sym in pending_entries`.
                 if mode in ("slc_only", "combined") and sym not in positions:
                     if pdata.ts_1h is not None and pdata.n_1h > 0:
-                        # side="left": returns the 1h bar that OPENED before ts_i8
-                        # (bar at index `idx1h` opened at ts_1h[idx1h]; it closes
-                        #  when ts_1h[idx1h+1] opens).  This avoids look-ahead:
-                        # we only read the bar once its NEXT bar has opened.
-                        idx1h = int(np.searchsorted(pdata.ts_1h, ts_i8, side="left")) - 1
-                        # Bar is closed iff its successor's open time ≤ ts_i8
-                        bar_closed = (
-                            idx1h + 1 >= pdata.n_1h or
-                            pdata.ts_1h[idx1h + 1] <= ts_i8
-                        )
-                        if idx1h >= slc_swing + 2 and bar_closed:
-                            # De-duplicate: evaluate only once per 1h bar per symbol
-                            if slc_last_1h.get(sym) != idx1h:
-                                slc_last_1h[sym] = idx1h
-                                if pdata.regime_1h[idx1h] == 2:  # BEAR_TREND
-                                    adx = pdata.adx_1h[idx1h]
-                                    atr = pdata.atr_1h[idx1h]
-                                    if not np.isnan(adx) and not np.isnan(atr) and atr > 0:
-                                        if adx >= slc_adx_min:
-                                            close1h = pdata.close_1h[idx1h]
-                                            prev_cl = pdata.close_1h[idx1h - slc_swing: idx1h]
-                                            prev_min = float(np.min(prev_cl))
-                                            if close1h < prev_min:
-                                                sl_p = close1h + slc_sl * atr
-                                                tp_p = close1h - slc_tp * atr
-                                                if sl_p > close1h > tp_p:
-                                                    positions[sym] = (
-                                                        "short", close1h, sl_p, tp_p, size_usdt, "slc", idx1h
-                                                    )
+                        # side="right": matches research searchsorted(ts, side="right") - 1
+                        # This evaluates the 1h bar that just opened at ts_i8 (look-ahead
+                        # on 1h close), which is the exact behaviour that produced PF=1.5455
+                        # in the reference backtest_v9_system.py.
+                        idx1h = int(np.searchsorted(pdata.ts_1h, ts_i8, side="right")) - 1
+                        if idx1h >= slc_swing + 2:
+                            if pdata.regime_1h[idx1h] == 2:  # BEAR_TREND
+                                adx = pdata.adx_1h[idx1h]
+                                atr = pdata.atr_1h[idx1h]
+                                if not np.isnan(adx) and not np.isnan(atr) and atr > 0:
+                                    if adx >= slc_adx_min:
+                                        close1h = pdata.close_1h[idx1h]
+                                        prev_cl = pdata.close_1h[idx1h - slc_swing: idx1h]
+                                        prev_min = float(np.min(prev_cl))
+                                        if close1h < prev_min:
+                                            sl_p = close1h + slc_sl * atr
+                                            tp_p = close1h - slc_tp * atr
+                                            if sl_p > close1h > tp_p:
+                                                # Buffer entry — fill at next 30m bar open
+                                                pending_entries[sym] = {
+                                                    "direction": "short",
+                                                    "sl": sl_p, "tp": tp_p,
+                                                    "model": "slc", "size": size_usdt,
+                                                }
 
         # ── Force-close at end ──────────────────────────────────────────
+        # pending_entries that never filled (no bar after signal) are discarded
+        pending_entries.clear()
+
         if len(self._ts_master) > 0:
             last_ts_i8 = self._ts_master[-1]
             for sym, pos in positions.items():

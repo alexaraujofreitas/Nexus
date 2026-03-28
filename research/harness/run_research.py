@@ -498,13 +498,25 @@ def run_sweep(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def stage_baseline(args):
-    """Stage A: reproduce the published baselines."""
+    """Stage A: reproduce the published baselines.
+
+    NOTE: uses FULL 4-year range (2022-03-22 → 2026-03-21) to match the
+    reference backtest_v9_system.py which produced:
+        PBL PF≈0.8995 | SLC PF≈1.5455 | Combined PF≈1.2682 | n≈1,745
+
+    The IS period for optimization sweeps (IS_START → IS_END, 3 years) is
+    intentionally shorter to keep 2025-03-22 → 2026-03-21 as a held-out
+    OOS/holdout period.  The baseline stage uses the full range ONLY for
+    reproduction validation.
+    """
+    BASELINE_START = "2022-03-22"
+    BASELINE_END   = "2026-03-21"   # full 4-year range — matches research
+
     print("\n" + "═"*72)
     print(" STAGE A — BASELINE REPRODUCTION")
-    print(" Expected: PBL PF≈0.8995 | SLC PF≈1.5455 | Combined PF≈1.2682")
+    print(f" Range: {BASELINE_START} → {BASELINE_END} (4 years, matches research)")
+    print(" Expected: PBL PF≈0.8995 | SLC PF≈1.5455 | Combined PF≈1.2682 | n≈1,745")
     print("═"*72)
-
-    out = RESULTS_DIR / "baseline_reproduction.csv"
 
     for label, mode, cost in [
         ("PBL standalone (zero fees)",       "pbl_only",  0.0),
@@ -513,7 +525,7 @@ def stage_baseline(args):
         ("Combined 0.04%/side",              "combined",  0.0004),
     ]:
         print(f"\n  Running: {label}")
-        args_list = [(0, BASELINE_PBL, mode, IS_START, IS_END, cost)]
+        args_list = [(0, BASELINE_PBL, mode, BASELINE_START, BASELINE_END, cost)]
         ctx = mp.get_context("spawn")
         with ctx.Pool(1) as pool:
             results = list(pool.imap_unordered(worker_run, args_list))
