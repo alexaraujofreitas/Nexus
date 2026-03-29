@@ -61,6 +61,10 @@ REGIME_AFFINITY: dict[str, dict[str, float]] = {
     "sentiment":          {"bull_trend": 0.9, "bear_trend": 0.7, "ranging": 0.4, "volatility_expansion": 0.5, "volatility_compression": 0.3, "uncertain": 0.4, "crisis": 0.2, "liquidation_cascade": 0.1, "squeeze": 0.4, "recovery": 0.8, "accumulation": 0.7, "distribution": 0.3},
     "rl_ensemble":        {"bull_trend": 0.8, "bear_trend": 0.8, "ranging": 0.7, "volatility_expansion": 0.6, "volatility_compression": 0.6, "uncertain": 0.5, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.5, "recovery": 0.7, "accumulation": 0.7, "distribution": 0.6},
     "orchestrator":       {"bull_trend": 0.8, "bear_trend": 0.8, "ranging": 0.7, "volatility_expansion": 0.7, "volatility_compression": 0.6, "uncertain": 0.5, "crisis": 0.1, "liquidation_cascade": 0.1, "squeeze": 0.6, "recovery": 0.7, "accumulation": 0.7, "distribution": 0.7},
+    # v1.3 models — fired only when research regime matches; affinities reflect their selectivity.
+    # crisis/liquidation_cascade = 0.0 (hard block, same as all directional models).
+    "pullback_long":           {"bull_trend": 1.0, "bear_trend": 0.0, "ranging": 0.0, "volatility_expansion": 0.1, "volatility_compression": 0.05, "uncertain": 0.1, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.1, "recovery": 0.5, "accumulation": 0.3, "distribution": 0.05},
+    "swing_low_continuation":  {"bull_trend": 0.0, "bear_trend": 1.0, "ranging": 0.1, "volatility_expansion": 0.2, "volatility_compression": 0.05, "uncertain": 0.1, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.2, "recovery": 0.2, "accumulation": 0.05, "distribution": 0.5},
 }
 
 def _get_regime_affinity(model_name: str) -> dict[str, float]:
@@ -83,16 +87,21 @@ def get_all_regime_affinities() -> dict[str, dict[str, float]]:
 # Agent-derived models (funding_rate, order_book) have lower base weights
 # because they fire as confirming evidence, not primary signals.
 MODEL_WEIGHTS: dict[str, float] = {
-    "trend":              0.35,
-    "mean_reversion":     0.25,
-    "momentum_breakout":  0.25,
-    "vwap_reversion":     0.28,   # Phase 1c/1d — VWAP mean reversion
-    "liquidity_sweep":    0.15,
-    "funding_rate":       0.20,   # Sprint 1 — contrarian funding signal
-    "order_book":         0.18,   # Sprint 2 — microstructure imbalance
-    "sentiment":          0.12,   # Sprint 4 — FinBERT / VADER news NLP
-    "rl_ensemble":        0.0,    # DISABLED — untrained agents; re-enable after 50+ trades with ≥45% WR
-    "orchestrator":       0.22,   # A-1 — OrchestratorEngine meta-signal vote
+    "trend":                   0.35,
+    "mean_reversion":          0.25,
+    "momentum_breakout":       0.25,
+    "vwap_reversion":          0.28,   # Phase 1c/1d — VWAP mean reversion
+    "liquidity_sweep":         0.15,
+    "funding_rate":            0.20,   # Sprint 1 — contrarian funding signal
+    "order_book":              0.18,   # Sprint 2 — microstructure imbalance
+    "sentiment":               0.12,   # Sprint 4 — FinBERT / VADER news NLP
+    "rl_ensemble":             0.0,    # DISABLED — untrained agents; re-enable after 50+ trades with ≥45% WR
+    "orchestrator":            0.22,   # A-1 — OrchestratorEngine meta-signal vote
+    # v1.3 — research-regime models (PBL fires in bull_trend, SLC in bear_trend)
+    # Previously absent from this dict; added Session 41 so the scorer can
+    # arbitrate them against Trend/Momentum in full_system and custom modes.
+    "pullback_long":           0.25,   # v1.3 PBL: 4-yr combined PF=1.27 (with fees)
+    "swing_low_continuation":  0.30,   # v1.3 SLC: stronger partner — PF=1.55 (zero fees)
 }
 
 # Minimum confluence score to generate a candidate
@@ -259,7 +268,28 @@ class ConfluenceScorer:
         signals: list[ModelSignal],
         symbol: str,
         regime_probs: Optional[dict] = None,
+        technical_only: bool = False,
+        capital_usdt_override: Optional[float] = None,
     ) -> Optional[OrderCandidate]:
+        """
+        Score a list of signals for one symbol and return an OrderCandidate.
+
+        Parameters
+        ----------
+        technical_only : bool
+            When True, run the deterministic technical scoring path only.
+            Excluded in this mode (not historically available):
+              - OrchestratorEngine veto / threshold adjustment / signal injection
+              - AdaptiveWeightEngine (L1+L2) and TradeOutcomeTracker (combined_adj=1.0)
+              - OI and Liquidation score modifiers
+              - paper_executor capital (use capital_usdt_override instead)
+            Included: model weights, regime affinity, direction dominance,
+            correlation dampening, dynamic threshold.
+            Use this mode for ALL canonical backtesting runs.
+        capital_usdt_override : float | None
+            Backtest equity to use for position sizing when technical_only=True.
+            Ignored when technical_only=False (paper_executor is queried instead).
+        """
         """
         Score a list of signals for one symbol and return an
         OrderCandidate if the confluence threshold is met.
@@ -291,66 +321,69 @@ class ConfluenceScorer:
             "failed_at":          None,
         }
 
-        # ── Orchestrator macro veto check ─────────────────────
-        # If macro conditions are hostile, block new trades entirely
+        # ── Threshold initialisation ───────────────────────────────────────
         effective_threshold = float(_s.get('idss.min_confluence_score', self._threshold))
-        try:
-            if self._orchestrator is None:
-                from core.orchestrator.orchestrator_engine import get_orchestrator
-                self._orchestrator = get_orchestrator()
-            if self._orchestrator.is_veto_active():
-                logger.info(
-                    "ConfluenceScorer: ORCHESTRATOR VETO active — suppressing %s", symbol
-                )
-                return None
-            threshold_adj = self._orchestrator.get_threshold_adjustment()
-            effective_threshold = min(self._threshold + threshold_adj, 0.85)
-        except Exception as exc:
-            logger.debug("ConfluenceScorer: orchestrator unavailable — %s", exc)
 
-        # Per-asset threshold from MultiAssetConfig
-        try:
-            from core.strategy.multi_asset_config import multi_asset_config
-            asset_threshold = multi_asset_config.get_min_confluence_score(symbol)
-            effective_threshold = max(effective_threshold, asset_threshold)
-        except Exception:
-            pass
+        if not technical_only:
+            # ── Orchestrator macro veto check ──────────────────────────────
+            # Excluded in technical_only: depends on live agent state.
+            try:
+                if self._orchestrator is None:
+                    from core.orchestrator.orchestrator_engine import get_orchestrator
+                    self._orchestrator = get_orchestrator()
+                if self._orchestrator.is_veto_active():
+                    logger.info(
+                        "ConfluenceScorer: ORCHESTRATOR VETO active — suppressing %s", symbol
+                    )
+                    return None
+                threshold_adj = self._orchestrator.get_threshold_adjustment()
+                effective_threshold = min(self._threshold + threshold_adj, 0.85)
+            except Exception as exc:
+                logger.debug("ConfluenceScorer: orchestrator unavailable — %s", exc)
 
-        # ── Inject OrchestratorEngine as weighted vote (A-1 fix) ───
-        try:
-            if self._orchestrator is None:
-                from core.orchestrator.orchestrator_engine import get_orchestrator
-                self._orchestrator = get_orchestrator()
-            orch_sig = self._orchestrator.get_signal()
-            orch_meta = orch_sig.meta_signal
-            orch_conf = orch_sig.meta_confidence
-            orch_direction = orch_sig.direction
-            if abs(orch_meta) > 0.10 and orch_conf >= 0.20:
-                # Compute average entry price from existing signals
-                existing_entries = [s.entry_price for s in signals if s.entry_price and s.entry_price > 0]
-                avg_entry = sum(existing_entries) / len(existing_entries) if existing_entries else 0.0
-                orch_direction_str = "long" if orch_meta > 0.10 else "short"
-                from core.meta_decision.order_candidate import ModelSignal
-                orch_model_signal = ModelSignal(
-                    symbol      = symbol,
-                    model_name  = "orchestrator",
-                    direction   = orch_direction_str,
-                    strength    = min(1.0, abs(orch_meta) * orch_conf * 1.5),
-                    entry_price = avg_entry,
-                    stop_loss   = 0.0,
-                    take_profit = 0.0,
-                    atr_value   = 0.0,
-                    timeframe   = signals[0].timeframe if signals else "",
-                    regime      = orch_direction,
-                    rationale   = (f"OrchestratorEngine meta-signal: {orch_direction_str} "
-                                  f"| meta={orch_meta:+.3f} | conf={orch_conf:.2f} "
-                                  f"| agents={orch_sig.effective_agent_count}"),
-                )
-                signals = list(signals) + [orch_model_signal]
-                logger.debug("ConfluenceScorer: injected orchestrator vote %s (strength=%.2f)",
-                             orch_direction_str, orch_model_signal.strength)
-        except Exception as exc:
-            logger.debug("ConfluenceScorer: orchestrator vote injection failed: %s", exc)
+            # Per-asset threshold from MultiAssetConfig
+            try:
+                from core.strategy.multi_asset_config import multi_asset_config
+                asset_threshold = multi_asset_config.get_min_confluence_score(symbol)
+                effective_threshold = max(effective_threshold, asset_threshold)
+            except Exception:
+                pass
+
+            # ── Inject OrchestratorEngine as weighted vote (A-1 fix) ───────
+            # Excluded in technical_only: OrchestratorEngine aggregates live agents.
+            try:
+                if self._orchestrator is None:
+                    from core.orchestrator.orchestrator_engine import get_orchestrator
+                    self._orchestrator = get_orchestrator()
+                orch_sig = self._orchestrator.get_signal()
+                orch_meta = orch_sig.meta_signal
+                orch_conf = orch_sig.meta_confidence
+                orch_direction = orch_sig.direction
+                if abs(orch_meta) > 0.10 and orch_conf >= 0.20:
+                    existing_entries = [s.entry_price for s in signals if s.entry_price and s.entry_price > 0]
+                    avg_entry = sum(existing_entries) / len(existing_entries) if existing_entries else 0.0
+                    orch_direction_str = "long" if orch_meta > 0.10 else "short"
+                    from core.meta_decision.order_candidate import ModelSignal
+                    orch_model_signal = ModelSignal(
+                        symbol      = symbol,
+                        model_name  = "orchestrator",
+                        direction   = orch_direction_str,
+                        strength    = min(1.0, abs(orch_meta) * orch_conf * 1.5),
+                        entry_price = avg_entry,
+                        stop_loss   = 0.0,
+                        take_profit = 0.0,
+                        atr_value   = 0.0,
+                        timeframe   = signals[0].timeframe if signals else "",
+                        regime      = orch_direction,
+                        rationale   = (f"OrchestratorEngine meta-signal: {orch_direction_str} "
+                                      f"| meta={orch_meta:+.3f} | conf={orch_conf:.2f} "
+                                      f"| agents={orch_sig.effective_agent_count}"),
+                    )
+                    signals = list(signals) + [orch_model_signal]
+                    logger.debug("ConfluenceScorer: injected orchestrator vote %s (strength=%.2f)",
+                                 orch_direction_str, orch_model_signal.strength)
+            except Exception as exc:
+                logger.debug("ConfluenceScorer: orchestrator vote injection failed: %s", exc)
 
         # ── Weighted direction vote ───────────────────────────────────────
         # Instead of counting signals (count-based), we sum the adaptive weights
@@ -377,14 +410,20 @@ class ConfluenceScorer:
             _adaptive_engine = None
 
         def _get_adaptive_weight(model_name: str, base_weight: float) -> float:
-            """Compute adaptive weight: base × regime_affinity × (L1 × L2) multiplier."""
+            """Compute adaptive weight: base × regime_affinity × (L1 × L2) multiplier.
+
+            When technical_only=True, combined_adj is fixed at 1.0 — no adaptive
+            learning (L1/L2) applied.  Regime affinity still runs (purely static).
+            """
             if not regime_probs:
                 return base_weight
             affinity = _get_regime_affinity(model_name)
             activation = sum(affinity.get(r, 0.3) * p for r, p in regime_probs.items())
             activation = max(0.0, min(1.0, activation))
             # Combined L1 (global WR) + L2 (regime×model, asset×model)
-            if _adaptive_engine is not None:
+            if technical_only:
+                combined_adj = 1.0          # deterministic — no live trade-outcome data
+            elif _adaptive_engine is not None:
                 combined_adj = _adaptive_engine.get_multiplier(
                     model=model_name,
                     regime=_dominant_regime,
@@ -536,31 +575,33 @@ class ConfluenceScorer:
         # Independent ablation: set oi_signal.oi_modifier_enabled / liq_modifier_enabled
         # to false in config to disable each component individually.
         # Per-fire INFO logs emitted inside get_oi_modifier / get_liquidation_modifier.
+        # Excluded in technical_only mode: live Coinglass data not historically available.
         _pre_modifier_score = weighted_score
-        try:
-            if _s.get("oi_signal.enabled", True):
-                from core.signals.oi_signal import get_oi_modifier, get_liquidation_modifier
-                _oi_mod, _oi_reason = get_oi_modifier(symbol=symbol, direction=side)
-                _liq_mod, _liq_reason = get_liquidation_modifier(symbol=symbol, direction=side)
-                _total_mod = _oi_mod + _liq_mod
-                if abs(_total_mod) > 0.001:
-                    _score_before = weighted_score
-                    weighted_score = max(0.0, min(1.0, weighted_score + _total_mod))
-                    logger.info(
-                        "ConfluenceScorer %s: OI/Liq modifier %+.3f "
-                        "(oi=%+.3f '%s' | liq=%+.3f '%s') "
-                        "score %.3f → %.3f",
-                        symbol, _total_mod,
-                        _oi_mod, _oi_reason,
-                        _liq_mod, _liq_reason,
-                        _score_before, weighted_score,
-                    )
-                    # Record in diagnostics for rationale panel
-                    self._last_diagnostics["oi_modifier"] = round(_total_mod, 4)
-                    self._last_diagnostics["oi_reason"] = _oi_reason
-                    self._last_diagnostics["liq_reason"] = _liq_reason
-        except Exception as _oi_exc:
-            logger.debug("ConfluenceScorer: OI modifier error (non-fatal): %s", _oi_exc)
+        if not technical_only:
+            try:
+                if _s.get("oi_signal.enabled", True):
+                    from core.signals.oi_signal import get_oi_modifier, get_liquidation_modifier
+                    _oi_mod, _oi_reason = get_oi_modifier(symbol=symbol, direction=side)
+                    _liq_mod, _liq_reason = get_liquidation_modifier(symbol=symbol, direction=side)
+                    _total_mod = _oi_mod + _liq_mod
+                    if abs(_total_mod) > 0.001:
+                        _score_before = weighted_score
+                        weighted_score = max(0.0, min(1.0, weighted_score + _total_mod))
+                        logger.info(
+                            "ConfluenceScorer %s: OI/Liq modifier %+.3f "
+                            "(oi=%+.3f '%s' | liq=%+.3f '%s') "
+                            "score %.3f → %.3f",
+                            symbol, _total_mod,
+                            _oi_mod, _oi_reason,
+                            _liq_mod, _liq_reason,
+                            _score_before, weighted_score,
+                        )
+                        # Record in diagnostics for rationale panel
+                        self._last_diagnostics["oi_modifier"] = round(_total_mod, 4)
+                        self._last_diagnostics["oi_reason"] = _oi_reason
+                        self._last_diagnostics["liq_reason"] = _liq_reason
+            except Exception as _oi_exc:
+                logger.debug("ConfluenceScorer: OI modifier error (non-fatal): %s", _oi_exc)
 
         self._last_diagnostics["effective_threshold"] = round(effective_threshold, 4)
         self._last_diagnostics["below_threshold"] = weighted_score < effective_threshold
@@ -598,12 +639,16 @@ class ConfluenceScorer:
         # Uses exact stop price from primary model for precision.
         # Capital is read from paper_executor if available, else uses base proxy.
         entry_for_sizing = entry_price if entry_price and entry_price > 0 else 1.0
-        try:
-            from core.execution.paper_executor import get_paper_executor
-            _pe = get_paper_executor()
-            _capital = _pe._capital  # current compounding capital
-        except Exception:
-            _capital = float(_s.get("scanner.capital_usdt", 100_000.0))
+        if technical_only and capital_usdt_override is not None:
+            # Backtest path: use injected equity directly — no paper_executor access
+            _capital = float(capital_usdt_override)
+        else:
+            try:
+                from core.execution.paper_executor import get_paper_executor
+                _pe = get_paper_executor()
+                _capital = _pe._capital  # current compounding capital
+            except Exception:
+                _capital = float(_s.get("scanner.capital_usdt", 100_000.0))
 
         risk_pct = float(_s.get("risk_engine.risk_pct_per_trade", 0.5))
 

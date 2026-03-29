@@ -1005,4 +1005,4 @@ class SettingsPage(QWidget):
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save settings:\n{e}")
-            logger.error("Settings save failed: %s", e)
+            logger.error("Settings save failed: %s", e, exc_info=True)

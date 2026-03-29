@@ -1,0 +1,70 @@
+{
+  "saved_at": "2026-03-28T19:48:20",
+  "summary": {
+    "failures": [
+      "n_trades=4296 outside [1705, 1756]",
+      "PF(zero)=1.0143 outside [1.3522, 1.4074]",
+      "PF(fees)=0.9147 outside [1.2503, 1.3013]"
+    ],
+    "passed": false,
+    "r0": {
+      "cagr": 0.0401,
+      "cost_per_side": 0.0,
+      "data_fingerprints": {
+        "BTC/USDT/1h": "ca9bf57c05c5696a",
+        "BTC/USDT/30m": "407654cf353f70d6",
+        "BTC/USDT/4h": "f7088e8f19f1f0a5",
+        "ETH/USDT/1h": "de1242932de4a2aa",
+        "ETH/USDT/30m": "4fd2818df59e2c2a",
+        "ETH/USDT/4h": "bd40fb48d618a3d5",
+        "SOL/USDT/1h": "59ce567baed7fd98",
+        "SOL/USDT/30m": "1e058780b15a3ecb",
+        "SOL/USDT/4h": "f72c472c8eac69d1"
+      },
+      "elapsed_s": 1203.6,
+      "final_equity": 116998.23,
+      "max_drawdown": -0.5698,
+      "mb_n": 1826,
+      "mb_pf": 0.9464,
+      "mb_wr": 0.4299,
+      "mode": "full_system",
+      "n_trades": 4296,
+      "params_applied": {},
+      "pbl_n": 343,
+      "pbl_pf": 0.9151,
+      "pbl_wr": 0.4461,
+      "profit_factor": 1.0143,
+      "rejected_entry_gap": 125,
+      "rejected_heat": 2854,
+      "rejected_max": 0,
+      "signals_generated": 7275,
+      "slc_n": 616,
+      "slc_pf": 1.286,
+      "slc_wr": 0.5828,
+      "strategy_subset": [
+        "pullback_long",
+        "swing_low_continuation",
+        "trend",
+        "momentum_breakout"
+      ],
+      "trend_n": 1511,
+      "trend_pf": 0.9935,
+      "trend_wr": 0.3587,
+      "win_rate": 0.4281,
+      "years": 3.99
+    },
+    "r1": {
+      "cagr": -0.2301,
+      "cost_per_side": 0.0004,
+      "data_fingerprints": {
+        "BTC/USDT/1h": "ca9bf57c05c5696a",
+        "BTC/USDT/30m": "407654cf353f70d6",
+        "BTC/USDT/4h": "f7088e8f19f1f0a5",
+        "ETH/USDT/1h": "de1242932de4a2aa",
+        "ETH/USDT/30m": "4fd2818df59e2c2a",
+        "ETH/USDT/4h": "bd40fb48d618a3d5",
+        "SOL/USDT/1h": "59ce567baed7fd98",
+        "SOL/USDT/30m": "1e058780b15a3ecb",
+        "SOL/USDT/4h": "f72c472c8eac69d1"
+      },
+      "elapsed_s": 1217.1,

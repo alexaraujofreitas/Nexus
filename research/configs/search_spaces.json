@@ -1,0 +1,211 @@
+{
+  "metadata": {
+    "created": "2026-03-28",
+    "branch": "research/pbl-slc-optimization-matrix",
+    "baseline_pbl_pf_zero_fees": 0.8995,
+    "baseline_slc_pf_zero_fees": 1.5455,
+    "baseline_combined_pf_zero_fees": 1.3708,
+    "baseline_combined_pf_with_fees": 1.2682,
+    "baseline_combined_cagr": 47.44,
+    "baseline_combined_maxdd": -20.33,
+    "baseline_combined_trades": 1745
+  },
+
+  "pbl_standalone": {
+    "description": "PBL parameter sweep to improve standalone PF from 0.8995",
+    "fixed": {
+      "symbols": ["BTC/USDT", "SOL/USDT", "ETH/USDT"],
+      "primary_tf": "30m",
+      "htf_tf": "4h",
+      "initial_capital": 100000.0,
+      "pos_frac": 0.35,
+      "max_heat": 0.80,
+      "cost_per_side": 0.0004
+    },
+    "coarse": {
+      "ema_prox_atr_mult": [0.20, 0.35, 0.50, 0.65, 0.80],
+      "rsi_min": [35.0, 40.0, 45.0, 50.0, 55.0],
+      "sl_atr_mult": [1.50, 2.00, 2.50, 3.00, 3.50],
+      "tp_atr_mult": [2.00, 2.50, 3.00, 3.50, 4.00, 4.50, 5.00],
+      "htf_ema_fast": [10, 20, 50],
+      "htf_ema_slow": [50, 100, 200],
+      "body_ratio_max": [null, 0.30, 0.40, 0.50],
+      "htf_adx_min": [null, 20, 25],
+      "htf_price_above_ema200": [false, true]
+    },
+    "focused": {
+      "note": "Populated after Stage B identifies promising zones",
+      "ema_prox_atr_mult": [],
+      "rsi_min": [],
+      "sl_atr_mult": [],
+      "tp_atr_mult": []
+    },
+    "coarse_estimated_trials": 5400,
+    "coarse_actual_trials": "TBD (will prune invalid RR combinations)"
+  },
+
+  "slc_secondary": {
+    "description": "SLC sweep — limited scope since SLC PF=1.5455 is satisfactory",
+    "fixed": {
+      "symbols": ["BTC/USDT", "SOL/USDT", "ETH/USDT"],
+      "primary_tf": "1h",
+      "initial_capital": 100000.0,
+      "pos_frac": 0.35,
+      "max_heat": 0.80,
+      "cost_per_side": 0.0004
+    },
+    "coarse": {
+      "adx_min": [22.0, 25.0, 28.0, 31.0, 34.0],
+      "swing_bars": [7, 10, 14, 20],
+      "sl_atr_mult": [1.50, 2.00, 2.50, 3.00, 3.50],
+      "tp_atr_mult": [1.50, 2.00, 2.50, 3.00, 3.50]
+    },
+    "acceptance_floor": {
+      "pf_zero_fees": 1.40,
+      "note": "Must not degrade SLC PF below 1.40"
+    }
+  },
+
+  "htf_confirmation_variants": {
+    "description": "Test alternative 4h confirmation filters for PBL",
+    "variants": [
+      {
+        "id": "V0",
+        "label": "Baseline",
+        "htf_ema_fast": 20,
+        "htf_ema_slow": 50,
+        "htf_adx_min": null,
+        "htf_price_above_ema200": false
+      },
+      {
+        "id": "V1",
+        "label": "Fast EMA crossover",
+        "htf_ema_fast": 9,
+        "htf_ema_slow": 21,
+        "htf_adx_min": null,
+        "htf_price_above_ema200": false
+      },
+      {
+        "id": "V2",
+        "label": "EMA20/100",
+        "htf_ema_fast": 20,
+        "htf_ema_slow": 100,
+        "htf_adx_min": null,
+        "htf_price_above_ema200": false
+      },
+      {
+        "id": "V3",
+        "label": "Major trend EMA50/200",
+        "htf_ema_fast": 50,
+        "htf_ema_slow": 200,
+        "htf_adx_min": null,
+        "htf_price_above_ema200": false
+      },
+      {
+        "id": "V4",
+        "label": "V0 + ADX20",
+        "htf_ema_fast": 20,
+        "htf_ema_slow": 50,
+        "htf_adx_min": 20,
+        "htf_price_above_ema200": false
+      },
+      {
+        "id": "V5",
+        "label": "V0 + ADX25",
+        "htf_ema_fast": 20,
+        "htf_ema_slow": 50,
+        "htf_adx_min": 25,
+        "htf_price_above_ema200": false
+      },
+      {
+        "id": "V6",
+        "label": "V0 + price above 4h EMA200",
+        "htf_ema_fast": 20,
+        "htf_ema_slow": 50,
+        "htf_adx_min": null,
+        "htf_price_above_ema200": true
+      },
+      {
+        "id": "V7",
+        "label": "V0 + ADX20 + EMA200",
+        "htf_ema_fast": 20,
+        "htf_ema_slow": 50,
+        "htf_adx_min": 20,
+        "htf_price_above_ema200": true
+      },
+      {
+        "id": "V8",
+        "label": "V1 + ADX20",
+        "htf_ema_fast": 9,
+        "htf_ema_slow": 21,
+        "htf_adx_min": 20,
+        "htf_price_above_ema200": false
+      },
+      {
+        "id": "V9",
+        "label": "Major trend V3 + ADX25",
+        "htf_ema_fast": 50,
+        "htf_ema_slow": 200,
+        "htf_adx_min": 25,
+        "htf_price_above_ema200": false
+      }
+    ]
+  },
+
+  "combined_system": {
+    "description": "Combined PBL+SLC system with best PBL config from Stage C",
+    "fixed": {
+      "symbols": ["BTC/USDT", "SOL/USDT", "ETH/USDT"],
+      "initial_capital": 100000.0,
+      "pos_frac": 0.35,
+      "max_heat": 0.80,
+      "cost_per_side_scenarios": [0.0, 0.0004, 0.0008]
+    }
+  },
+
+  "hype_substudy": {
+    "description": "HYPE/USDT add/replace sub-study (Stage D only if warranted)",
+    "conditions": [
+      "BTC+SOL+ETH+HYPE (add)",
+      "BTC+SOL+HYPE (replace ETH)",
+      "BTC+ETH+HYPE (replace SOL)"
+    ],
+    "note": "Only run if HYPE/USDT data available from 2022-03-22"
+  },
+
+  "walkforward": {
+    "description": "Walk-forward validation windows",
+    "train_months": 12,
+    "oos_months": 3,
+    "windows": [
+      {"train_start": "2022-03-22", "train_end": "2023-03-21", "oos_start": "2023-03-22", "oos_end": "2023-06-21"},
+      {"train_start": "2022-06-22", "train_end": "2023-06-21", "oos_start": "2023-06-22", "oos_end": "2023-09-21"},
+      {"train_start": "2022-09-22", "train_end": "2023-09-21", "oos_start": "2023-09-22", "oos_end": "2023-12-21"},
+      {"train_start": "2022-12-22", "train_end": "2023-12-21", "oos_start": "2023-12-22", "oos_end": "2024-03-21"}
+    ],
+    "wfe_threshold_accept": 0.50,
+    "wfe_threshold_caution": 0.35
+  },
+
+  "holdout": {
+    "description": "Final holdout — NEVER touched during parameter search",
+    "start": "2025-03-22",
+    "end": "2026-03-21",
+    "note": "12-month final holdout for top-5 candidates after walk-forward"
+  },
+
+  "acceptance_criteria": {
+    "pbl_standalone_pf_zero_fees_min": 1.10,
+    "pbl_standalone_pf_zero_fees_target": 1.20,
+    "combined_pf_with_fees_min": 1.18,
+    "combined_pf_with_fees_target": 1.30,
+    "combined_cagr_min": 40.0,
+    "combined_maxdd_max": -25.0,
+    "combined_trades_min": 1200,
+    "wf_oos_pf_min": 1.10,
+    "wf_pf_stability_std_over_mean_max": 0.30,
+    "holdout_pf_min": 1.05,
+    "pbo_max": 0.25,
+    "dsr_min": 0.70
+  }
+}

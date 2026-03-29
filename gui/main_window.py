@@ -33,7 +33,8 @@ NAV_ITEMS = [
     ("chart_workspace",      "Chart Workspace",       "⋈", None),
     ("paper_trading",        "Paper Trading",         "◎", None),
     # ── RESEARCH — pre/post trade analysis ────────────────────
-    ("backtesting",          "Backtesting",           "⊟", "RESEARCH"),
+    ("research_lab",         "Research Lab",          "⚗", "RESEARCH"),
+    ("backtesting",          "Backtesting",           "⊟", None),
     ("news_sentiment",       "News & Sentiment",      "⊠", None),
     # ── ANALYSIS — post-trade review ──────────────────────────
     ("orders_positions",     "Orders & Positions",    "⊕", "ANALYSIS"),
@@ -369,7 +370,9 @@ class MainWindow(QMainWindow):
         from gui.pages.help.help_center_page              import HelpCenterPage
         from gui.pages.notifications.notifications_page   import NotificationsPage
         from gui.pages.demo_monitor.demo_monitor_page     import DemoMonitorPage
+        from gui.pages.research_lab.research_lab_page    import ResearchLabPage
         page_map = {
+            "research_lab":          ResearchLabPage,
             "dashboard":             DashboardPage,
             "demo_monitor":          DemoMonitorPage,
             "market_scanner":        MarketScannerPage,
@@ -610,19 +613,4 @@ class MainWindow(QMainWindow):
             save_dir = Path(out_dir)
         else:
             root = Path(__file__).parent.parent
-            save_dir = root / "artifacts" / "ui" / datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        pixmap = self.grab()
-        path = save_dir / f"{safe_name}.png"
-        saved = pixmap.save(str(path), "PNG")
-        if saved:
-            logger.info("capture_ui: saved → %s", path)
-        else:
-            logger.warning("capture_ui: grab() returned empty pixmap for '%s'", name)
-        return str(path)
-
-    def closeEvent(self, event):
-        logger.info("Application closing...")
-        bus.publish(Topics.SYSTEM_ALERT, {"type": "shutdown"}, source="main_window")
-        super().closeEvent(event)
+            save_dir = root / "artifacts" / "ui" / datet

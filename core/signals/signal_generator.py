@@ -12,6 +12,7 @@ import pandas as pd
 
 from core.signals.sub_models.trend_model                   import TrendModel
 from core.signals.sub_models.momentum_breakout_model       import MomentumBreakoutModel
+from core.signals.sub_models.donchian_breakout_model       import DonchianBreakoutModel
 from core.signals.sub_models.funding_rate_model            import FundingRateModel
 from core.signals.sub_models.sentiment_model               import SentimentModel
 from core.signals.sub_models.pullback_long_model           import PullbackLongModel
@@ -50,9 +51,13 @@ except Exception:
 # v1.3 (Phase 6): PullbackLongModel + SwingLowContinuationModel added.
 #   Gated behind mr_pbl_slc.enabled in config.yaml (default: false).
 #   Activated only after Phase 1 50-trade milestone — see integration_plan.md.
+# Session 48: TrendModel disabled (net-negative at fees — PF 0.9592).
+#   DonchianBreakoutModel added as replacement research candidate.
+#   Gated by disabled_models config — not active in production until backtest validated.
 _ALL_MODELS = [
     TrendModel(),
     MomentumBreakoutModel(),
+    DonchianBreakoutModel(),        # Session 48 — replacement research candidate for Trend
     FundingRateModel(),             # Sprint 1 — contrarian funding rate signal
     SentimentModel(),               # Sprint 4 — FinBERT / VADER news sentiment
     PullbackLongModel(),            # v1.3 — 30m bull_trend pullback (Phase 5 validated)
@@ -76,6 +81,15 @@ class SignalGenerator:
             except Exception as exc:
                 logger.debug("Failed to initialize RL signal model: %s", exc)
                 self._rl_model = None
+        # Phase 3.3 Opt: cache inspect.signature() per model at init time.
+        # inspect.signature(model.evaluate) was called 506,775 times inside
+        # generate() costing ~10s per simulation run.  Caching at init reduces
+        # this to a single dict lookup per model per generate() call (~0ns).
+        import inspect as _inspect
+        self._model_has_context: dict = {
+            model: "context" in _inspect.signature(model.evaluate).parameters
+            for model in self._models
+        }
         # Regime warm-up guard
         self._warmup_bars_remaining: int = 100
         self._warmup_complete: bool = False
@@ -136,12 +150,21 @@ class SignalGenerator:
 
         signals: list[ModelSignal] = []
 
+        # ── Phase 3.4 Opt: read all settings ONCE before the model loop ──────
+        # settings.get() was called 4.9M times per simulation run (~4.4s) because
+        # it was called inside the for-model loop for disabled_models,
+        # adaptive_activation.*, and mr_pbl_slc.enabled on EVERY iteration.
+        # Reading them once outside the loop saves ~4.4s per simulation.
+        from config.settings import settings as _sc
+        _disabled       = set(_sc.get("disabled_models", []))
+        _adaptive_en    = bool(_sc.get("adaptive_activation.enabled", True))
+        _min_activation = float(_sc.get("adaptive_activation.min_activation_weight", 0.10))
+        _mr_enabled     = bool(_sc.get("mr_pbl_slc.enabled", False))
+
         # ── Disabled models gate ─────────────────────────────────
         # Models listed in settings.disabled_models are skipped entirely.
         # This allows structural corrections (e.g. disabling underperforming
         # models) without code changes — just edit config.yaml.
-        from config.settings import settings as _sc
-        _disabled = set(_sc.get("disabled_models", []))
 
         for model in self._models:
             if model.name in _disabled:
@@ -181,12 +204,12 @@ class SignalGenerator:
 
             # Use probabilistic activation when regime_probs available
             # (applies within the set already validated by ACTIVE_REGIMES above)
-            min_activation = float(_sc.get("adaptive_activation.min_activation_weight", 0.10))
-            if regime_probs and _sc.get("adaptive_activation.enabled", True):
+            # Phase 3.4 Opt: use pre-read _adaptive_en / _min_activation (no settings.get() here)
+            if regime_probs and _adaptive_en:
                 activation_wt = model.get_activation_weight(regime_probs)
-                if activation_wt < min_activation:
+                if activation_wt < _min_activation:
                     logger.debug("SignalGenerator: skipping %s (activation_weight=%.3f < %.3f)",
-                                 model.name, activation_wt, min_activation)
+                                 model.name, activation_wt, _min_activation)
                     continue
             else:
                 if not model.is_active_in_regime(regime):
@@ -198,24 +221,18 @@ class SignalGenerator:
             # This prevents firing until Phase 1 milestone is reached and the
             # operator manually sets enabled=true in config.yaml.
             _pbl_slc_names = {"pullback_long", "swing_low_continuation"}
-            if model.name in _pbl_slc_names:
-                try:
-                    _mr_enabled = bool(_sc.get("mr_pbl_slc.enabled", False))
-                except Exception:
-                    _mr_enabled = False
-                if not _mr_enabled:
-                    logger.debug(
-                        "SignalGenerator: %s gated (mr_pbl_slc.enabled=false)", model.name
-                    )
-                    continue
+            # Phase 3.4 Opt: use pre-read _mr_enabled (no settings.get() per model)
+            if model.name in _pbl_slc_names and not _mr_enabled:
+                logger.debug(
+                    "SignalGenerator: %s gated (mr_pbl_slc.enabled=false)", model.name
+                )
+                continue
 
             try:
                 # Pass context to models that accept it (PBL and SLC).
-                # Existing models (TrendModel etc.) use positional-only args
-                # and won't receive context — safe for backward compatibility.
-                import inspect as _inspect
-                _sig_params = _inspect.signature(model.evaluate).parameters
-                if "context" in _sig_params:
+                # Phase 3.3 Opt: use cached dict lookup instead of per-call
+                # inspect.signature() which was called 506,775×/sim (~10s).
+                if self._model_has_context.get(model, False):
                     sig = model.evaluate(symbol, df, regime, timeframe, context=context)
                 else:
                     sig = model.evaluate(symbol, df, regime, timeframe)

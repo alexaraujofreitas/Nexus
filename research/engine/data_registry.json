@@ -1,0 +1,312 @@
+{
+  "BTC/USDT": {
+    "5m": {
+      "symbol": "BTC/USDT",
+      "timeframe": "5m",
+      "path": "BTC_USDT_5m.parquet",
+      "status": "ok",
+      "rows": 420465,
+      "size_bytes": 15518179,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "d435cfd0c4db021e",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "15m": {
+      "symbol": "BTC/USDT",
+      "timeframe": "15m",
+      "path": "BTC_USDT_15m.parquet",
+      "status": "ok",
+      "rows": 140155,
+      "size_bytes": 6271053,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "49c03b787accd9ed",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "30m": {
+      "symbol": "BTC/USDT",
+      "timeframe": "30m",
+      "path": "BTC_USDT_30m.parquet",
+      "status": "ok",
+      "rows": 70079,
+      "size_bytes": 3180019,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "407654cf353f70d6",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "1h": {
+      "symbol": "BTC/USDT",
+      "timeframe": "1h",
+      "path": "BTC_USDT_1h.parquet",
+      "status": "ok",
+      "rows": 35039,
+      "size_bytes": 1599993,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "ca9bf57c05c5696a",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "4h": {
+      "symbol": "BTC/USDT",
+      "timeframe": "4h",
+      "path": "BTC_USDT_4h.parquet",
+      "status": "ok",
+      "rows": 8760,
+      "size_bytes": 399128,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "f7088e8f19f1f0a5",
+      "updated_at": "2026-03-28T22:38:42"
+    }
+  },
+  "SOL/USDT": {
+    "5m": {
+      "symbol": "SOL/USDT",
+      "timeframe": "5m",
+      "path": "SOL_USDT_5m.parquet",
+      "status": "ok",
+      "rows": 420467,
+      "size_bytes": 9021465,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "1034bd9477f32f98",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "15m": {
+      "symbol": "SOL/USDT",
+      "timeframe": "15m",
+      "path": "SOL_USDT_15m.parquet",
+      "status": "ok",
+      "rows": 140155,
+      "size_bytes": 3619788,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "d9277ee77d5e7faa",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "30m": {
+      "symbol": "SOL/USDT",
+      "timeframe": "30m",
+      "path": "SOL_USDT_30m.parquet",
+      "status": "ok",
+      "rows": 70079,
+      "size_bytes": 1985105,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "1e058780b15a3ecb",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "1h": {
+      "symbol": "SOL/USDT",
+      "timeframe": "1h",
+      "path": "SOL_USDT_1h.parquet",
+      "status": "ok",
+      "rows": 35039,
+      "size_bytes": 1081313,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "59ce567baed7fd98",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "4h": {
+      "symbol": "SOL/USDT",
+      "timeframe": "4h",
+      "path": "SOL_USDT_4h.parquet",
+      "status": "ok",
+      "rows": 8760,
+      "size_bytes": 314810,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "f72c472c8eac69d1",
+      "updated_at": "2026-03-28T22:38:42"
+    }
+  },
+  "ETH/USDT": {
+    "5m": {
+      "symbol": "ETH/USDT",
+      "timeframe": "5m",
+      "path": "ETH_USDT_5m.parquet",
+      "status": "ok",
+      "rows": 420466,
+      "size_bytes": 13229132,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "b80ae7e8f3201d0f",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "15m": {
+      "symbol": "ETH/USDT",
+      "timeframe": "15m",
+      "path": "ETH_USDT_15m.parquet",
+      "status": "ok",
+      "rows": 140155,
+      "size_bytes": 5345448,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "5f30a962c66b9f50",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "30m": {
+      "symbol": "ETH/USDT",
+      "timeframe": "30m",
+      "path": "ETH_USDT_30m.parquet",
+      "status": "ok",
+      "rows": 70079,
+      "size_bytes": 2812285,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "4fd2818df59e2c2a",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "1h": {
+      "symbol": "ETH/USDT",
+      "timeframe": "1h",
+      "path": "ETH_USDT_1h.parquet",
+      "status": "ok",
+      "rows": 35039,
+      "size_bytes": 1446752,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "de1242932de4a2aa",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "4h": {
+      "symbol": "ETH/USDT",
+      "timeframe": "4h",
+      "path": "ETH_USDT_4h.parquet",
+      "status": "ok",
+      "rows": 8760,
+      "size_bytes": 375226,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "bd40fb48d618a3d5",
+      "updated_at": "2026-03-28T22:38:42"
+    }
+  },
+  "XRP/USDT": {
+    "5m": {
+      "symbol": "XRP/USDT",
+      "timeframe": "5m",
+      "path": "XRP_USDT_5m.parquet",
+      "status": "ok",
+      "rows": 420468,
+      "size_bytes": 8748833,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "6a2bd9b4b3a27659",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "15m": {
+      "symbol": "XRP/USDT",
+      "timeframe": "15m",
+      "path": "XRP_USDT_15m.parquet",
+      "status": "ok",
+      "rows": 140155,
+      "size_bytes": 3616053,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "b528f1c2784178c9",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "30m": {
+      "symbol": "XRP/USDT",
+      "timeframe": "30m",
+      "path": "XRP_USDT_30m.parquet",
+      "status": "ok",
+      "rows": 70080,
+      "size_bytes": 1963073,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "b36eb0efeb6da26e",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "1h": {
+      "symbol": "XRP/USDT",
+      "timeframe": "1h",
+      "path": "XRP_USDT_1h.parquet",
+      "status": "ok",
+      "rows": 35039,
+      "size_bytes": 1088045,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "c0fb2ad054309b07",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "4h": {
+      "symbol": "XRP/USDT",
+      "timeframe": "4h",
+      "path": "XRP_USDT_4h.parquet",
+      "status": "ok",
+      "rows": 8760,
+      "size_bytes": 319972,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "7657c24efce22f61",
+      "updated_at": "2026-03-28T22:38:42"
+    }
+  },
+  "BNB/USDT": {
+    "5m": {
+      "symbol": "BNB/USDT",
+      "timeframe": "5m",
+      "path": "BNB_USDT_5m.parquet",
+      "status": "ok",
+      "rows": 420469,
+      "size_bytes": 8936224,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "f2945573d1b62b04",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "15m": {
+      "symbol": "BNB/USDT",
+      "timeframe": "15m",
+      "path": "BNB_USDT_15m.parquet",
+      "status": "ok",
+      "rows": 140156,
+      "size_bytes": 3644325,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "d7930584274f47e0",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "30m": {
+      "symbol": "BNB/USDT",
+      "timeframe": "30m",
+      "path": "BNB_USDT_30m.parquet",
+      "status": "ok",
+      "rows": 70080,
+      "size_bytes": 1935573,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "b771390737904447",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "1h": {
+      "symbol": "BNB/USDT",
+      "timeframe": "1h",
+      "path": "BNB_USDT_1h.parquet",
+      "status": "ok",
+      "rows": 35039,
+      "size_bytes": 1013024,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "1471d3dd0027d01b",
+      "updated_at": "2026-03-28T22:38:42"
+    },
+    "4h": {
+      "symbol": "BNB/USDT",
+      "timeframe": "4h",
+      "path": "BNB_USDT_4h.parquet",
+      "status": "ok",
+      "rows": 8760,
+      "size_bytes": 285140,
+      "first_date": "2022-03-22",
+      "last_date": "2026-03-21",
+      "hash": "d33a120613a87bfb",
+      "updated_at": "2026-03-28T22:38:42"
+    }
+  }
+}

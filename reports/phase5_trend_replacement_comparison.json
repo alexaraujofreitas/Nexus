@@ -1,0 +1,60 @@
+{
+  "scenarios": {
+    "A: PBL+SLC only (baseline)": {
+      "zero_fee": {
+        "profit_factor": 1.3798,
+        "cagr_pct": 67.54,
+        "win_rate_pct": 56.38,
+        "max_drawdown_pct": 16.63,
+        "n_trades": 1731,
+        "final_equity": 785657.26
+      },
+      "0.04pct_side": {
+        "profit_factor": 1.2758,
+        "cagr_pct": 48.54,
+        "win_rate_pct": 56.38,
+        "max_drawdown_pct": 20.6,
+        "n_trades": 1731,
+        "final_equity": 485827.24
+      }
+    },
+    "B: PBL+SLC+MomentumBreakout": {
+      "zero_fee": {
+        "profit_factor": 1.2713,
+        "cagr_pct": 74.02,
+        "win_rate_pct": 47.18,
+        "max_drawdown_pct": 18.27,
+        "n_trades": 2552,
+        "final_equity": 914184.35
+      },
+      "0.04pct_side": {
+        "profit_factor": 1.1729,
+        "cagr_pct": 45.67,
+        "win_rate_pct": 47.06,
+        "max_drawdown_pct": 20.47,
+        "n_trades": 2552,
+        "final_equity": 449357.98
+      }
+    },
+    "C: PBL+SLC+DonchianBreakout": {
+      "zero_fee": {
+        "profit_factor": 1.1053,
+        "cagr_pct": 42.07,
+        "win_rate_pct": 47.29,
+        "max_drawdown_pct": 28.71,
+        "n_trades": 4642,
+        "final_equity": 406612.89
+      },
+      "0.04pct_side": {
+        "profit_factor": 1.0072,
+        "cagr_pct": 2.66,
+        "win_rate_pct": 47.29,
+        "max_drawdown_pct": 44.0,
+        "n_trades": 4642,
+        "final_equity": 111053.42
+      }
+    }
+  },
+  "date_start": "2022-03-22",
+  "date_end": "2026-03-21"
+}
