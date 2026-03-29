@@ -1118,15 +1118,18 @@ class AssetScanner(QObject):
             QTimer.singleShot(ltf_delay_s * 1000, self._fire_aligned_ltf_scan)
 
     def _log_production_config(self) -> None:
-        """Log the frozen production configuration at startup for auditability."""
+        """Log the frozen production configuration at startup for auditability.
+
+        The banner reflects ACTUAL execution behaviour by reading the
+        execution_mode config block.  When backtest_parity is True the
+        banner shows parity-mode values (pos_frac sizing, static SL/TP,
+        no partial/breakeven).  Otherwise it shows risk-based values.
+        """
         from config.settings import settings as _s
         disabled    = _s.get("disabled_models", [])
         threshold   = _s.get("idss.min_confluence_score", 0.20)
         dyn_on      = _s.get("dynamic_confluence.enabled", False)
         time_f      = _s.get("filters.time_of_day.enabled", False)
-        heat        = _s.get("risk_engine.portfolio_heat_max_pct", 0.04) * 100
-        sz_mode     = _s.get("risk_engine.sizing_mode", "risk_based")
-        risk_pct    = _s.get("risk_engine.risk_pct_per_trade", 0.75)
         mtf_on      = _s.get("multi_tf.confirmation_required", True)
         ae_on       = _s.get("scanner.auto_execute", True)
         mr_enabled  = _s.get("mr_pbl_slc.enabled", False)
@@ -1134,27 +1137,56 @@ class AssetScanner(QObject):
         lock_ver    = _s.get("demo_mode.parameter_lock_version", "n/a")
         pbl = _s.get("mr_pbl_slc.pullback_long", {}) or {}
         from config.constants import APP_VERSION as _VER
-        _exit_mode   = _s.get("exit.mode", "partial")
-        _partial_pct = _s.get("exit.partial_pct", 0.33)
+
+        # ── Parity-mode detection (must match PaperExecutor._is_parity_mode) ──
+        _parity_on     = bool(_s.get("execution_mode.backtest_parity", False))
+        _ai_filter     = bool(_s.get("execution_mode.ai_filter_only", True))
+        _pos_frac      = float(_s.get("execution_mode.parity_pos_frac", 0.35))
+        _max_heat      = float(_s.get("execution_mode.parity_max_heat", 0.80))
+        _max_positions = int(_s.get("execution_mode.parity_max_positions", 10))
+        _max_per_asset = int(_s.get("execution_mode.parity_max_per_asset", 3))
+
+        # ── Values that change depending on execution mode ──
+        if _parity_on:
+            _exec_mode_str = "BACKTEST_PARITY_WITH_AI"
+            _sizing_str    = "pos_frac (%.0f%% equity)" % (_pos_frac * 100)
+            _exit_str      = "static SL/TP (no partial, no breakeven, no trailing)"
+            _heat_str      = "%.0f%% max heat" % (_max_heat * 100)
+            _ai_str        = "filter-only (block only, never alter)" if _ai_filter else "full confluence"
+        else:
+            _exit_mode   = _s.get("exit.mode", "partial")
+            _partial_pct = _s.get("exit.partial_pct", 0.33)
+            risk_pct     = _s.get("risk_engine.risk_pct_per_trade", 0.75)
+            heat_pct     = _s.get("risk_engine.portfolio_heat_max_pct", 0.04) * 100
+            _exec_mode_str = "STANDARD (risk-based)"
+            _sizing_str    = "risk_based (%.2f%% risk/trade)" % risk_pct
+            _exit_str      = "%s (partial=%.0f%% @ 1R + SL→BE)" % (_exit_mode, _partial_pct * 100)
+            _heat_str      = "%.0f%% max" % heat_pct
+            _ai_str        = "full confluence + orchestrator"
+
         logger.info(
             "═══════════════════════════════════════════════════════════\n"
             "  NEXUS TRADER v%s — PRODUCTION CONFIGURATION (FROZEN)\n"
             "  DEMO MODE       : %s  (lock_version=%s)\n"
+            "  Execution mode  : %s\n"
             "  Active models   : PBL+SLC=%s  FundingRate=✓  Sentiment=✓\n"
             "  Primary TF      : %s  |  HTF gate : 4h\n"
             "  Disabled models : %s\n"
             "  PBL params      : sl=%.1f  tp=%.1f  ema_prox=%.2f  rsi_min=%.0f  wick=%.1f\n"
             "  Confluence      : %.2f (dynamic=%s)\n"
-            "  Exit mode       : %s (partial=%.0f%% @ 1R + SL→BE)\n"
+            "  Exit mode       : %s\n"
+            "  Sizing mode     : %s\n"
+            "  Portfolio heat  : %s\n"
+            "  AI agents       : %s\n"
+            "  Max positions   : %s  |  Max per asset : %s\n"
             "  Time filter     : %s\n"
-            "  Portfolio heat  : %.0f%% max\n"
-            "  Sizing mode     : %s (%.2f%% risk/trade)\n"
             "  MTF confirm     : %s\n"
             "  Auto-execute    : %s\n"
             "  Circuit breaker : 10%% drawdown hard stop\n"
             "═══════════════════════════════════════════════════════════",
             _VER,
             "LOCKED ✓" if demo_locked else "UNLOCKED ⚠️", lock_ver,
+            _exec_mode_str,
             "✓" if mr_enabled else "✗",
             self._timeframe,
             disabled,
@@ -1162,9 +1194,13 @@ class AssetScanner(QObject):
             pbl.get("ema_prox_atr_mult", "?"), pbl.get("rsi_min", "?"),
             pbl.get("wick_strength", "?"),
             threshold, dyn_on,
-            _exit_mode, _partial_pct * 100,
-            time_f, heat,
-            sz_mode, risk_pct, mtf_on, ae_on,
+            _exit_str,
+            _sizing_str,
+            _heat_str,
+            _ai_str,
+            _max_positions if _parity_on else "N/A (risk-based)",
+            _max_per_asset if _parity_on else "N/A",
+            time_f, mtf_on, ae_on,
         )
         # Run full demo mode validation if locked
         if demo_locked:

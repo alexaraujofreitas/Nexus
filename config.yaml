@@ -24,7 +24,7 @@ agents:
   volatility_surface:
     enabled: true
 ai:
-  active_provider: Auto (Anthropic → OpenAI → Gemini)
+  active_provider: "Auto (Anthropic \xE2\u2020\u2019 OpenAI \xE2\u2020\u2019 Gemini)"
   anthropic_api_key: __vault__
   anthropic_model: claude-opus-4-6
   gemini_api_key: __vault__
@@ -92,7 +92,7 @@ demo_mode:
     tp_atr_mult: 4.0
     wick_strength: 1.5
   note: LOCKED 2026-03-29 Session 50. No param changes during demo phase.
-  parameter_lock_version: session50
+  parameter_lock_version: session51
 disabled_models:
 - mean_reversion
 - liquidity_sweep
@@ -121,6 +121,14 @@ execution:
   - TRENDING_DOWN
   - RECOVERY
   base_size_usdt: 500.0
+execution_mode:
+  ai_filter_only: true
+  backtest_parity: true
+  parity_initial_capital: 100000.0
+  parity_max_heat: 0.8
+  parity_max_per_asset: 3
+  parity_max_positions: 10
+  parity_pos_frac: 0.35
 expected_value:
   enabled: true
   ev_threshold: 0.05
@@ -605,14 +613,4 @@ symbol_allocation:
       SOL/USDT: 0.9
       XRP/USDT: 0.7
     neutral:
-      BNB/USDT: 0.8
-      BTC/USDT: 1.0
-      ETH/USDT: 1.2
-      SOL/USDT: 1.3
-      XRP/USDT: 0.8
-  static_weights:
-    BNB/USDT: 0.8
-    BTC/USDT: 1.0
-    ETH/USDT: 1.2
-    SOL/USDT: 1.3
-    XRP/USDT: 0.8
+      BNB/US

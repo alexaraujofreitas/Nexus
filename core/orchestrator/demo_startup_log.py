@@ -101,14 +101,33 @@ def run_demo_startup_validation() -> bool:
             disabled_ok = False
         logger.info("    %s  %s", mark, m)
 
+    # ── Execution mode (Session 51: BACKTEST_PARITY_WITH_AI) ─────────
+    logger.info("")
+    logger.info("  EXECUTION MODE:")
+    _parity_on     = bool(settings.get("execution_mode.backtest_parity", False))
+    _ai_filter     = bool(settings.get("execution_mode.ai_filter_only", True))
+    _pos_frac      = settings.get("execution_mode.parity_pos_frac", 0.35)
+    _max_heat      = settings.get("execution_mode.parity_max_heat", 0.80)
+    _max_positions = settings.get("execution_mode.parity_max_positions", 10)
+    _max_per_asset = settings.get("execution_mode.parity_max_per_asset", 3)
+    if _parity_on:
+        logger.info("    ✓  backtest_parity     = True  (BACKTEST_PARITY_WITH_AI)")
+        logger.info("    ✓  sizing              = pos_frac (%.0f%% equity)", _pos_frac * 100)
+        logger.info("    ✓  exit logic          = static SL/TP only (no partial/BE/trailing)")
+        logger.info("    ✓  max_heat            = %.0f%%", _max_heat * 100)
+        logger.info("    ✓  max_positions       = %s", _max_positions)
+        logger.info("    ✓  max_per_asset       = %s", _max_per_asset)
+        logger.info("    ✓  ai_filter_only      = %s", _ai_filter)
+    else:
+        logger.warning("    ✗  backtest_parity     = False  (STANDARD risk-based mode)")
+        logger.info("    …  risk_pct_per_trade  = %s%%", settings.get("risk_engine.risk_pct_per_trade", "?"))
+        logger.info("    …  exit.mode           = %s", settings.get("exit.mode", "?"))
+
     # ── Global settings ────────────────────────────────────────────────
     logger.info("")
     logger.info("  GLOBAL SETTINGS:")
     logger.info(
         "    timeframe              = %s", settings.get("data.default_timeframe", "?"),
-    )
-    logger.info(
-        "    risk_pct_per_trade     = %s%%", settings.get("risk_engine.risk_pct_per_trade", "?"),
     )
     logger.info(
         "    min_confluence_score   = %s", settings.get("idss.min_confluence_score", "?"),
@@ -124,10 +143,10 @@ def run_demo_startup_validation() -> bool:
     )
 
     # ── Final verdict ──────────────────────────────────────────────────
-    all_ok = locked and all_params_ok and disabled_ok and mr_enabled
+    all_ok = locked and all_params_ok and disabled_ok and mr_enabled and _parity_on
     logger.info("")
     if all_ok:
-        logger.info("  STATUS: ✅  ALL CHECKS PASSED — DEMO TRADING READY")
+        logger.info("  STATUS: ✅  ALL CHECKS PASSED — DEMO TRADING READY (PARITY MODE)")
     else:
         issues = []
         if not locked:
@@ -138,6 +157,8 @@ def run_demo_startup_validation() -> bool:
             issues.append("disabled_models incomplete")
         if not mr_enabled:
             issues.append("mr_pbl_slc.enabled=false")
+        if not _parity_on:
+            issues.append("execution_mode.backtest_parity=false (SHOULD BE true)")
         logger.critical(
             "  STATUS: ❌  DEMO STARTUP FAILED — issues: %s", "; ".join(issues),
         )
