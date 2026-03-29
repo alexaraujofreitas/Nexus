@@ -537,6 +537,16 @@ DEFAULT_CONFIG = {
         "enabled": True,               # apply ENTRY_BUFFER_ATR offsets
     },
     # LTF (Lower-Timeframe) confirmation for staged candidates.
+    # PBL + SLC model parameter overrides (Session 50 — PBL optimization)
+    "mr_pbl_slc": {
+        "pullback_long": {
+            "ema_prox_atr_mult":  0.5,    # |close - EMA50| ≤ mult × ATR14
+            "sl_atr_mult":        2.5,    # stop-loss = close − mult × ATR14
+            "tp_atr_mult":        3.0,    # take-profit = close + mult × ATR14
+            "rsi_min":            40.0,   # RSI14 must be above this
+            "wick_strength":      1.0,    # lower_wick ≥ mult × body  (1.0 = original lw>body)
+        },
+    },
     # 15m closed-candle confirmation before executing HTF signals.
     "ltf_confirmation": {
         "ema_period": 9,               # EMA span for trend alignment
