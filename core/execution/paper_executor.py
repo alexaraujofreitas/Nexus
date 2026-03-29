@@ -1715,6 +1715,140 @@ class PaperExecutor:
         self._save_trade_to_db(trade)
         self._save_open_positions()
 
+        # ── Rolling demo telemetry ────────────────────────────────────────────
+        try:
+            self._log_rolling_demo_metrics()
+        except Exception as _rl_exc:
+            logger.debug("PaperExecutor: rolling metrics log failed: %s", _rl_exc)
+
+    def _log_rolling_demo_metrics(self) -> None:
+        """Log rolling PF / WR / avg-R after every trade close for demo monitoring."""
+        trades = self._closed_trades
+        full   = [t for t in trades if t.get("exit_reason") != "partial_close"]
+        n      = len(full)
+        if n == 0:
+            return
+        wins   = [t for t in full if (t.get("pnl_usdt") or 0.0) > 0]
+        losses = [t for t in full if (t.get("pnl_usdt") or 0.0) <= 0]
+        gross_w = sum(t.get("pnl_usdt", 0.0) for t in wins)
+        gross_l = abs(sum(t.get("pnl_usdt", 0.0) for t in losses))
+        pf      = gross_w / gross_l if gross_l > 0 else 999.0
+        wr      = len(wins) / n
+        r_vals  = [t.get("realized_r") for t in full if t.get("realized_r") is not None]
+        avg_r   = sum(r_vals) / len(r_vals) if r_vals else 0.0
+        logger.info(
+            "DEMO ROLLING METRICS (n=%d): PF=%.3f | WR=%.1f%% | AvgR=%.3f",
+            n, pf, wr * 100, avg_r,
+        )
+
+    # ── Demo phase export & reporting ────────────────────────────────────────
+
+    def export_trades_csv(self, output_path: Optional[str] = None) -> str:
+        """
+        Export all closed trades to CSV for demo phase auditing.
+
+        Returns the absolute path of the written file.
+        Defaults to ``data/demo_trades_export.csv``.
+        """
+        import csv
+        from pathlib import Path as _Path
+
+        if output_path is None:
+            output_path = str(
+                _Path(__file__).parent.parent.parent / "data" / "demo_trades_export.csv"
+            )
+
+        columns = [
+            "trade_id", "symbol", "side", "model", "timeframe", "regime",
+            "opened_at", "closed_at", "duration_s",
+            "entry_price", "stop_loss", "take_profit", "exit_price",
+            "size_usdt", "entry_size_usdt",
+            "pnl_usdt", "pnl_pct", "realized_r",
+            "exit_reason", "confluence_score",
+        ]
+
+        with open(output_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            for t in self._closed_trades:
+                row = {col: t.get(col, "") for col in columns}
+                # Flatten models_fired list to comma-separated string if needed
+                if "models_fired" in t and not t.get("model"):
+                    row["model"] = ",".join(t["models_fired"]) if isinstance(t.get("models_fired"), list) else str(t.get("models_fired", ""))
+                writer.writerow(row)
+
+        logger.info("PaperExecutor: exported %d trades to %s", len(self._closed_trades), output_path)
+        return output_path
+
+    def generate_demo_summary(self) -> dict:
+        """
+        Generate a structured demo-phase performance summary.
+
+        Returns a dict with rolling metrics (all trades, last-20, last-50),
+        per-model breakdown, per-symbol breakdown, exit reason distribution,
+        and minimum-trade-count check.
+        """
+        full = [t for t in self._closed_trades if t.get("exit_reason") != "partial_close"]
+        n    = len(full)
+
+        def _metrics(subset: list) -> dict:
+            if not subset:
+                return {"n": 0, "pf": None, "wr": None, "avg_r": None}
+            wins    = [t for t in subset if (t.get("pnl_usdt") or 0) > 0]
+            losses  = [t for t in subset if (t.get("pnl_usdt") or 0) <= 0]
+            gross_w = sum(t.get("pnl_usdt", 0) for t in wins)
+            gross_l = abs(sum(t.get("pnl_usdt", 0) for t in losses))
+            r_vals  = [t.get("realized_r") for t in subset if t.get("realized_r") is not None]
+            return {
+                "n":     len(subset),
+                "pf":    round(gross_w / gross_l, 4) if gross_l > 0 else 999.0,
+                "wr":    round(len(wins) / len(subset), 4),
+                "avg_r": round(sum(r_vals) / len(r_vals), 4) if r_vals else None,
+            }
+
+        # Per-model breakdown
+        from collections import defaultdict
+        _by_model: dict = defaultdict(list)
+        for t in full:
+            model = t.get("model") or (
+                ",".join(t["models_fired"]) if isinstance(t.get("models_fired"), list) and t["models_fired"]
+                else "unknown"
+            )
+            _by_model[model].append(t)
+        model_breakdown = {m: _metrics(v) for m, v in _by_model.items()}
+
+        # Per-symbol breakdown
+        _by_sym: dict = defaultdict(list)
+        for t in full:
+            _by_sym[t.get("symbol", "?")].append(t)
+        symbol_breakdown = {s: _metrics(v) for s, v in _by_sym.items()}
+
+        # Exit reason distribution
+        _exit_counts: dict = defaultdict(int)
+        for t in full:
+            _exit_counts[t.get("exit_reason", "unknown")] += 1
+
+        summary = {
+            "generated_at":         datetime.utcnow().isoformat() + "Z",
+            "demo_phase_complete":  n >= 50,
+            "min_trades_required":  50,
+            "all_trades":           _metrics(full),
+            "last_20":              _metrics(full[-20:]),
+            "last_50":              _metrics(full[-50:]),
+            "by_model":             model_breakdown,
+            "by_symbol":            symbol_breakdown,
+            "exit_reasons":         dict(_exit_counts),
+            "open_positions":       len(self._positions),
+        }
+        logger.info(
+            "PaperExecutor: demo summary — n=%d | PF=%s | WR=%s | AvgR=%s",
+            n,
+            summary["all_trades"]["pf"],
+            summary["all_trades"]["wr"],
+            summary["all_trades"]["avg_r"],
+        )
+        return summary
+
 
 # ── Module singleton ──────────────────────────────────────
 paper_executor = PaperExecutor()

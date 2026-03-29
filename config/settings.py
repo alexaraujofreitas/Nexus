@@ -537,6 +537,16 @@ DEFAULT_CONFIG = {
         "enabled": True,               # apply ENTRY_BUFFER_ATR offsets
     },
     # LTF (Lower-Timeframe) confirmation for staged candidates.
+    # PBL + SLC model parameter overrides (Session 50 — PBL optimization)
+    "mr_pbl_slc": {
+        "pullback_long": {
+            "ema_prox_atr_mult":  0.5,    # |close - EMA50| ≤ mult × ATR14
+            "sl_atr_mult":        2.5,    # stop-loss = close − mult × ATR14
+            "tp_atr_mult":        3.0,    # take-profit = close + mult × ATR14
+            "rsi_min":            40.0,   # RSI14 must be above this
+            "wick_strength":      1.0,    # lower_wick ≥ mult × body  (1.0 = original lw>body)
+        },
+    },
     # 15m closed-candle confirmation before executing HTF signals.
     "ltf_confirmation": {
         "ema_period": 9,               # EMA span for trend alignment
@@ -623,6 +633,19 @@ class AppSettings:
                 return default
         return val
 
+    # ── Demo-mode locked keys (cannot be mutated at runtime when demo_mode.locked=True) ──
+    _DEMO_LOCKED_PREFIXES: tuple = (
+        "mr_pbl_slc.pullback_long.",
+        "disabled_models",
+        "demo_mode.",
+    )
+
+    def _is_demo_locked(self, key_path: str) -> bool:
+        """Return True if demo_mode is locked AND the key is in the immutable set."""
+        if not self._config.get("demo_mode", {}).get("locked", False):
+            return False
+        return any(key_path.startswith(p) for p in self._DEMO_LOCKED_PREFIXES)
+
     def set(self, key_path: str, value: Any, auto_save: bool = True):
         """Set a config value using dot notation or top-level key, and persist.
         Examples:
@@ -630,7 +653,19 @@ class AppSettings:
             settings.set("risk", {"max_concurrent_positions": 3, ...})
             settings.set("key", val, auto_save=False)  # batch multiple sets,
                                                         # call save() manually after
+
+        DEMO MODE LOCK: When demo_mode.locked=True, any attempt to mutate
+        PBL params, disabled_models, or demo_mode keys is blocked and logged.
         """
+        # ── Demo-mode immutability guard ─────────────────────────────────
+        if self._is_demo_locked(key_path):
+            logger.error(
+                "settings.set(%r): BLOCKED — demo_mode is locked. "
+                "PBL params and disabled_models are immutable during demo phase. "
+                "To override, set demo_mode.locked=False in config.yaml manually.",
+                key_path,
+            )
+            return
         if isinstance(key_path, str) and "." not in key_path and isinstance(value, dict):
             # Setting entire section
             self._config[key_path] = value

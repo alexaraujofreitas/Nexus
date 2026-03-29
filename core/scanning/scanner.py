@@ -1120,24 +1120,30 @@ class AssetScanner(QObject):
     def _log_production_config(self) -> None:
         """Log the frozen production configuration at startup for auditability."""
         from config.settings import settings as _s
-        disabled  = _s.get("disabled_models", [])
-        threshold = _s.get("idss.min_confluence_score", 0.20)
-        dyn_on    = _s.get("dynamic_confluence.enabled", False)
-        time_f    = _s.get("filters.time_of_day.enabled", False)
-        heat      = _s.get("risk_engine.portfolio_heat_max_pct", 0.04) * 100
-        sz_mode   = _s.get("risk_engine.sizing_mode", "risk_based")
-        risk_pct  = _s.get("risk_engine.risk_pct_per_trade", 0.75)
-        mtf_on    = _s.get("multi_tf.confirmation_required", True)
-        ae_on     = _s.get("scanner.auto_execute", True)
+        disabled    = _s.get("disabled_models", [])
+        threshold   = _s.get("idss.min_confluence_score", 0.20)
+        dyn_on      = _s.get("dynamic_confluence.enabled", False)
+        time_f      = _s.get("filters.time_of_day.enabled", False)
+        heat        = _s.get("risk_engine.portfolio_heat_max_pct", 0.04) * 100
+        sz_mode     = _s.get("risk_engine.sizing_mode", "risk_based")
+        risk_pct    = _s.get("risk_engine.risk_pct_per_trade", 0.75)
+        mtf_on      = _s.get("multi_tf.confirmation_required", True)
+        ae_on       = _s.get("scanner.auto_execute", True)
+        mr_enabled  = _s.get("mr_pbl_slc.enabled", False)
+        demo_locked = _s.get("demo_mode.locked", False)
+        lock_ver    = _s.get("demo_mode.parameter_lock_version", "n/a")
+        pbl = _s.get("mr_pbl_slc.pullback_long", {}) or {}
         from config.constants import APP_VERSION as _VER
-        _exit_mode = _s.get("exit.mode", "partial")
+        _exit_mode   = _s.get("exit.mode", "partial")
         _partial_pct = _s.get("exit.partial_pct", 0.33)
         logger.info(
             "═══════════════════════════════════════════════════════════\n"
             "  NEXUS TRADER v%s — PRODUCTION CONFIGURATION (FROZEN)\n"
-            "  Strategy        : TrendModel + MomentumBreakout\n"
+            "  DEMO MODE       : %s  (lock_version=%s)\n"
+            "  Active models   : PBL+SLC=%s  FundingRate=✓  Sentiment=✓\n"
             "  Primary TF      : %s  |  HTF gate : 4h\n"
             "  Disabled models : %s\n"
+            "  PBL params      : sl=%.1f  tp=%.1f  ema_prox=%.2f  rsi_min=%.0f  wick=%.1f\n"
             "  Confluence      : %.2f (dynamic=%s)\n"
             "  Exit mode       : %s (partial=%.0f%% @ 1R + SL→BE)\n"
             "  Time filter     : %s\n"
@@ -1147,12 +1153,26 @@ class AssetScanner(QObject):
             "  Auto-execute    : %s\n"
             "  Circuit breaker : 10%% drawdown hard stop\n"
             "═══════════════════════════════════════════════════════════",
-            _VER, self._timeframe,
-            disabled, threshold, dyn_on,
+            _VER,
+            "LOCKED ✓" if demo_locked else "UNLOCKED ⚠️", lock_ver,
+            "✓" if mr_enabled else "✗",
+            self._timeframe,
+            disabled,
+            pbl.get("sl_atr_mult", "?"), pbl.get("tp_atr_mult", "?"),
+            pbl.get("ema_prox_atr_mult", "?"), pbl.get("rsi_min", "?"),
+            pbl.get("wick_strength", "?"),
+            threshold, dyn_on,
             _exit_mode, _partial_pct * 100,
             time_f, heat,
             sz_mode, risk_pct, mtf_on, ae_on,
         )
+        # Run full demo mode validation if locked
+        if demo_locked:
+            try:
+                from core.orchestrator.demo_startup_log import run_demo_startup_validation
+                run_demo_startup_validation()
+            except Exception as _dsl_exc:
+                logger.warning("DemoStartupLog failed (non-fatal): %s", _dsl_exc)
 
     def stop(self) -> None:
         self._running = False
@@ -1552,6 +1572,20 @@ class AssetScanner(QObject):
         n = len(candidates)
         logger.info("AssetScanner: HTF scan complete — %d approved candidates", n)
         self.scan_finished.emit(n)
+        # Notify event-bus subscribers (e.g. Dashboard status row) that a scan
+        # cycle has completed.  SCAN_CYCLE_COMPLETE was defined in Topics but was
+        # never published — the Dashboard's _on_scan_cycle_complete() callback
+        # never fired, leaving the status row permanently at the startup-probe
+        # value ("Stopped").  Published here so every completed cycle refreshes
+        # the Dashboard regardless of whether there were any approved candidates.
+        try:
+            bus.publish(
+                Topics.SCAN_CYCLE_COMPLETE,
+                data={"candidates": n, "timestamp": self._last_scan_at.isoformat()},
+                source="scanner",
+            )
+        except Exception:
+            pass
 
         # ── Stage candidates into CandidateStore (Phase 4) ────────
         # When staged_candidates is enabled, approved HTF candidates are

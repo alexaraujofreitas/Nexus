@@ -52,6 +52,7 @@ _EMA50_PROX_ATR_MULT   = 0.5
 _SL_ATR_MULT           = 2.5
 _TP_ATR_MULT           = 3.0
 _RSI_MIN               = 40.0
+_WICK_STRENGTH         = 1.0   # Session 50: lower_wick ≥ _WICK_STRENGTH × body (was implicit 1.0)
 _HTF_EMA_FAST          = 20
 _HTF_EMA_SLOW          = 50
 
@@ -131,15 +132,17 @@ class PullbackLongModel(BaseSubModel):
         # ── Read config overrides ─────────────────────────────────────
         try:
             from config.settings import settings as _s
-            ema_prox_mult = float(_s.get("mr_pbl_slc.pullback_long.ema_prox_atr_mult", _EMA50_PROX_ATR_MULT))
-            sl_mult       = float(_s.get("mr_pbl_slc.pullback_long.sl_atr_mult",       _SL_ATR_MULT))
-            tp_mult       = float(_s.get("mr_pbl_slc.pullback_long.tp_atr_mult",       _TP_ATR_MULT))
-            rsi_min       = float(_s.get("mr_pbl_slc.pullback_long.rsi_min",           _RSI_MIN))
+            ema_prox_mult  = float(_s.get("mr_pbl_slc.pullback_long.ema_prox_atr_mult", _EMA50_PROX_ATR_MULT))
+            sl_mult        = float(_s.get("mr_pbl_slc.pullback_long.sl_atr_mult",       _SL_ATR_MULT))
+            tp_mult        = float(_s.get("mr_pbl_slc.pullback_long.tp_atr_mult",       _TP_ATR_MULT))
+            rsi_min        = float(_s.get("mr_pbl_slc.pullback_long.rsi_min",           _RSI_MIN))
+            wick_strength  = float(_s.get("mr_pbl_slc.pullback_long.wick_strength",     _WICK_STRENGTH))
         except Exception:
-            ema_prox_mult = _EMA50_PROX_ATR_MULT
-            sl_mult       = _SL_ATR_MULT
-            tp_mult       = _TP_ATR_MULT
-            rsi_min       = _RSI_MIN
+            ema_prox_mult  = _EMA50_PROX_ATR_MULT
+            sl_mult        = _SL_ATR_MULT
+            tp_mult        = _TP_ATR_MULT
+            rsi_min        = _RSI_MIN
+            wick_strength  = _WICK_STRENGTH
 
         if len(df) < 60:
             logger.debug("PBL %s: insufficient bars (%d < 60)", symbol, len(df))
@@ -186,8 +189,11 @@ class PullbackLongModel(BaseSubModel):
         if lw <= uw:
             logger.debug("PBL %s: lower_wick=%.4f ≤ upper_wick=%.4f (not rejection)", symbol, lw, uw)
             return None
-        if lw <= body:
-            logger.debug("PBL %s: lower_wick=%.4f ≤ body=%.4f (not rejection)", symbol, lw, body)
+        if lw <= wick_strength * body:
+            logger.debug(
+                "PBL %s: lower_wick=%.4f ≤ wick_strength(%.1f)×body=%.4f (not rejection)",
+                symbol, lw, wick_strength, wick_strength * body,
+            )
             return None
 
         # ── Condition 3: RSI gate ─────────────────────────────────────
@@ -258,7 +264,7 @@ class PullbackLongModel(BaseSubModel):
         rationale = (
             f"[PBL | regime={regime}] "
             f"EMA50={ema50:.4f} prox={prox_distance:.4f}≤{prox_threshold:.4f} ✓ | "
-            f"Rejection: lw={lw:.4f}>uw={uw:.4f}>body={body:.4f} ✓ | "
+            f"Rejection: lw={lw:.4f}>uw={uw:.4f} lw/body={lw/body:.2f}≥{wick_strength:.1f} ✓ | "
             f"RSI={rsi:.1f}>{rsi_min:.0f} ✓ | "
             f"HTF={'confirmed' if htf_confirmed else 'bypassed'} | "
             f"SL={stop_loss:.4f} TP={take_profit:.4f}"

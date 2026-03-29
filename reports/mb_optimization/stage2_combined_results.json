@@ -1,0 +1,258 @@
+{
+  "baseline_pbl_slc": {
+    "IS": {
+      "n_trades": 1478,
+      "profit_factor": 1.2199,
+      "win_rate": 0.5467,
+      "cagr": 0.4241,
+      "max_drawdown": -0.206,
+      "pbl_n": 464,
+      "slc_n": 1014
+    },
+    "OOS": {
+      "n_trades": 242,
+      "profit_factor": 1.7689,
+      "win_rate": 0.657,
+      "cagr": 2.2726,
+      "max_drawdown": -0.074,
+      "pbl_n": 37,
+      "slc_n": 205
+    },
+    "FULL": {
+      "n_trades": 1731,
+      "profit_factor": 1.2758,
+      "win_rate": 0.5638,
+      "cagr": 0.4854,
+      "max_drawdown": -0.206,
+      "pbl_n": 501,
+      "slc_n": 1230
+    }
+  },
+  "candidates": [
+    {
+      "label": "lb=60 vm=1.5 (best CAGR/PF)",
+      "lookback": 60,
+      "vol_mult_min": 1.5,
+      "hmm_conf": 0.0,
+      "IS": {
+        "n_trades": 2010,
+        "profit_factor": 1.2408,
+        "win_rate": 44.28,
+        "cagr": 59.05,
+        "max_drawdown": -23.39,
+        "pbl_n": 399,
+        "slc_n": 813,
+        "mb_n": 798,
+        "mb_pf": 1.257,
+        "mb_wr": 0.3045
+      },
+      "OOS": {
+        "n_trades": 315,
+        "profit_factor": 1.3096,
+        "win_rate": 50.79,
+        "cagr": 99.36,
+        "max_drawdown": -17.82,
+        "pbl_n": 35,
+        "slc_n": 159,
+        "mb_n": 121,
+        "mb_pf": 1.0321,
+        "mb_wr": 0.314
+      },
+      "FULL": {
+        "n_trades": 2333,
+        "profit_factor": 1.2098,
+        "win_rate": 45.31,
+        "cagr": 54.43,
+        "max_drawdown": -23.39,
+        "pbl_n": 434,
+        "slc_n": 976,
+        "mb_n": 923,
+        "mb_pf": 1.22,
+        "mb_wr": 0.3088
+      },
+      "calmar_is": 2.525,
+      "calmar_oos": 5.576,
+      "calmar_full": 2.327
+    },
+    {
+      "label": "lb=40 vm=2.5 (balanced)",
+      "lookback": 40,
+      "vol_mult_min": 2.5,
+      "hmm_conf": 0.0,
+      "IS": {
+        "n_trades": 1976,
+        "profit_factor": 1.2227,
+        "win_rate": 48.28,
+        "cagr": 54.04,
+        "max_drawdown": -18.96,
+        "pbl_n": 425,
+        "slc_n": 868,
+        "mb_n": 683,
+        "mb_pf": 1.263,
+        "mb_wr": 0.3719
+      },
+      "OOS": {
+        "n_trades": 308,
+        "profit_factor": 1.2553,
+        "win_rate": 52.27,
+        "cagr": 75.65,
+        "max_drawdown": -15.68,
+        "pbl_n": 37,
+        "slc_n": 166,
+        "mb_n": 105,
+        "mb_pf": 0.9721,
+        "mb_wr": 0.3238
+      },
+      "FULL": {
+        "n_trades": 2293,
+        "profit_factor": 1.1841,
+        "win_rate": 48.98,
+        "cagr": 47.85,
+        "max_drawdown": -18.96,
+        "pbl_n": 462,
+        "slc_n": 1039,
+        "mb_n": 792,
+        "mb_pf": 1.2137,
+        "mb_wr": 0.3687
+      },
+      "calmar_is": 2.85,
+      "calmar_oos": 4.825,
+      "calmar_full": 2.524
+    },
+    {
+      "label": "lb=40 vm=3.0 (lowest MaxDD)",
+      "lookback": 40,
+      "vol_mult_min": 3.0,
+      "hmm_conf": 0.0,
+      "IS": {
+        "n_trades": 1885,
+        "profit_factor": 1.2107,
+        "win_rate": 49.5,
+        "cagr": 50.26,
+        "max_drawdown": -19.43,
+        "pbl_n": 436,
+        "slc_n": 884,
+        "mb_n": 565,
+        "mb_pf": 1.1776,
+        "mb_wr": 0.3788
+      },
+      "OOS": {
+        "n_trades": 295,
+        "profit_factor": 1.4247,
+        "win_rate": 55.59,
+        "cagr": 128.16,
+        "max_drawdown": -12.2,
+        "pbl_n": 37,
+        "slc_n": 173,
+        "mb_n": 85,
+        "mb_pf": 1.1824,
+        "mb_wr": 0.3647
+      },
+      "FULL": {
+        "n_trades": 2189,
+        "profit_factor": 1.2092,
+        "win_rate": 50.48,
+        "cagr": 49.37,
+        "max_drawdown": -19.43,
+        "pbl_n": 473,
+        "slc_n": 1063,
+        "mb_n": 653,
+        "mb_pf": 1.1986,
+        "mb_wr": 0.3798
+      },
+      "calmar_is": 2.587,
+      "calmar_oos": 10.505,
+      "calmar_full": 2.541
+    },
+    {
+      "label": "lb=60 vm=2.0 (2nd best PF)",
+      "lookback": 60,
+      "vol_mult_min": 2.0,
+      "hmm_conf": 0.0,
+      "IS": {
+        "n_trades": 1941,
+        "profit_factor": 1.2384,
+        "win_rate": 45.8,
+        "cagr": 57.8,
+        "max_drawdown": -21.02,
+        "pbl_n": 402,
+        "slc_n": 837,
+        "mb_n": 702,
+        "mb_pf": 1.2591,
+        "mb_wr": 0.3177
+      },
+      "OOS": {
+        "n_trades": 298,
+        "profit_factor": 1.3153,
+        "win_rate": 52.68,
+        "cagr": 94.14,
+        "max_drawdown": -17.64,
+        "pbl_n": 34,
+        "slc_n": 163,
+        "mb_n": 101,
+        "mb_pf": 0.9161,
+        "mb_wr": 0.3168
+      },
+      "FULL": {
+        "n_trades": 2247,
+        "profit_factor": 1.2079,
+        "win_rate": 46.86,
+        "cagr": 52.86,
+        "max_drawdown": -21.02,
+        "pbl_n": 436,
+        "slc_n": 1004,
+        "mb_n": 807,
+        "mb_pf": 1.1986,
+        "mb_wr": 0.3209
+      },
+      "calmar_is": 2.75,
+      "calmar_oos": 5.337,
+      "calmar_full": 2.515
+    },
+    {
+      "label": "lb=60 vm=1.5 conf\u22650.6 (gated)",
+      "lookback": 60,
+      "vol_mult_min": 1.5,
+      "hmm_conf": 0.6,
+      "IS": {
+        "n_trades": 1972,
+        "profit_factor": 1.246,
+        "win_rate": 44.93,
+        "cagr": 59.16,
+        "max_drawdown": -22.38,
+        "pbl_n": 399,
+        "slc_n": 844,
+        "mb_n": 729,
+        "mb_pf": 1.2746,
+        "mb_wr": 0.3018
+      },
+      "OOS": {
+        "n_trades": 315,
+        "profit_factor": 1.3096,
+        "win_rate": 50.79,
+        "cagr": 99.36,
+        "max_drawdown": -17.82,
+        "pbl_n": 35,
+        "slc_n": 159,
+        "mb_n": 121,
+        "mb_pf": 1.0321,
+        "mb_wr": 0.314
+      },
+      "FULL": {
+        "n_trades": 2333,
+        "profit_factor": 1.2098,
+        "win_rate": 45.31,
+        "cagr": 54.43,
+        "max_drawdown": -23.39,
+        "pbl_n": 434,
+        "slc_n": 976,
+        "mb_n": 923,
+        "mb_pf": 1.22,
+        "mb_wr": 0.3088
+      },
+      "calmar_is": 2.643,
+      "calmar_oos": 5.576,
+      "calmar_full": 2.327
+    }
+  ]
+}

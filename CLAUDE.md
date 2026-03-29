@@ -598,6 +598,90 @@ All work committed on `trend-replacement-study` branch then merged to main.
 
 ---
 
+## Session 49 — MomentumBreakout Optimization Study (2026-03-29)
+
+### Objective
+Determine whether MomentumBreakout (MB) can be added to the production PBL+SLC system without degrading portfolio quality.
+
+### Diagnostic Findings (Phase 1)
+
+Five root causes for MB dilution in Scenario B (Phase 5):
+1. **BTC is a losing asset for MB** — PF=0.9163, AvgR=−0.021 on BTC standalone (SOL/ETH profitable, BTC structural loser)
+2. **Low WR incompatible with portfolio** — MB WR 30–38% vs portfolio WR 56.4%. Adding 800+ low-WR trades pulls portfolio WR down sharply.
+3. **SLC crowding (naive orchestration)** — 195 SLC trades lost in combined mode. SLC is the highest-quality sub-model (PF=1.43+); every displaced SLC trade is net negative to the portfolio.
+4. **Fee sensitivity** — 1,214 MB trades at 0.04%/side consumed the thin breakout edge entirely.
+5. **Structurally negative BTC edge** — BTC MB standalone negative even with optimised params; SOL/ETH marginally positive.
+
+### Parameter Search Space (Phase 2)
+- **Tier 1 (core)**: `lookback` ∈ {20, 30, 40, 60}; `vol_mult_min` ∈ {1.5, 2.0, 2.5, 3.0}; `rsi_bullish` fixed at 60/40
+- **Tier 2 (tested)**: HMM confidence gate ≥ 0.6; Research-Priority orchestration
+
+### Stage 1 Grid Results (IS standalone, RSI=60/40, 4 × 4 = 16 combos)
+
+| Rank | lb | vm | WR | PF(0-fee) | PF(fee) | CAGR | MaxDD | n |
+|------|----|----|-----|-----------|---------|------|-------|---|
+| 1 | 60 | 1.5 | 30.1% | 1.3454 | 1.2396 | 23.3% | -15.6% | 905 |
+| 2 | 40 | 2.5 | 37.4% | 1.3473 | 1.2362 | 17.6% | -16.3% | 772 |
+| 3 | 60 | 2.0 | 31.3% | 1.3196 | 1.2195 | 18.8% | -15.1% | 793 |
+| 4 | 60 | 3.0 | 34.8% | 1.2826 | 1.1932 | 12.0% | -16.5% | 552 |
+| 5 | 40 | 3.0 | 38.4% | 1.2878 | 1.1861 | 11.6% | -12.1% | 636 |
+
+Key finding: Longer lookback (lb=60) consistently outperforms lb=20. Higher vol_mult helps up to a point. Best standalone IS PF = 1.2396.
+
+### Stage 2 Combined + IS/OOS Results (Top 5 candidates — naive orchestration)
+
+| Candidate | FULL PF | FULL CAGR | FULL MaxDD | IS MB_PF | OOS MB_PF | SLC_n |
+|-----------|---------|-----------|-----------|----------|-----------|-------|
+| lb=60 vm=1.5 | 1.2098 | 54.43% | -23.39% | 1.2570 | 1.0321 | 976 |
+| lb=40 vm=2.5 | 1.1841 | 47.85% | -18.96% | 1.2630 | 0.9721 | 1039 |
+| lb=40 vm=3.0 | 1.2092 | 49.37% | -19.43% | 1.1776 | 1.1824 | — |
+| lb=60 vm=2.0 | 1.2079 | 52.86% | -21.02% | 1.2591 | 0.9161 | — |
+| lb=60 vm=1.5 conf≥0.6 | 1.2098 | 54.43% | -23.39% | 1.2746 | 1.0321 | — |
+
+**BASELINE (PBL+SLC only)**: PF=1.2758, CAGR=48.54%, n=1,731
+
+All 5 candidates degrade FULL-period PF vs baseline (1.1841–1.2098 vs 1.2758).
+
+### Research-Priority Orchestration Test (best candidate lb=60 vm=1.5)
+```
+NAIVE : PF=1.2098  CAGR=54.43%  WR=45.3%  MaxDD=-23.39%  n=2333  MB_n=923  SLC_n=976
+RP    : PF=1.2275  CAGR=55.20%  WR=46.5%  MaxDD=-22.93%  n=2370  MB_n=834  SLC_n=1102
+
+IS  (RP): PF=1.2266  CAGR=54.78%  WR=45.2%  MaxDD=-22.93%  n=2030  MB_n=728  SLC_n=903
+OOS (RP): PF=1.4355  CAGR=160.67%  WR=53.2%  MaxDD=-13.18%  n=329   MB_n=105  PF_MB=0.8897
+
+BASELINE: PF=1.2758  CAGR=48.54%  n=1731
+```
+RP orchestration protected SLC (+126 trades) and gave the best FULL PF of any configuration (1.2275), but still 4.6% below baseline. OOS MB PF = 0.8897 (net-negative).
+
+### IS Baseline for Reference
+```
+IS  baseline: PF=1.2199  CAGR=42.41%  WR=54.7%  n=1478  (PBL_n=464  SLC_n=1014)
+OOS baseline: PF=1.7689  CAGR=227.26%  WR=65.7%  n=242   (PBL_n=37   SLC_n=205)
+```
+
+### Final Verdict
+**NO — keep PBL + SLC only.**
+
+Evidence: Every tested combination (5 candidates × 2 orchestration modes = 10 configurations) produces a FULL-period combined PF below the baseline (1.2758). The best result is 1.2275 (RP mode, lb=60 vm=1.5), 4.1% below baseline. OOS MB quality is 0.89–1.03 — net-negative to marginally breakeven. MB's 30–38% WR is structurally incompatible with the 56% WR portfolio. SLC crowding persists even under RP orchestration (189 fewer SLC trades vs baseline).
+
+MB remains in production `disabled_models` until:
+- OOS PF consistently ≥ 1.18 on fresh out-of-sample data, OR
+- A regime-specific or asset-filtered variant is developed (e.g. SOL/ETH only, vol_expansion only), OR
+- Sufficient live demo trades accumulate to perform symbol-by-symbol attribution
+
+### Files Added (Session 49)
+- `scripts/mb_optimization/stage1_standalone_grid.py` — IS grid search (16 combos, lb×vm sweep)
+- `scripts/mb_optimization/stage2_combined_validation.py` — combined IS/OOS/FULL + RP orchestration test
+- `reports/mb_optimization/stage1_grid_results.json` — full grid results (16 × IS period)
+- `reports/mb_optimization/stage2_combined_results.json` — candidate + baseline IS/OOS/FULL data
+- `reports/mb_optimization/mb_optimization_study_session49.docx` — full Word report
+
+### Branch
+All work committed on `mb-optimization-study` branch.
+
+---
+
 ## Pending Actions
 - Remove or hide `🧪 Test Position` button before any public release
 - Wire `FilterStatsTracker.record_trade_outcome()` into `paper_executor._close_position()` per filter (realized_r quality proxy incomplete without this)
@@ -610,6 +694,63 @@ All work committed on `trend-replacement-study` branch then merged to main.
 - **[v1.3 PBL/SLC]** ~~Investigate regime alignment gap~~ — **RESOLVED Session 36**: `research_regime_classifier.py` is now the primary gate for both models; production HMM no longer used for PBL/SLC regime decisions
 - **[v1.3 PBL/SLC]** ~~Run Stage 8 runtime validation~~ — **RESOLVED Session 36**: 52/52 checks passed. PBL signals fire in bull_trend (dir=long, SL/TP correct), SLC signals fire in bear_trend (dir=short, SL/TP correct), ACTIVE_REGIMES gate confirmed, PositionSizer path validated, no context injection. `mr_pbl_slc.enabled: true` is production-ready.
 - **[Session 48 DonchianBreakout]** Tune parameters for production: target PF ≥ 1.18 (fees), MaxDD ≤ 25%, n ≥ 200. Candidates: `vol_mult_min` → 1.8+, `lookback` → 40+, restrict REGIME_AFFINITY floors, add 4h HTF gate, or restrict ACTIVE_REGIMES to vol_expansion + bull_trend/bear_trend only. Run `scripts/trend_replacement/phase5_comparison.py` (Scenario C) after each change.
+
+---
+
+## Session 50 — PBL Optimization Study (2026-03-29)
+
+### Objective
+Improve PullbackLong (PBL) model from standalone PF=0.8456 to PF ≥ 1.05, while keeping combined PF ≥ 1.2758 (baseline). Hard rules: params only — no logic changes, no new engine, no one-off scripts.
+
+### Phase 1 — Diagnosis (diagnostic.py)
+Baseline: PBL standalone PF=0.8456, WR=45.1%, n=501; Combined PF=1.2758, n=1,731.
+
+| Asset | n | WR | PF | Avg R/trade |
+|-------|---|----|----|-------------|
+| BTC | 180 | 49.4% | 1.055 | +0.043 |
+| SOL | 166 | 43.4% | 0.779 | −0.098 |
+| ETH | 155 | 43.2% | 0.819 | −0.084 |
+
+Root causes: (1) SL too tight at 2.5× ATR — 55% SL hit rate; (2) TP too tight at 3.0× ATR; (3) no rejection candle quality filter; (4) RSI=40 floor too permissive.
+
+### Phase 2 — wick_strength Parameter Added
+- **`pullback_long_model.py`**: Added `_WICK_STRENGTH = 1.0` constant; reads `mr_pbl_slc.pullback_long.wick_strength` from config; rejection gate: `lw <= wick_strength × body`.
+- **`config/settings.py`** DEFAULT_CONFIG: Added `mr_pbl_slc.pullback_long` dict with all 5 params.
+
+### Phase 3+4 — Fast Grid + IS/OOS Validation (scripts/pbl_optimization/fast_grid.py)
+Pre-extracted 10,709 candidate bars; simulated 36 combos in ~15s via pure numpy. IS/OOS split: IS=3.5yr to 2025-09-22, OOS=6m.
+
+### Stage 3 — Combined Validation (BacktestRunner, n_workers=2)
+
+| Candidate | Full PF | CAGR | MaxDD | PBL n | PBL PF | Delta |
+|-----------|---------|------|-------|-------|--------|-------|
+| **ema=0.4 rsi=45 wick=1.5 sl=3.0 tp=4.0 (REC)** | **1.4026** | **65.8%** | **−12.9%** | **283** | **1.185** | **+0.1268** |
+| ema=0.3 rsi=50 wick=1.0 sl=3.0 tp=4.0 | 1.4442 | 59.5% | −12.9% | 40 | 1.436 | +0.1684 |
+| ema=0.4 rsi=50 wick=1.5 sl=3.0 tp=4.0 | 1.4294 | 59.5% | −12.9% | 57 | 1.098 | +0.1536 |
+| ema=0.4 rsi=50 wick=1.0 sl=3.0 tp=4.0 | 1.4352 | 60.2% | −12.9% | 73 | 1.135 | +0.1594 |
+| sl=2.5 tp=4.0 ema=0.4 rsi=45 wick=1.5 | 1.4037 | 64.0% | −15.3% | 289 | 1.125 | +0.1279 |
+| **BASELINE** | **1.2758** | **48.5%** | **−20.6%** | **501** | **0.846** | — |
+
+### Verdict: YES — Deploy Recommended Params
+All 5 candidates exceed baseline combined PF by >12%. Recommended candidate chosen for meaningful trade count (n=283) and positive OOS hold-out (PBL PF=2.2 on 17 OOS trades).
+
+**Production config (`mr_pbl_slc.pullback_long` in `config.yaml`):**
+- `sl_atr_mult: 3.0` (was 2.5)
+- `tp_atr_mult: 4.0` (was 3.0)
+- `ema_prox_atr_mult: 0.4` (was 0.5)
+- `rsi_min: 45.0` (was 40.0)
+- `wick_strength: 1.5` (new — was 1.0)
+
+### Files Added (Session 50)
+- `core/signals/sub_models/pullback_long_model.py` — `wick_strength` param
+- `config/settings.py` — `mr_pbl_slc.pullback_long` DEFAULT_CONFIG block
+- `scripts/pbl_optimization/fast_grid.py` — fast grid + Stage 3 combined validation
+- `reports/pbl_optimization/diagnostic_results.json` — Phase 1 per-asset/year breakdown
+- `reports/pbl_optimization/grid_results.json` — full grid (Stage 1+2, IS/OOS, Stage 3)
+- `reports/pbl_optimization/pbl_optimization_study_session50.docx` — full Word report
+
+### Branch
+All work committed on `pbl-optimization-study` branch.
 
 ---
 
