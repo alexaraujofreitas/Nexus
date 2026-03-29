@@ -18,6 +18,7 @@ must go through this class.
 """
 from __future__ import annotations
 
+import concurrent.futures as _cf
 import hashlib
 import logging
 import sys
@@ -1010,19 +1011,30 @@ class BacktestRunner:
             BEAR_TREND as RES_BEAR_TREND,
         )
 
-        sig_gen = SignalGenerator()
-        sig_gen._warmup_complete = True
-        # Disable RL inference during backtesting.
-        # RL calls select_action() per bar which launches a CUDA GPU kernel for a
-        # 1-sample batch (~50-100 µs kernel-launch overhead per call).  On a
-        # 70k-bar × 3-symbol run this becomes ~630,000 tiny GPU dispatches that
-        # saturate the GPU while producing near-zero useful compute.  RL is
-        # shadow_only=True anyway so it never contributes to backtest trade
-        # generation.  Setting _rl_model=None makes SignalGenerator skip the RL
-        # path entirely for this backtest instance only (live production
-        # SignalGenerator is unaffected).
-        sig_gen._rl_model = None
+        # One SignalGenerator per symbol — each thread uses its own instance so
+        # there is zero shared mutable state during parallel signal generation.
+        # RL is disabled on each instance (avoids 630k CUDA kernel launches).
+        sig_gens: dict[str, "SignalGenerator"] = {}
+        for _sym in self.symbols:
+            _sg = SignalGenerator()
+            _sg._warmup_complete = True
+            # Disable RL inference during backtesting.
+            # RL calls select_action() per bar which launches a CUDA GPU kernel
+            # for a 1-sample batch (~50-100 µs kernel-launch overhead per call).
+            # On a 70k-bar × 3-symbol run this becomes ~630,000 tiny GPU
+            # dispatches that saturate the GPU while producing near-zero useful
+            # compute.  RL is shadow_only=True anyway so it never contributes to
+            # backtest trade generation.  Setting _rl_model=None makes
+            # SignalGenerator skip the RL path entirely for this backtest
+            # instance only (live production SignalGenerator is unaffected).
+            _sg._rl_model = None
+            sig_gens[_sym] = _sg
         sizer   = PositionSizer()
+
+        # Persistent thread pool: parallel signal generation across symbols.
+        # GIL is released during numpy/pandas operations → real multi-core use.
+        # Explicit pool (not `with`) per CLAUDE.md threading rules.
+        _sym_pool = _cf.ThreadPoolExecutor(max_workers=len(self.symbols))
 
         # Index structures for O(log n) lookups
         idx30: dict = {}
@@ -1137,72 +1149,86 @@ class BacktestRunner:
                 del positions[sym]
             equity_curve.append(equity)
 
-            # ── Signal generation ─────────────────────────────────────────
-            for sym in self.symbols:
-                if sym in positions:
-                    continue
-                loc = int(idx30[sym].searchsorted(ts))
-                if loc >= len(idx30[sym]) or idx30[sym][loc] != ts:
-                    continue
-                if loc < WARMUP_BARS:
-                    continue
+            # ── Signal generation (parallel across symbols) ────────────────
+            # Step 1: identify eligible symbols (no open position, no pending)
+            _eligible = [
+                sym for sym in self.symbols
+                if sym not in positions and sym not in pending_entries
+            ]
 
-                res30 = self._reg30.get(sym, np.array([]))
-                res_regime_30m = int(res30[loc]) if loc < len(res30) else 0
-                loc1h = int(idx1h[sym].searchsorted(ts, side="right")) - 1
-                res1h = self._reg1h.get(sym, np.array([]))
-                res_regime_1h = int(res1h[loc1h]) if 0 <= loc1h < len(res1h) else 0
+            # Step 2: define per-bar worker closure; captures ts, idx*, sig_gens
+            # by reference.  map() is blocking so ts is stable throughout.
+            def _gen_sym(sym):  # noqa: E306
+                _loc = int(idx30[sym].searchsorted(ts))
+                if _loc >= len(idx30[sym]) or idx30[sym][_loc] != ts:
+                    return sym, []
+                if _loc < WARMUP_BARS:
+                    return sym, []
 
-                if res_regime_30m != RES_BULL_TREND and res_regime_1h != RES_BEAR_TREND:
-                    continue
+                _res30 = self._reg30.get(sym, np.array([]))
+                _reg30m = int(_res30[_loc]) if _loc < len(_res30) else 0
+                _l1h = int(idx1h[sym].searchsorted(ts, side="right")) - 1
+                _res1h = self._reg1h.get(sym, np.array([]))
+                _reg1h = int(_res1h[_l1h]) if 0 <= _l1h < len(_res1h) else 0
 
-                res_str_30m = research_regime_to_string(res_regime_30m)
-                res_str_1h  = research_regime_to_string(res_regime_1h)
+                if _reg30m != RES_BULL_TREND and _reg1h != RES_BEAR_TREND:
+                    return sym, []
 
-                s30 = max(0, loc - MODEL_LOOKBACK + 1)
-                df_window = self._ind[sym][PRIMARY_TF].iloc[s30 : loc + 1]
-                if len(df_window) < 70:
-                    continue
+                _s30 = max(0, _loc - MODEL_LOOKBACK + 1)
+                _dfw = self._ind[sym][PRIMARY_TF].iloc[_s30 : _loc + 1]
+                if len(_dfw) < 70:
+                    return sym, []
 
-                signals = []
+                _sigs: list = []
+                _sg = sig_gens[sym]
 
                 # PBL path
-                if res_regime_30m == RES_BULL_TREND:
-                    pbl_ctx: dict = {}
-                    loc4h = int(idx4h[sym].searchsorted(ts, side="right"))
-                    if loc4h >= HTF_LOOKBACK:
-                        pbl_ctx["df_4h"] = self._ind[sym][HTF_4H_TF].iloc[
-                            max(0, loc4h - HTF_LOOKBACK) : loc4h
+                if _reg30m == RES_BULL_TREND:
+                    _pbl_ctx: dict = {}
+                    _l4h = int(idx4h[sym].searchsorted(ts, side="right"))
+                    if _l4h >= HTF_LOOKBACK:
+                        _pbl_ctx["df_4h"] = self._ind[sym][HTF_4H_TF].iloc[
+                            max(0, _l4h - HTF_LOOKBACK) : _l4h
                         ]
                     try:
-                        raw = sig_gen.generate(
-                            sym, df_window, res_str_30m, PRIMARY_TF,
-                            regime_probs={}, context=pbl_ctx,
+                        _raw = _sg.generate(
+                            sym, _dfw, research_regime_to_string(_reg30m),
+                            PRIMARY_TF, regime_probs={}, context=_pbl_ctx,
                         ) or []
-                        signals.extend(s for s in raw if s.model_name == "pullback_long")
-                    except Exception as exc:
-                        logger.debug("SG PBL %s: %s", sym, exc)
+                        _sigs.extend(s for s in _raw if s.model_name == "pullback_long")
+                    except Exception as _e:
+                        logger.debug("SG PBL %s: %s", sym, _e)
 
                 # SLC path
-                if res_regime_1h == RES_BEAR_TREND and loc1h >= 15:
-                    slc_ctx = {
+                if _reg1h == RES_BEAR_TREND and _l1h >= 15:
+                    _slc_ctx = {
                         "df_1h": self._ind[sym][SLC_1H_TF].iloc[
-                            max(0, loc1h - SLC_1H_LOOKBACK + 1) : loc1h + 1
+                            max(0, _l1h - SLC_1H_LOOKBACK + 1) : _l1h + 1
                         ]
                     }
                     try:
-                        raw = sig_gen.generate(
-                            sym, df_window, res_str_1h, PRIMARY_TF,
-                            regime_probs={}, context=slc_ctx,
+                        _raw = _sg.generate(
+                            sym, _dfw, research_regime_to_string(_reg1h),
+                            PRIMARY_TF, regime_probs={}, context=_slc_ctx,
                         ) or []
-                        signals.extend(s for s in raw if s.model_name == "swing_low_continuation")
-                    except Exception as exc:
-                        logger.debug("SG SLC %s: %s", sym, exc)
+                        _sigs.extend(s for s in _raw if s.model_name == "swing_low_continuation")
+                    except Exception as _e:
+                        logger.debug("SG SLC %s: %s", sym, _e)
 
-                if not signals:
+                return sym, _sigs
+
+            # Step 3: run all eligible symbols in parallel; map() blocks here
+            _sym_results = (
+                dict(_sym_pool.map(_gen_sym, _eligible)) if _eligible else {}
+            )
+
+            # Step 4: apply portfolio gate sequentially (order-deterministic)
+            for sym in _eligible:
+                _s_sigs = _sym_results.get(sym, [])
+                if not _s_sigs:
                     continue
-                n_signals_gen += len(signals)
-                sig = signals[0]
+                n_signals_gen += len(_s_sigs)
+                sig = _s_sigs[0]
                 if sym in pending_entries:
                     continue
 
@@ -1229,6 +1255,9 @@ class BacktestRunner:
                     "size_usdt":  size_usdt,
                     "bar_signal": bar_idx,
                 }
+
+        # Bar loop complete — shut down symbol thread pool
+        _sym_pool.shutdown(wait=False, cancel_futures=True)
 
         # ── Force-close remaining ─────────────────────────────────────────
         if self._master_ts:
@@ -1366,11 +1395,18 @@ class BacktestRunner:
             self.confluence_mode, self.orchestration_mode, _conf_gate,
         )
 
-        sig_gen = SignalGenerator()
-        sig_gen._warmup_complete = True
-        # Disable RL inference during backtesting (see comment in _run_scenario).
-        sig_gen._rl_model = None
+        # One SignalGenerator per symbol — thread-isolated for parallel generate().
+        sig_gens_u: dict[str, "SignalGenerator"] = {}
+        for _sym in self.symbols:
+            _sg = SignalGenerator()
+            _sg._warmup_complete = True
+            # Disable RL inference during backtesting (see comment in _run_scenario).
+            _sg._rl_model = None
+            sig_gens_u[_sym] = _sg
         sizer   = PositionSizer()
+
+        # Persistent thread pool for parallel symbol signal generation.
+        _sym_pool_u = _cf.ThreadPoolExecutor(max_workers=len(self.symbols))
 
         # ── Technical-only ConfluenceScorer (optional gate) ───────────────────
         _use_conf = (self.confluence_mode == CONFLUENCE_TECHNICAL)
@@ -1494,128 +1530,135 @@ class BacktestRunner:
                 del positions[sym]
             equity_curve.append(equity)
 
-            # ── Signal generation ──────────────────────────────────────────────
-            for sym in self.symbols:
-                if sym in positions or sym in pending_entries:
-                    continue
-                loc = int(idx30[sym].searchsorted(ts))
-                if loc >= len(idx30[sym]) or idx30[sym][loc] != ts:
-                    continue
-                if loc < WARMUP_BARS:
-                    continue
+            # ── Signal generation (parallel across symbols) ────────────────
+            # Step 1: eligible symbols (no open position, no pending fill)
+            _eligible_u = [
+                sym for sym in self.symbols
+                if sym not in positions and sym not in pending_entries
+            ]
 
-                s30 = max(0, loc - MODEL_LOOKBACK + 1)
-                df_window = self._ind[sym][PRIMARY_TF].iloc[s30 : loc + 1]
-                if len(df_window) < 70:
-                    continue
+            # Step 2: per-bar closure — generates raw candidate_signals for ONE
+            # symbol.  Returns (sym, candidates, hmm_probs, conf_rej_count).
+            # map() is blocking so all closure captures (ts, equity, …) are stable.
+            def _gen_sym_u(sym):  # noqa: E306
+                _loc = int(idx30[sym].searchsorted(ts))
+                if _loc >= len(idx30[sym]) or idx30[sym][_loc] != ts:
+                    return sym, [], None, 0
+                if _loc < WARMUP_BARS:
+                    return sym, [], None, 0
 
-                candidate_signals: list = []
+                _s30 = max(0, _loc - MODEL_LOOKBACK + 1)
+                _dfw = self._ind[sym][PRIMARY_TF].iloc[_s30 : _loc + 1]
+                if len(_dfw) < 70:
+                    return sym, [], None, 0
 
-                # ── Research regime path (PBL / SLC) ──────────────────────────
+                _cands: list = []
+                _hmm_probs_sym: Optional[dict] = None
+                _conf_rej = 0
+                _sg = sig_gens_u[sym]
+
+                # ── Research regime path (PBL / SLC) ──────────────────────
                 if use_research:
-                    res30 = self._reg30.get(sym, np.array([]))
-                    res_regime_30m = int(res30[loc]) if loc < len(res30) else 0
-                    loc1h = int(idx1h[sym].searchsorted(ts, side="right")) - 1
-                    res1h = self._reg1h.get(sym, np.array([]))
-                    res_regime_1h  = int(res1h[loc1h]) if 0 <= loc1h < len(res1h) else 0
+                    _res30 = self._reg30.get(sym, np.array([]))
+                    _reg30m = int(_res30[_loc]) if _loc < len(_res30) else 0
+                    _l1h = int(idx1h[sym].searchsorted(ts, side="right")) - 1
+                    _res1h = self._reg1h.get(sym, np.array([]))
+                    _reg1h = int(_res1h[_l1h]) if 0 <= _l1h < len(_res1h) else 0
 
                     # PBL — fires in research bull_trend on 30m
-                    if "pullback_long" in active_set and res_regime_30m == RES_BULL_TREND:
-                        pbl_ctx: dict = {}
-                        loc4h = int(idx4h[sym].searchsorted(ts, side="right"))
-                        if loc4h >= HTF_LOOKBACK:
-                            pbl_ctx["df_4h"] = self._ind[sym][HTF_4H_TF].iloc[
-                                max(0, loc4h - HTF_LOOKBACK) : loc4h
+                    if "pullback_long" in active_set and _reg30m == RES_BULL_TREND:
+                        _pbl_ctx: dict = {}
+                        _l4h = int(idx4h[sym].searchsorted(ts, side="right"))
+                        if _l4h >= HTF_LOOKBACK:
+                            _pbl_ctx["df_4h"] = self._ind[sym][HTF_4H_TF].iloc[
+                                max(0, _l4h - HTF_LOOKBACK) : _l4h
                             ]
                         try:
-                            raw = sig_gen.generate(
-                                sym, df_window,
-                                research_regime_to_string(res_regime_30m),
-                                PRIMARY_TF, regime_probs={}, context=pbl_ctx,
+                            _raw = _sg.generate(
+                                sym, _dfw,
+                                research_regime_to_string(_reg30m),
+                                PRIMARY_TF, regime_probs={}, context=_pbl_ctx,
                             ) or []
-                            candidate_signals.extend(
-                                s for s in raw if s.model_name == "pullback_long"
-                            )
-                        except Exception as exc:
-                            logger.debug("UnifiedEngine PBL %s: %s", sym, exc)
+                            _cands.extend(s for s in _raw if s.model_name == "pullback_long")
+                        except Exception as _e:
+                            logger.debug("UnifiedEngine PBL %s: %s", sym, _e)
 
                     # SLC — fires in research bear_trend on 1h
                     if ("swing_low_continuation" in active_set
-                            and res_regime_1h == RES_BEAR_TREND
-                            and loc1h >= 15):
-                        slc_ctx = {
+                            and _reg1h == RES_BEAR_TREND
+                            and _l1h >= 15):
+                        _slc_ctx = {
                             "df_1h": self._ind[sym][SLC_1H_TF].iloc[
-                                max(0, loc1h - SLC_1H_LOOKBACK + 1) : loc1h + 1
+                                max(0, _l1h - SLC_1H_LOOKBACK + 1) : _l1h + 1
                             ]
                         }
                         try:
-                            raw = sig_gen.generate(
-                                sym, df_window,
-                                research_regime_to_string(res_regime_1h),
-                                PRIMARY_TF, regime_probs={}, context=slc_ctx,
+                            _raw = _sg.generate(
+                                sym, _dfw,
+                                research_regime_to_string(_reg1h),
+                                PRIMARY_TF, regime_probs={}, context=_slc_ctx,
                             ) or []
-                            candidate_signals.extend(
-                                s for s in raw if s.model_name == "swing_low_continuation"
+                            _cands.extend(
+                                s for s in _raw if s.model_name == "swing_low_continuation"
                             )
-                        except Exception as exc:
-                            logger.debug("UnifiedEngine SLC %s: %s", sym, exc)
+                        except Exception as _e:
+                            logger.debug("UnifiedEngine SLC %s: %s", sym, _e)
 
-                # ── HMM / NexusTrader regime path (Trend / Momentum) ──────────
-                #
-                # Phase 3.1 Optimisation: regime classification is now done via
-                # O(1) array lookup into pre-computed self._nx_regime / _nx_conf
-                # instead of calling RegimeClassifier._classify(df_window) per bar
-                # (was 99,653 calls × 0.448ms = 134s per simulation).
-                #
-                # Session 43 — HMM Confidence Gate:
-                # When hmm_confidence_min > 0, HMM-family signals (TrendModel,
-                # MomentumBreakout) are suppressed unless the NexusTrader regime
-                # confidence for the winning regime meets the threshold.
-                _hmm_probs_this_sym: Optional[dict] = None
+                # ── HMM / NexusTrader regime path (Trend / Momentum) ──────
+                # Phase 3.1: O(1) array lookup (pre-computed _nx_regime/_nx_conf)
                 if use_hmm:
                     try:
-                        # Phase 3.1: O(1) lookup replaces O(n) classify(df_window)
                         _nx_reg = self._nx_regime.get(sym)
                         _nx_cf  = self._nx_conf.get(sym)
-                        if _nx_reg is not None and loc < len(_nx_reg):
-                            hmm_regime = str(_nx_reg[loc])
-                            hmm_conf   = float(_nx_cf[loc])
+                        if _nx_reg is not None and _loc < len(_nx_reg):
+                            _hmm_regime = str(_nx_reg[_loc])
+                            _hmm_conf   = float(_nx_cf[_loc])
                         else:
-                            # Fallback: classify the window directly if precompute missing
                             if sym in self._hmm:
-                                hmm_regime, hmm_conf, _ = self._hmm[sym].classify(df_window)
+                                _hmm_regime, _hmm_conf, _ = self._hmm[sym].classify(_dfw)
                             else:
-                                hmm_regime, hmm_conf = "uncertain", 0.0
-                        hmm_probs = {hmm_regime: hmm_conf}
-                        _hmm_probs_this_sym = hmm_probs
+                                _hmm_regime, _hmm_conf = "uncertain", 0.0
+                        _hmm_probs_sym = {_hmm_regime: _hmm_conf}
 
-                        # ── Confidence gate (Session 43) ────────────────────────
-                        if _conf_gate > 0.0 and hmm_conf < _conf_gate:
-                            rejected_confidence += 1
+                        if _conf_gate > 0.0 and _hmm_conf < _conf_gate:
+                            _conf_rej = 1  # aggregated after map() returns
                             logger.debug(
                                 "UnifiedEngine conf-gate %s: hmm_conf=%.3f < %.2f — HMM skipped",
-                                sym, hmm_conf, _conf_gate,
+                                sym, _hmm_conf, _conf_gate,
                             )
-                        # Skip signals in crisis/liquidation_cascade regimes
-                        elif hmm_regime not in ("crisis", "liquidation_cascade"):
-                            hmm_active = [
-                                m for m in active_set if m in self._HMM_MODELS
-                            ]
-                            if hmm_active:
-                                raw = sig_gen.generate(
-                                    sym, df_window, hmm_regime, PRIMARY_TF,
-                                    regime_probs=hmm_probs, context={},
+                        elif _hmm_regime not in ("crisis", "liquidation_cascade"):
+                            _hmm_active = [m for m in active_set if m in self._HMM_MODELS]
+                            if _hmm_active:
+                                _raw = _sg.generate(
+                                    sym, _dfw, _hmm_regime, PRIMARY_TF,
+                                    regime_probs=_hmm_probs_sym, context={},
                                 ) or []
-                                candidate_signals.extend(
-                                    s for s in raw if s.model_name in hmm_active
+                                _cands.extend(
+                                    s for s in _raw if s.model_name in _hmm_active
                                 )
-                    except Exception as exc:
-                        logger.debug("UnifiedEngine regime classify %s: %s", sym, exc)
+                    except Exception as _e:
+                        logger.debug("UnifiedEngine regime classify %s: %s", sym, _e)
 
+                return sym, _cands, _hmm_probs_sym, _conf_rej
+
+            # Step 3: run generate() for all eligible symbols in parallel
+            _u_results: dict[str, tuple] = {}
+            for _r in (_sym_pool_u.map(_gen_sym_u, _eligible_u) if _eligible_u else []):
+                _u_results[_r[0]] = (_r[1], _r[2], _r[3])
+            # Accumulate confidence-gate rejections (returned per-symbol to avoid races)
+            for _rv in _u_results.values():
+                rejected_confidence += _rv[2] or 0  # type: ignore[index]
+
+            # Step 4: signal selection + portfolio gate (sequential, order-deterministic)
+            for sym in _eligible_u:
+                _u_res = _u_results.get(sym)
+                if not _u_res:
+                    continue
+                candidate_signals, _hmm_probs_this_sym = _u_res[0], _u_res[1]  # type: ignore[index]
                 if not candidate_signals:
                     continue
 
-                # ── Signal selection ───────────────────────────────────────────────
+                # ── Signal selection ───────────────────────────────────────
                 #
                 # Three selection policies, evaluated in order:
                 #
@@ -1708,6 +1751,9 @@ class BacktestRunner:
                     "size_usdt":  size_usdt,
                     "bar_signal": bar_idx,
                 }
+
+        # Bar loop complete — shut down unified symbol thread pool
+        _sym_pool_u.shutdown(wait=False, cancel_futures=True)
 
         # ── Force-close remaining open positions ──────────────────────────────
         if self._master_ts:

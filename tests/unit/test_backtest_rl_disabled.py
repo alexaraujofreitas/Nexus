@@ -50,23 +50,23 @@ def _make_sig_gen_with_mock_rl():
 class TestBacktestRLDisabled(unittest.TestCase):
 
     def test_run_scenario_sig_gen_rl_is_none(self):
-        """_run_scenario creates a SignalGenerator then sets _rl_model=None."""
+        """_run_scenario creates per-symbol SignalGenerators then sets _rl_model=None."""
         import ast, inspect
         import research.engine.backtest_runner as br
 
         src = inspect.getsource(br.BacktestRunner._run_scenario)
-        # Confirm _rl_model = None assignment exists in source
-        self.assertIn("sig_gen._rl_model = None", src,
-                      "_run_scenario must set sig_gen._rl_model = None after construction")
+        # Session 46: per-symbol sig_gens dict uses _sg._rl_model = None
+        self.assertIn("_sg._rl_model = None", src,
+                      "_run_scenario must set _sg._rl_model = None on each per-symbol instance")
 
     def test_run_unified_scenario_sig_gen_rl_is_none(self):
-        """_run_unified_scenario creates a SignalGenerator then sets _rl_model=None."""
+        """_run_unified_scenario creates per-symbol SignalGenerators then sets _rl_model=None."""
         import inspect
         import research.engine.backtest_runner as br
 
         src = inspect.getsource(br.BacktestRunner._run_unified_scenario)
-        self.assertIn("sig_gen._rl_model = None", src,
-                      "_run_unified_scenario must set sig_gen._rl_model = None after construction")
+        self.assertIn("_sg._rl_model = None", src,
+                      "_run_unified_scenario must set _sg._rl_model = None on each per-symbol instance")
 
     def test_rl_null_prevents_evaluate_call(self):
         """When _rl_model is None, generate() never calls rl.evaluate()."""
@@ -155,8 +155,9 @@ class TestBacktestRLDisabled(unittest.TestCase):
             if method is None:
                 continue
             src = inspect.getsource(method)
-            warmup_pos = src.find("sig_gen._warmup_complete = True")
-            rl_null_pos = src.find("sig_gen._rl_model = None")
+            # Session 46: per-symbol instances use _sg._warmup_complete / _sg._rl_model
+            warmup_pos = src.find("_sg._warmup_complete = True")
+            rl_null_pos = src.find("_sg._rl_model = None")
             self.assertGreater(rl_null_pos, warmup_pos,
                 f"{method_name}: _rl_model=None must appear after _warmup_complete=True")
 

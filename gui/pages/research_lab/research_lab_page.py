@@ -127,7 +127,7 @@ class _LabState:
     param_values:       dict = field(default_factory=dict)
     search_strategy:    str  = "coarse"      # "coarse"|"random"|"bayesian"
     n_random_trials:    int  = 100
-    n_workers:          int  = 2
+    n_workers:          int  = field(default_factory=lambda: max(2, __import__('multiprocessing').cpu_count() - 2))
     objective:          str  = "profit_factor"
     cost_per_side:      float= 0.0004
     # Phase 1 additions: period + asset selection
@@ -222,15 +222,24 @@ class SweepWorkerThread(QThread):
         if self._cancel:
             return
 
-        # Phase 2 — zero-fee scenario (indeterminate, long)
-        self.progress.emit(1, PHASES, 0.0, "Phase 2/4 — Running zero-fee scenario (may take 2–4 min)…")
-        r0 = runner.run(params={}, cost_per_side=0.0)
+        # Phase 2+3 — zero-fee and fee scenarios run in PARALLEL.
+        # runner.run() is safe to call concurrently: all shared runner state
+        # (_ind, _highs/_lows/_opens, _nx_regime, _master_ts) is read-only
+        # after load_data() completes.  Each run() creates its own local
+        # sig_gen, sizer, positions dict, and pending_entries, so there is no
+        # mutable state shared between the two threads.
+        # NumPy operations inside generate() release the GIL, giving true
+        # CPU parallelism even under Python's threading model.
+        import concurrent.futures as _cf
+        self.progress.emit(1, PHASES, 0.0,
+            "Phase 2+3/4 — Running zero-fee & fee scenarios in parallel…")
+        with _cf.ThreadPoolExecutor(max_workers=2) as _ex:
+            _f0 = _ex.submit(runner.run, {}, 0.0)
+            _f1 = _ex.submit(runner.run, {}, 0.0004)
+            r0 = _f0.result()
+            r1 = _f1.result()
         if self._cancel:
             return
-
-        # Phase 3 — fee scenario (indeterminate, long)
-        self.progress.emit(2, PHASES, 0.0, "Phase 3/4 — Running fee scenario…")
-        r1 = runner.run(params={}, cost_per_side=0.0004)
 
         # Phase 4 — validate (fast)
         self.indeterminate.emit(False)
@@ -791,12 +800,16 @@ class _SearchPanel(QWidget):
         vlay.addWidget(_form_row("Trials:", self._n_trials_spin))
         vlay.addWidget(_hsep())
 
-        # Workers
+        # Workers — scale to actual CPU count so the machine is fully utilised.
+        # Leave 2 logical cores headroom for OS + NexusTrader live scanner.
+        import multiprocessing as _mp
+        _cpu = _mp.cpu_count()
+        _default_workers = max(2, _cpu - 2)
         self._workers_spin = QSpinBox()
-        self._workers_spin.setRange(1, 8)
-        self._workers_spin.setValue(2)
+        self._workers_spin.setRange(1, _cpu)
+        self._workers_spin.setValue(_default_workers)
         self._workers_spin.setStyleSheet(_sp_style)
-        vlay.addWidget(_form_row("Workers:", self._workers_spin))
+        vlay.addWidget(_form_row(f"Workers (max {_cpu}):", self._workers_spin))
         vlay.addWidget(_hsep())
 
         # Objective
