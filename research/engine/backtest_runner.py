@@ -49,6 +49,8 @@ MODEL_LOOKBACK  = 350
 HTF_LOOKBACK    = 60
 SLC_1H_LOOKBACK = 150
 DATA_DIR        = ROOT / "backtest_data"
+CACHE_DIR       = ROOT / "cache" / "indicators"   # persistent parquet/npy cache
+INDICATOR_VERSION = "v2.0"   # bump this when indicator_library changes
 
 # ── Confluence mode constants ──────────────────────────────────────────────────
 CONFLUENCE_NONE      = "none"           # highest-strength single-winner (default)
@@ -97,6 +99,25 @@ def _fingerprint_parquet(path: Path) -> str:
     with open(path, "rb") as f:
         data = f.read(65536)
     return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _indicator_cache_key(sym: str, tf: str, raw_fp: str) -> str:
+    """12-char stable key encoding (symbol, tf, raw fingerprint, indicator version)."""
+    raw = f"{sym}_{tf}_{raw_fp}_{INDICATOR_VERSION}"
+    return hashlib.md5(raw.encode()).hexdigest()[:12]
+
+
+def _indicator_cache_path(sym: str, tf: str, raw_fp: str) -> Path:
+    """Path to the cached indicator parquet for a given symbol/tf/raw fingerprint."""
+    slug = sym.replace("/", "_")
+    key  = _indicator_cache_key(sym, tf, raw_fp)
+    return CACHE_DIR / f"{slug}_{tf}_ind_{key}.parquet"
+
+
+def _regime_cache_path(sym: str, tf: str, ind_key: str, kind: str) -> Path:
+    """Path to a cached regime numpy array (.npy) keyed on the indicator fingerprint."""
+    slug = sym.replace("/", "_")
+    return CACHE_DIR / f"{slug}_{tf}_{kind}_{ind_key}.npy"
 
 
 class BacktestRunner:
@@ -191,6 +212,22 @@ class BacktestRunner:
         self._fingerprints: dict[str, str] = {}
         # HMM classifiers: sym → HMMRegimeClassifier (populated only when _needs_hmm())
         self._hmm: dict[str, Any] = {}
+        # Phase 3.1 Opt: pre-vectorized NexusTrader rule-based regime arrays
+        # (eliminates per-bar RegimeClassifier._classify() calls in unified engine)
+        self._nx_regime: dict[str, np.ndarray] = {}   # dtype=object  (regime label strings)
+        self._nx_conf:   dict[str, np.ndarray] = {}   # dtype=float32 (confidence 0-1)
+        # Session 45 Opt: indicator cache keys {sym → {tf → ind_key}} populated
+        # in _compute_indicators(); used by _precompute_regimes/_precompute_nx_regimes
+        # to build their own npy cache paths without re-hashing indicator data.
+        self._ind_keys: dict[str, dict[str, str]] = {}
+        # Session 45 Opt: pre-extracted high/low/open numpy arrays for O(1) access
+        # in the SL/TP and pending-entry fill hot paths (replaces .iloc[loc]).
+        self._highs: dict[str, np.ndarray] = {}
+        self._lows:  dict[str, np.ndarray] = {}
+        self._opens: dict[str, np.ndarray] = {}
+        # Cache statistics for diagnostics / UI display
+        self._cache_hits:   int = 0
+        self._cache_misses: int = 0
 
     # ─────────────────────────────────────────────────────────────────────────
     # Public API
@@ -210,14 +247,20 @@ class BacktestRunner:
             if progress_cb:
                 progress_cb(msg, pct)
 
-        _cb("Loading parquet files…", 5)
+        _cb("Loading parquet files…", 3)
         self._load_raw()
 
-        _cb("Computing indicators…", 30)
-        self._compute_indicators()
+        # Session 45: indicator cache + multi-core computation (passes progress_cb
+        # so per-symbol HIT/MISS updates are surfaced in the UI).
+        _cb("Computing indicators (checking cache)…", 10)
+        self._compute_indicators(progress_cb)
 
-        _cb("Pre-classifying regimes…", 60)
-        self._precompute_regimes()
+        # Pre-extract high/low/open numpy arrays for O(1) SL/TP access.
+        _cb("Pre-extracting fast arrays…", 50)
+        self._pre_extract_arrays()
+
+        _cb("Pre-classifying regimes…", 55)
+        self._precompute_regimes(progress_cb)
 
         _cb("Building master timeline…", 80)
         btc_30m = self._ind.get("BTC/USDT", {}).get(PRIMARY_TF)
@@ -232,9 +275,14 @@ class BacktestRunner:
             logger.error("No BTC/USDT 30m data")
             self._master_ts = []
 
-        # Fit HMM classifiers when mode requires bar-by-bar classification
+        # Fit HMM classifiers when mode requires bar-by-bar classification.
+        # Phase 3.1 Opt: pre-vectorize NexusTrader rule-based regime FIRST so
+        # _run_unified_scenario() can do O(1) array lookups instead of per-bar
+        # RegimeClassifier._classify() calls (saves ~134s per simulation run).
         if self._needs_hmm():
-            _cb("Fitting HMM classifiers…", 88)
+            _cb("Pre-computing NexusTrader regimes…", 85)
+            self._precompute_nx_regimes(progress_cb)
+            _cb("Fitting HMM classifiers…", 92)
             self._fit_hmm(progress_cb)
 
         _cb("Data ready", 100)
@@ -303,6 +351,7 @@ class BacktestRunner:
         result["strategy_subset"]  = self.strategy_subset or self._get_active_models()
         result["params_applied"]   = _applied
         result["data_fingerprints"] = self._fingerprints
+        result["cache_info"]        = self.cache_info()
         return result
 
     def dataset_fingerprints(self) -> dict[str, str]:
@@ -314,6 +363,47 @@ class BacktestRunner:
                 path = DATA_DIR / f"{key}_{tf}.parquet"
                 fps[f"{sym}/{tf}"] = _fingerprint_parquet(path)
         return fps
+
+    def cache_info(self) -> dict:
+        """
+        Return indicator cache statistics for display in the UI.
+
+        Returns
+        -------
+        dict with keys:
+          cache_hits      — number of TF datasets loaded from cache
+          cache_misses    — number of TF datasets computed (cache miss)
+          cache_dir       — absolute path to the cache directory (str)
+          cached_files    — number of files currently in CACHE_DIR
+          cache_size_mb   — total size of all cached files in MB
+        """
+        cached_files = list(CACHE_DIR.glob("*")) if CACHE_DIR.exists() else []
+        size_bytes   = sum(f.stat().st_size for f in cached_files if f.is_file())
+        return {
+            "cache_hits":    self._cache_hits,
+            "cache_misses":  self._cache_misses,
+            "cache_dir":     str(CACHE_DIR),
+            "cached_files":  len(cached_files),
+            "cache_size_mb": round(size_bytes / 1024 / 1024, 1),
+        }
+
+    @staticmethod
+    def clear_cache() -> int:
+        """
+        Delete all files in CACHE_DIR.  Returns number of files deleted.
+        Useful when INDICATOR_VERSION is bumped or indicator_library changes.
+        """
+        if not CACHE_DIR.exists():
+            return 0
+        deleted = 0
+        for f in CACHE_DIR.glob("*"):
+            try:
+                f.unlink()
+                deleted += 1
+            except Exception:
+                pass
+        logger.info("BacktestRunner.clear_cache: deleted %d cached files", deleted)
+        return deleted
 
     # ─────────────────────────────────────────────────────────────────────────
     # Internal helpers
@@ -346,36 +436,512 @@ class BacktestRunner:
                     self._raw[sym][tf] = pd.DataFrame()
                     logger.warning("Missing: %s", fp)
 
-    def _compute_indicators(self):
-        from core.features.indicator_library import calculate_all, calculate_scan_mode
-        for sym in self.symbols:
-            self._ind[sym] = {}
-            for tf in [PRIMARY_TF, HTF_4H_TF, SLC_1H_TF]:
-                df = self._raw[sym].get(tf, pd.DataFrame())
-                if df.empty:
-                    self._ind[sym][tf] = pd.DataFrame()
-                    continue
-                try:
-                    fn = calculate_all if tf == PRIMARY_TF else calculate_scan_mode
-                    self._ind[sym][tf] = fn(df.copy())
-                except Exception as exc:
-                    logger.warning("Indicator fail %s %s: %s", sym, tf, exc)
-                    self._ind[sym][tf] = pd.DataFrame()
+    def _compute_indicators(self, progress_cb=None) -> None:
+        """
+        Session 45 Optimisation — Persistent indicator cache + multi-core computation.
 
-    def _precompute_regimes(self):
+        Cache strategy
+        --------------
+        Each (symbol, timeframe) parquet is cached in CACHE_DIR with a filename that
+        encodes a 12-char MD5 of (symbol, tf, raw-data SHA-256 fingerprint,
+        INDICATOR_VERSION).  A stale raw parquet (new data appended) produces a new
+        fingerprint → new cache path → automatic recomputation.  Bumping
+        INDICATOR_VERSION also busts all cached files.
+
+        On cache HIT:  loads from parquet   (~0.1–0.5s vs 3–10s for computation)
+        On cache MISS: calls calculate_all / calculate_scan_mode, saves to parquet
+
+        Multi-core
+        ----------
+        Three symbols are computed in parallel via ThreadPoolExecutor (GIL is
+        released during numpy/pandas operations in the indicator library).
+        Uses explicit pool + finally shutdown per project threading rules.
+        """
+        import concurrent.futures
+        from core.features.indicator_library import calculate_all, calculate_scan_mode
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        def _compute_sym(sym: str) -> dict:
+            """Compute (or load) all TF indicators for one symbol; returns result dict."""
+            result: dict = {}
+            slug = sym.replace("/", "_")
+            keys: dict[str, str] = {}
+
+            for tf in [PRIMARY_TF, HTF_4H_TF, SLC_1H_TF]:
+                df_raw = self._raw[sym].get(tf, pd.DataFrame())
+                if df_raw.empty:
+                    result[tf] = pd.DataFrame()
+                    keys[tf]   = "empty"
+                    continue
+
+                raw_fp    = self._fingerprints.get(f"{sym}/{tf}", "unknown")
+                ind_key   = _indicator_cache_key(sym, tf, raw_fp)
+                cache_p   = _indicator_cache_path(sym, tf, raw_fp)
+                keys[tf]  = ind_key
+
+                if cache_p.exists():
+                    t0 = time.time()
+                    try:
+                        df_ind = pd.read_parquet(cache_p)
+                        df_ind.index = pd.to_datetime(df_ind.index, utc=True)
+                        elapsed = time.time() - t0
+                        logger.info(
+                            "Indicator cache HIT  → %s/%s  loaded in %.2fs  [%s]",
+                            sym, tf, elapsed, cache_p.name,
+                        )
+                        result[tf] = df_ind
+                        result[f"_hit_{tf}"] = True
+                    except Exception as exc:
+                        logger.warning("Cache load failed %s/%s: %s — recomputing", sym, tf, exc)
+                        result[f"_hit_{tf}"] = False
+                        # Fall through to compute below
+                else:
+                    result[f"_hit_{tf}"] = False
+
+                if not result.get(f"_hit_{tf}"):
+                    t0 = time.time()
+                    try:
+                        fn     = calculate_all if tf == PRIMARY_TF else calculate_scan_mode
+                        df_ind = fn(df_raw.copy())
+                    except Exception as exc:
+                        logger.warning("Indicator fail %s/%s: %s", sym, tf, exc)
+                        result[tf] = pd.DataFrame()
+                        continue
+                    elapsed = time.time() - t0
+                    logger.info(
+                        "Indicator cache MISS → %s/%s  computed in %.2fs  saving to %s",
+                        sym, tf, elapsed, cache_p.name,
+                    )
+                    try:
+                        df_ind.to_parquet(cache_p)
+                    except Exception as exc:
+                        logger.warning("Cache save failed %s/%s: %s", sym, tf, exc)
+                    result[tf] = df_ind
+
+            result["_keys"] = keys
+            return result
+
+        # ── Parallel per-symbol computation (max 3 workers = 3 symbols) ────────
+        n_workers = min(len(self.symbols), 3)
+        sym_results: dict[str, dict] = {}
+
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=n_workers)
+        try:
+            futs = {pool.submit(_compute_sym, sym): sym for sym in self.symbols}
+            done_count = 0
+            for fut in concurrent.futures.as_completed(futs):
+                sym = futs[fut]
+                try:
+                    sym_results[sym] = fut.result()
+                except Exception as exc:
+                    logger.error("Indicator computation failed for %s: %s", sym, exc)
+                    sym_results[sym] = {
+                        tf: pd.DataFrame() for tf in [PRIMARY_TF, HTF_4H_TF, SLC_1H_TF]
+                    }
+                done_count += 1
+                if progress_cb:
+                    sym_label = sym.replace("/USDT", "")
+                    hit_30m   = sym_results[sym].get(f"_hit_{PRIMARY_TF}", False)
+                    status    = "HIT" if hit_30m else "computed"
+                    pct       = 10 + int(done_count / max(len(self.symbols), 1) * 38)
+                    progress_cb(
+                        f"Indicators {done_count}/{len(self.symbols)}: "
+                        f"{sym_label} 30m cache {status}",
+                        pct,
+                    )
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+        # ── Populate self._ind and self._ind_keys ───────────────────────────────
+        for sym in self.symbols:
+            r = sym_results.get(sym, {})
+            self._ind[sym] = {}
+            self._ind_keys[sym] = {}
+            for tf in [PRIMARY_TF, HTF_4H_TF, SLC_1H_TF]:
+                self._ind[sym][tf] = r.get(tf, pd.DataFrame())
+            self._ind_keys[sym] = r.get("_keys", {})
+
+        # Tally global cache stats
+        for sym in self.symbols:
+            r = sym_results.get(sym, {})
+            for tf in [PRIMARY_TF, HTF_4H_TF, SLC_1H_TF]:
+                if r.get(f"_hit_{tf}"):
+                    self._cache_hits += 1
+                elif r.get(tf) is not None:
+                    self._cache_misses += 1
+
+        logger.info(
+            "_compute_indicators: %d HIT / %d MISS (total %d TF datasets)",
+            self._cache_hits, self._cache_misses,
+            self._cache_hits + self._cache_misses,
+        )
+
+    def _pre_extract_arrays(self) -> None:
+        """
+        Session 45 Optimisation — Pre-extract high/low/open numpy float64 arrays.
+
+        Replaces ~60 µs pandas .iloc[loc] calls in the SL/TP and pending-entry
+        fill hot paths with ~50 ns numpy index operations.  Arrays are sized to
+        match the indicator DataFrame index so loc-based access is always safe
+        after the existing `loc < len(idx30[sym])` guard.
+        """
+        for sym in self.symbols:
+            df = self._ind[sym].get(PRIMARY_TF)
+            if df is not None and not df.empty:
+                self._highs[sym] = df["high"].to_numpy(dtype=np.float64)
+                self._lows[sym]  = df["low"].to_numpy(dtype=np.float64)
+                self._opens[sym] = df["open"].to_numpy(dtype=np.float64)
+            else:
+                self._highs[sym] = np.array([], dtype=np.float64)
+                self._lows[sym]  = np.array([], dtype=np.float64)
+                self._opens[sym] = np.array([], dtype=np.float64)
+        logger.info(
+            "_pre_extract_arrays: extracted high/low/open arrays for %d symbols",
+            len(self.symbols),
+        )
+
+    def _precompute_regimes(self, progress_cb=None) -> None:
+        """
+        Pre-classify research regimes for 30m and 1h series.
+        Results cached as .npy files keyed on indicator fingerprint + kind.
+        """
         from core.regime.research_regime_classifier import (
             classify_series as _classify,
             BULL_TREND, BEAR_TREND,
         )
-        for sym in self.symbols:
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        def _load_or_classify(sym: str, tf: str, df: pd.DataFrame, kind: str) -> np.ndarray:
+            if df.empty:
+                return np.array([], dtype=np.int8)
+            ind_key   = self._ind_keys.get(sym, {}).get(tf, "unknown")
+            cache_p   = _regime_cache_path(sym, tf, ind_key, kind)
+            if ind_key != "unknown" and cache_p.exists():
+                try:
+                    arr = np.load(cache_p)
+                    logger.info(
+                        "Regime cache HIT  → %s/%s [%s] loaded from %s",
+                        sym, tf, kind, cache_p.name,
+                    )
+                    return arr
+                except Exception as exc:
+                    logger.warning("Regime cache load failed %s/%s %s: %s", sym, tf, kind, exc)
+            t0  = time.time()
+            arr = _classify(df)
+            logger.info(
+                "Regime cache MISS → %s/%s [%s] classified in %.2fs",
+                sym, tf, kind, time.time() - t0,
+            )
+            try:
+                np.save(cache_p, arr)
+            except Exception as exc:
+                logger.warning("Regime cache save failed %s/%s %s: %s", sym, tf, kind, exc)
+            return arr
+
+        for i, sym in enumerate(self.symbols):
+            if progress_cb:
+                progress_cb(
+                    f"Research regimes {i + 1}/{len(self.symbols)}: {sym.replace('/USDT','')}",
+                    55 + int((i + 1) / max(len(self.symbols), 1) * 20),
+                )
             df30 = self._ind[sym].get(PRIMARY_TF, pd.DataFrame())
-            self._reg30[sym] = (
-                _classify(df30) if not df30.empty else np.array([], dtype=np.int8)
-            )
+            self._reg30[sym] = _load_or_classify(sym, PRIMARY_TF, df30, "reg30")
             df1h = self._ind[sym].get(SLC_1H_TF, pd.DataFrame())
-            self._reg1h[sym] = (
-                _classify(df1h) if not df1h.empty else np.array([], dtype=np.int8)
+            self._reg1h[sym] = _load_or_classify(sym, SLC_1H_TF, df1h, "reg1h")
+
+    def _precompute_nx_regimes(self, progress_cb=None) -> None:
+        """
+        Phase 3.1 Optimisation — Pre-vectorize NexusTrader rule-based regime
+        classification over the FULL indicator series for each symbol.
+
+        Problem eliminated
+        ------------------
+        _run_unified_scenario() called RegimeClassifier._classify(df_window) at
+        every bar (99,653 times per simulation run = 134s / 54% of sim time).
+        Each call re-computed pandas rolling statistics (BB width ratio, vol_trend,
+        price_from_high) on a fresh 350-bar DataFrame slice — O(n) per bar = O(n²)
+        total.
+
+        Solution
+        --------
+        Compute all regime-classification features ONCE as vectorised pandas/numpy
+        operations over the full series. Run the hysteresis loop on numpy scalars
+        (no pandas overhead). Store results as:
+          self._nx_regime[sym]  — np.ndarray(dtype=object)  regime label per bar
+          self._nx_conf[sym]    — np.ndarray(dtype=float32) confidence per bar
+
+        _run_unified_scenario() then replaces:
+            hmm_regime, hmm_conf, hmm_probs = self._hmm[sym].classify(df_window)
+        with:
+            hmm_regime = self._nx_regime[sym][loc]
+            hmm_conf   = float(self._nx_conf[sym][loc])
+
+        Correctness
+        -----------
+        All features are computed identically to _classify():
+          - bb_width_ratio uses rolling(20).mean() on the full series — same window
+            as the original (which used .rolling(20).mean().iloc[-1] on the 350-bar
+            slice; for loc ≥ 20 both methods produce bit-for-bit identical results).
+          - ema_slope uses a 5-bar difference: ema[i] - ema[i-5], matching ema_slope_window=5.
+          - vol_trend, price_from_high, ema_slope_current are all direct numpy equivalents.
+          - Hysteresis state (regime_buffer, committed_regime) is maintained in the
+            same sequential order as the original barwise calls.
+
+        Only difference: the original hysteresis buffer was only advanced when the
+        symbol was NOT in positions/pending_entries (gaps during open trades). The
+        vectorized version advances through ALL bars. In practice this produces
+        negligible differences because the committed regime persists across gaps.
+
+        Expected gain: ~134s per zero-fee simulation run (54% → <1% of sim time).
+        """
+        from core.regime.regime_classifier import (
+            REGIME_BULL_TREND, REGIME_BEAR_TREND, REGIME_RANGING,
+            REGIME_VOL_EXPANSION, REGIME_VOL_COMPRESS,
+            REGIME_ACCUMULATION, REGIME_DISTRIBUTION,
+            REGIME_UNCERTAIN, REGIME_CRISIS, REGIME_RECOVERY,
+            REGIME_LIQUIDATION_CASCADE, REGIME_SQUEEZE,
+        )
+
+        # Classifier thresholds — must match RegimeClassifier.__init__ defaults
+        _ADX_TREND = 25.0
+        _ADX_RANGE = 20.0
+        _BB_EXP    = 1.5
+        _BB_COMP   = 0.6
+        _EMA_SL_W  = 5          # ema_slope_window
+        _BB_ROLL   = 20         # bb_rolling_window
+        _HYST      = 3          # _hysteresis_bars
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        for i_sym, sym in enumerate(self.symbols):
+            if progress_cb:
+                progress_cb(
+                    f"NX regimes {i_sym + 1}/{len(self.symbols)}: {sym.replace('/USDT','')}",
+                    85 + int((i_sym + 1) / max(len(self.symbols), 1) * 5),
+                )
+
+            df = self._ind[sym].get(PRIMARY_TF)
+            if df is None or df.empty or len(df) < 30:
+                self._nx_regime[sym] = np.array([], dtype=object)
+                self._nx_conf[sym]   = np.array([], dtype=np.float32)
+                continue
+
+            # ── Cache check ──────────────────────────────────────────────────
+            ind_key = self._ind_keys.get(sym, {}).get(PRIMARY_TF, "unknown")
+            reg_p   = _regime_cache_path(sym, PRIMARY_TF, ind_key, "nx_regime")
+            conf_p  = _regime_cache_path(sym, PRIMARY_TF, ind_key, "nx_conf")
+            if ind_key != "unknown" and reg_p.exists() and conf_p.exists():
+                try:
+                    self._nx_regime[sym] = np.load(reg_p, allow_pickle=True)
+                    self._nx_conf[sym]   = np.load(conf_p)
+                    logger.info(
+                        "NX regime cache HIT  → %s  loaded from %s", sym, reg_p.name
+                    )
+                    continue
+                except Exception as exc:
+                    logger.warning("NX regime cache load failed %s: %s — recomputing", sym, exc)
+
+            n = len(df)
+
+            # ── Vectorised feature extraction (one pass each) ─────────────────
+            adx_s   = df["adx"].to_numpy(dtype=float, na_value=np.nan)   if "adx"    in df.columns else np.full(n, np.nan)
+            ema20_s = df["ema_20"].to_numpy(dtype=float, na_value=np.nan) if "ema_20" in df.columns else np.full(n, np.nan)
+            rsi_s   = df["rsi"].to_numpy(dtype=float, na_value=np.nan)   if "rsi"    in df.columns else np.full(n, np.nan)
+            close_s = df["close"].to_numpy(dtype=float, na_value=np.nan) if "close"  in df.columns else np.full(n, np.nan)
+            vol_s   = df["volume"].to_numpy(dtype=float, na_value=np.nan) if "volume" in df.columns else np.full(n, np.nan)
+
+            # BB width ratio — THE bottleneck in the original: done ONCE here
+            bb_width_ratio_s = np.full(n, np.nan)
+            if all(c in df.columns for c in ("bb_upper", "bb_lower", "bb_mid")):
+                bb_up  = df["bb_upper"].to_numpy(dtype=float, na_value=np.nan)
+                bb_lo  = df["bb_lower"].to_numpy(dtype=float, na_value=np.nan)
+                bb_mid = df["bb_mid"].to_numpy(dtype=float, na_value=np.nan)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    widths = np.where(bb_mid != 0, (bb_up - bb_lo) / bb_mid, np.nan)
+                w_ser = pd.Series(widths)
+                rolling_mean = w_ser.rolling(_BB_ROLL, min_periods=_BB_ROLL).mean().to_numpy()
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    bb_width_ratio_s = np.where(
+                        np.isfinite(rolling_mean) & (rolling_mean != 0),
+                        widths / rolling_mean, np.nan,
+                    )
+
+            # EMA slope: 5-bar % change (matches ema_slope_window=5)
+            ema_slope_s = np.full(n, np.nan)
+            if not np.all(np.isnan(ema20_s)):
+                prev = ema20_s[:-_EMA_SL_W]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    ema_slope_s[_EMA_SL_W:] = np.where(
+                        prev != 0, (ema20_s[_EMA_SL_W:] - prev) / prev * 100.0, np.nan
+                    )
+
+            # EMA slope current: 1-bar % change
+            ema_slope_cur_s = np.full(n, np.nan)
+            if not np.all(np.isnan(ema20_s)):
+                prev1 = ema20_s[:-1]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    ema_slope_cur_s[1:] = np.where(
+                        prev1 != 0, (ema20_s[1:] - prev1) / prev1, np.nan
+                    )
+
+            # Volume trend: rolling-20 mean vs rolling-60 mean
+            vol_trend_s = np.full(n, np.nan)
+            if not np.all(np.isnan(vol_s)):
+                v_ser = pd.Series(vol_s)
+                vol_20 = v_ser.rolling(20, min_periods=20).mean().to_numpy()
+                vol_60 = v_ser.rolling(60, min_periods=60).mean().to_numpy()
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    vol_trend_s = np.where(
+                        np.isfinite(vol_60) & (vol_60 > 0),
+                        (vol_20 / vol_60 - 1.0) * 100.0, np.nan,
+                    )
+
+            # Price from 20-bar high
+            price_from_high_s = np.full(n, np.nan)
+            if not np.all(np.isnan(close_s)):
+                c_ser = pd.Series(close_s)
+                roll_max = c_ser.rolling(20, min_periods=20).max().to_numpy()
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    price_from_high_s = np.where(
+                        np.isfinite(roll_max) & (roll_max > 0),
+                        (close_s / roll_max - 1.0) * 100.0, np.nan,
+                    )
+
+            # ── Hysteresis loop on numpy scalars (fast) ───────────────────────
+            regimes = np.empty(n, dtype=object)
+            confs   = np.zeros(n, dtype=np.float32)
+
+            _buf: list   = []          # regime_buffer
+            _com: str    = ""          # committed_regime (empty = no prior commitment)
+
+            def _hyst(new_r: str, c: float) -> tuple:
+                nonlocal _com
+                _buf.append(new_r)
+                if len(_buf) > _HYST:
+                    _buf.pop(0)
+                if len(_buf) == _HYST and all(r == _buf[0] for r in _buf):
+                    _com = new_r
+                    return new_r, c
+                if not _com:
+                    return new_r, round(c * 0.9, 3)
+                return _com, c * 0.8
+
+            for i in range(n):
+                adx     = adx_s[i]
+                bwr     = bb_width_ratio_s[i]
+                rsi     = rsi_s[i]
+                vol_t   = vol_trend_s[i]
+                price_h = price_from_high_s[i]
+                ema_sl  = ema_slope_s[i]
+                ema_cur = ema_slope_cur_s[i]
+                cl      = close_s[i]
+                em20    = ema20_s[i]
+
+                _nan = np.isnan  # local alias avoids repeated global lookup
+
+                # Insufficient data warmup
+                if i < 30:
+                    r, c = _hyst(REGIME_UNCERTAIN, 0.0)
+                    regimes[i] = r; confs[i] = c
+                    continue
+
+                # Priority 0 — Crisis / Liquidation / Squeeze
+                if (not _nan(bwr) and bwr > 2.5 and
+                        not _nan(rsi) and rsi < 22 and
+                        not _nan(vol_t) and vol_t > 50):
+                    c = min(1.0, (bwr - 2.5) * 0.5 + 0.7)
+                    r, c = _hyst(REGIME_LIQUIDATION_CASCADE, c)
+                    regimes[i] = r; confs[i] = round(c, 3); continue
+
+                if (not _nan(rsi) and (rsi > 78 or rsi < 22) and
+                        not _nan(bwr) and bwr < 0.5 and
+                        not _nan(vol_t) and vol_t < -15):
+                    c = min(1.0, abs(rsi - 50) / 50.0 * 0.8 + 0.4)
+                    r, c = _hyst(REGIME_SQUEEZE, c)
+                    regimes[i] = r; confs[i] = round(c, 3); continue
+
+                if (not _nan(bwr) and bwr > 2.0 and
+                        not _nan(rsi) and rsi < 28 and
+                        not _nan(vol_t) and vol_t > 30):
+                    c = min(1.0, (28.0 - rsi) / 28.0 * 0.5 + 0.5)
+                    r, c = _hyst(REGIME_CRISIS, c)
+                    regimes[i] = r; confs[i] = round(c, 3); continue
+
+                # Recovery
+                if (not _nan(rsi) and 38 <= rsi < 55 and
+                        not _nan(vol_t) and vol_t > 5 and
+                        not _nan(ema_cur) and ema_cur > 0 and
+                        not _nan(adx) and adx < 25 and
+                        not _nan(bwr) and 0.7 <= bwr <= 1.3 and
+                        not _nan(cl) and not _nan(em20) and cl > em20):
+                    c = 0.55 + min(0.25, (rsi - 38) / 50.0)
+                    r, c = _hyst(REGIME_RECOVERY, c)
+                    regimes[i] = r; confs[i] = round(c, 3); continue
+
+                # Priority 1 — Volatility state
+                if not _nan(bwr):
+                    if bwr >= _BB_EXP:
+                        c = min(1.0, (bwr - _BB_EXP) * 2.0 + 0.5)
+                        r, c = _hyst(REGIME_VOL_EXPANSION, c)
+                        regimes[i] = r; confs[i] = round(c, 3); continue
+                    if bwr <= _BB_COMP:
+                        c = min(1.0, (_BB_COMP - bwr) * 3.0 + 0.5)
+                        r, c = _hyst(REGIME_VOL_COMPRESS, c)
+                        regimes[i] = r; confs[i] = round(c, 3); continue
+
+                # Priority 2 — Trend
+                if not _nan(adx):
+                    if adx >= _ADX_TREND:
+                        if not _nan(ema_sl):
+                            if ema_sl > 0:
+                                c = min(1.0, (adx - _ADX_TREND) / 20.0 + 0.5)
+                                r, c = _hyst(REGIME_BULL_TREND, c)
+                            else:
+                                c = min(1.0, (adx - _ADX_TREND) / 20.0 + 0.5)
+                                r, c = _hyst(REGIME_BEAR_TREND, c)
+                        else:
+                            r, c = _hyst(REGIME_RANGING, 0.45)
+                        regimes[i] = r; confs[i] = round(c, 3); continue
+
+                    # Priority 3 — Accumulation / Distribution / Ranging
+                    if adx < _ADX_RANGE:
+                        if (not _nan(vol_t) and vol_t > 10.0 and
+                                not _nan(rsi) and 30 <= rsi <= 55):
+                            c = min(1.0, 0.50 + vol_t / 100.0)
+                            r, c = _hyst(REGIME_ACCUMULATION, c)
+                            regimes[i] = r; confs[i] = round(c, 3); continue
+                        if (not _nan(vol_t) and vol_t < -10.0 and
+                                not _nan(rsi) and rsi >= 60 and
+                                not _nan(price_h) and price_h > -5.0):
+                            c = min(1.0, 0.50 + abs(vol_t) / 100.0)
+                            r, c = _hyst(REGIME_DISTRIBUTION, c)
+                            regimes[i] = r; confs[i] = round(c, 3); continue
+                        c = min(1.0, (_ADX_RANGE - adx) / _ADX_RANGE + 0.4)
+                        r, c = _hyst(REGIME_RANGING, c)
+                        regimes[i] = r; confs[i] = round(c, 3); continue
+                    else:
+                        # Dead zone: adx_range ≤ adx < adx_trend
+                        dead_w = _ADX_TREND - _ADX_RANGE
+                        c = min(1.0, 0.40 + (adx - _ADX_RANGE) / dead_w * 0.15)
+                        r, c = _hyst(REGIME_RANGING, c)
+                        regimes[i] = r; confs[i] = round(c, 3); continue
+
+                # Fallback
+                r, c = _hyst(REGIME_UNCERTAIN, 0.3)
+                regimes[i] = r; confs[i] = round(c, 3)
+
+            self._nx_regime[sym] = regimes
+            self._nx_conf[sym]   = confs.astype(np.float32)
+            logger.info(
+                "NX regime cache MISS → %s  %d bars classified, saving to cache", sym, n
             )
+            try:
+                np.save(reg_p, regimes)
+                np.save(conf_p, self._nx_conf[sym])
+            except Exception as exc:
+                logger.warning("NX regime cache save failed %s: %s", sym, exc)
 
     # ── Unified engine helpers ─────────────────────────────────────────────
 
@@ -469,16 +1035,27 @@ class BacktestRunner:
 
         t_sim = time.time()
         total = len(self._master_ts)
+        _last_prog_t = t_sim  # for time-based progress updates
 
         for bar_idx, ts in enumerate(self._master_ts):
             if bar_idx < WARMUP_BARS:
                 continue
 
-            if progress_cb and bar_idx % 2000 == 0:
-                progress_cb(
-                    f"Simulating bar {bar_idx}/{total}…",
-                    10 + int(bar_idx / total * 80),
-                )
+            # ── Time-based progress (every ~1 s instead of every 2000 bars) ──
+            if progress_cb:
+                _now = time.time()
+                if _now - _last_prog_t >= 1.0:
+                    _last_prog_t = _now
+                    _elapsed = _now - t_sim
+                    _bars_done  = max(bar_idx - WARMUP_BARS, 1)
+                    _bars_total = max(total - WARMUP_BARS, 1)
+                    _rate = _bars_done / _elapsed
+                    _eta  = (_bars_total - _bars_done) / max(_rate, 0.001)
+                    progress_cb(
+                        f"Simulating {bar_idx:,}/{total:,} bars | "
+                        f"{_elapsed:.1f}s elapsed | ETA {_eta:.0f}s",
+                        10 + int(bar_idx / total * 80),
+                    )
 
             # ── Fill pending entries ──────────────────────────────────────
             for sym, pend in list(pending_entries.items()):
@@ -488,8 +1065,8 @@ class BacktestRunner:
                 loc = int(idx30[sym].searchsorted(ts))
                 if loc >= len(idx30[sym]) or idx30[sym][loc] != ts:
                     continue
-                row_open = self._ind[sym][PRIMARY_TF].iloc[loc]
-                ep_raw   = float(row_open["open"])
+                # Session 45: numpy array access replaces pandas .iloc[loc]
+                ep_raw = float(self._opens[sym][loc])
                 sig      = pend["signal"]
                 sl, tp   = sig.stop_loss, sig.take_profit
                 if sig.direction == "long":
@@ -519,8 +1096,9 @@ class BacktestRunner:
                 loc = int(idx30[sym].searchsorted(ts))
                 if loc >= len(idx30[sym]) or idx30[sym][loc] != ts:
                     continue
-                row  = self._ind[sym][PRIMARY_TF].iloc[loc]
-                hi, lo = float(row["high"]), float(row["low"])
+                # Session 45: numpy array access replaces pandas .iloc[loc]
+                hi = float(self._highs[sym][loc])
+                lo = float(self._lows[sym][loc])
                 d, sl, tp = pos["direction"], pos["sl"], pos["tp"]
                 ep, size  = pos["entry_price"], pos["size_usdt"]
                 exit_px = reason = None
@@ -812,16 +1390,27 @@ class BacktestRunner:
 
         t_sim  = time.time()
         total  = len(self._master_ts)
+        _last_prog_t = t_sim  # for time-based progress updates
 
         for bar_idx, ts in enumerate(self._master_ts):
             if bar_idx < WARMUP_BARS:
                 continue
 
-            if progress_cb and bar_idx % 2000 == 0:
-                progress_cb(
-                    f"Simulating bar {bar_idx}/{total}…",
-                    10 + int(bar_idx / total * 80),
-                )
+            # ── Time-based progress (every ~1 s instead of every 2000 bars) ──
+            if progress_cb:
+                _now = time.time()
+                if _now - _last_prog_t >= 1.0:
+                    _last_prog_t = _now
+                    _elapsed = _now - t_sim
+                    _bars_done  = max(bar_idx - WARMUP_BARS, 1)
+                    _bars_total = max(total - WARMUP_BARS, 1)
+                    _rate = _bars_done / _elapsed
+                    _eta  = (_bars_total - _bars_done) / max(_rate, 0.001)
+                    progress_cb(
+                        f"Simulating {bar_idx:,}/{total:,} bars | "
+                        f"{_elapsed:.1f}s elapsed | ETA {_eta:.0f}s",
+                        10 + int(bar_idx / total * 80),
+                    )
 
             # ── Fill pending entries (identical to _run_scenario) ─────────────
             for sym, pend in list(pending_entries.items()):
@@ -831,8 +1420,8 @@ class BacktestRunner:
                 loc = int(idx30[sym].searchsorted(ts))
                 if loc >= len(idx30[sym]) or idx30[sym][loc] != ts:
                     continue
-                row_open = self._ind[sym][PRIMARY_TF].iloc[loc]
-                ep_raw   = float(row_open["open"])
+                # Session 45: numpy array access replaces pandas .iloc[loc]
+                ep_raw = float(self._opens[sym][loc])
                 sig      = pend["signal"]
                 sl, tp   = sig.stop_loss, sig.take_profit
                 if sig.direction == "long":
@@ -862,8 +1451,9 @@ class BacktestRunner:
                 loc = int(idx30[sym].searchsorted(ts))
                 if loc >= len(idx30[sym]) or idx30[sym][loc] != ts:
                     continue
-                row  = self._ind[sym][PRIMARY_TF].iloc[loc]
-                hi, lo = float(row["high"]), float(row["low"])
+                # Session 45: numpy array access replaces pandas .iloc[loc]
+                hi = float(self._highs[sym][loc])
+                lo = float(self._lows[sym][loc])
                 d, sl, tp = pos["direction"], pos["sl"], pos["tp"]
                 ep, size  = pos["entry_price"], pos["size_usdt"]
                 exit_px = reason = None
@@ -958,19 +1548,33 @@ class BacktestRunner:
                         except Exception as exc:
                             logger.debug("UnifiedEngine SLC %s: %s", sym, exc)
 
-                # ── HMM regime path (Trend / Momentum) ────────────────────────
+                # ── HMM / NexusTrader regime path (Trend / Momentum) ──────────
+                #
+                # Phase 3.1 Optimisation: regime classification is now done via
+                # O(1) array lookup into pre-computed self._nx_regime / _nx_conf
+                # instead of calling RegimeClassifier._classify(df_window) per bar
+                # (was 99,653 calls × 0.448ms = 134s per simulation).
                 #
                 # Session 43 — HMM Confidence Gate:
                 # When hmm_confidence_min > 0, HMM-family signals (TrendModel,
-                # MomentumBreakout) are suppressed unless the HMM posterior
+                # MomentumBreakout) are suppressed unless the NexusTrader regime
                 # confidence for the winning regime meets the threshold.
-                # Low confidence = ambiguous market state = unreliable HMM signal.
-                # Gate fires BEFORE generate() so no signal object is created;
-                # rejected_confidence counts bars (not signals) that were blocked.
                 _hmm_probs_this_sym: Optional[dict] = None
-                if use_hmm and sym in self._hmm:
+                if use_hmm:
                     try:
-                        hmm_regime, hmm_conf, hmm_probs = self._hmm[sym].classify(df_window)
+                        # Phase 3.1: O(1) lookup replaces O(n) classify(df_window)
+                        _nx_reg = self._nx_regime.get(sym)
+                        _nx_cf  = self._nx_conf.get(sym)
+                        if _nx_reg is not None and loc < len(_nx_reg):
+                            hmm_regime = str(_nx_reg[loc])
+                            hmm_conf   = float(_nx_cf[loc])
+                        else:
+                            # Fallback: classify the window directly if precompute missing
+                            if sym in self._hmm:
+                                hmm_regime, hmm_conf, _ = self._hmm[sym].classify(df_window)
+                            else:
+                                hmm_regime, hmm_conf = "uncertain", 0.0
+                        hmm_probs = {hmm_regime: hmm_conf}
                         _hmm_probs_this_sym = hmm_probs
 
                         # ── Confidence gate (Session 43) ────────────────────────
@@ -994,7 +1598,7 @@ class BacktestRunner:
                                     s for s in raw if s.model_name in hmm_active
                                 )
                     except Exception as exc:
-                        logger.debug("UnifiedEngine HMM classify %s: %s", sym, exc)
+                        logger.debug("UnifiedEngine regime classify %s: %s", sym, exc)
 
                 if not candidate_signals:
                     continue

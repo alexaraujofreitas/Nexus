@@ -130,9 +130,29 @@ class NewsFeed:
         # Sort by timestamp descending
         headlines.sort(key=lambda h: h["timestamp"], reverse=True)
 
-        # Enforce max age
+        # Enforce max age — primary window
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
-        headlines = [h for h in headlines if h["timestamp"] >= cutoff]
+        recent = [h for h in headlines if h["timestamp"] >= cutoff]
+
+        if recent:
+            headlines = recent
+        else:
+            # Primary window (default 8h) is empty — common during the US
+            # business-hours gap (~20:00–08:00 UTC) when crypto outlets publish
+            # fewer articles.  Fall back to a 24h window and tag articles as
+            # stale so callers can weight them lower if desired.
+            extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            stale = [h for h in headlines if h["timestamp"] >= extended_cutoff]
+            for h in stale:
+                h["_stale"] = True
+            if stale:
+                headlines = stale
+                logger.debug(
+                    f"NewsFeed: primary {max_age_minutes}min window empty — "
+                    f"using 24h fallback ({len(stale)} stale headlines)"
+                )
+            else:
+                headlines = []
 
         # Limit to 50
         headlines = headlines[:50]

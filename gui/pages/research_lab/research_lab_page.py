@@ -154,11 +154,12 @@ class SweepWorkerThread(QThread):
     Runs baseline or sweep in background thread.
     All results → main thread via queued signals.
     """
-    progress      = Signal(int, int, float, str)   # completed, total, best_pf, msg
-    indeterminate = Signal(bool)                   # True → pulsing bar, False → normal
-    trial_done    = Signal(dict)                   # one trial result
-    finished_ok   = Signal(dict)                  # final summary
-    error_signal  = Signal(str)                   # error message
+    progress       = Signal(int, int, float, str)   # completed, total, best_pf, msg
+    indeterminate  = Signal(bool)                   # True → pulsing bar, False → normal
+    trial_done     = Signal(dict)                   # one trial result
+    finished_ok    = Signal(dict)                   # final summary
+    error_signal   = Signal(str)                    # error message
+    cache_info_sig = Signal(dict)                   # cache HIT/MISS stats after load_data
 
     def __init__(
         self,
@@ -208,7 +209,16 @@ class SweepWorkerThread(QThread):
             orchestration_mode   = _orch,
             hmm_confidence_min   = _conf_min,
         )
-        runner.load_data()
+        # Wire granular load_data() progress into the UI progress signal.
+        # progress_cb signature: (msg: str, pct: float)
+        def _data_progress(msg: str, pct: float):
+            self.progress.emit(int(pct), 100, 0.0, msg)
+
+        runner.load_data(progress_cb=_data_progress)
+
+        # Emit cache stats so the UI can show HIT/MISS summary
+        self.cache_info_sig.emit(runner.cache_info())
+
         if self._cancel:
             return
 
@@ -1341,6 +1351,25 @@ class _ProgressPanel(QWidget):
         self._msg_lbl = _label("Idle", color=_TEXT)
         vlay.addWidget(self._msg_lbl)
 
+        # ── Cache status row ──────────────────────────────────────────────────
+        cache_row = QHBoxLayout()
+        self._cache_lbl = _label("Indicator cache: —", color=_DIM, size=11)
+        self._cache_lbl.setStyleSheet(f"color:{_DIM}; font-size:11px;")
+        cache_row.addWidget(self._cache_lbl)
+        cache_row.addStretch()
+        from PySide6.QtWidgets import QPushButton
+        self._clear_cache_btn = QPushButton("🗑 Clear Cache")
+        self._clear_cache_btn.setFixedHeight(22)
+        self._clear_cache_btn.setStyleSheet(
+            f"QPushButton {{ background:#3a2020; color:#cc6666; border:1px solid #664444;"
+            " border-radius:3px; font-size:11px; padding:0 8px; }}"
+            "QPushButton:hover { background:#4a2a2a; }"
+            "QPushButton:disabled { color:#555; border-color:#333; }"
+        )
+        self._clear_cache_btn.clicked.connect(self._on_clear_cache)
+        cache_row.addWidget(self._clear_cache_btn)
+        vlay.addLayout(cache_row)
+
         # Mini leaderboard (top-5)
         self._mini_table = QTableWidget(5, 3)
         self._mini_table.setHorizontalHeaderLabels(["Rank", "PF", "n"])
@@ -1384,6 +1413,34 @@ class _ProgressPanel(QWidget):
             self._mini_table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
             self._mini_table.setItem(i, 1, QTableWidgetItem(f"{row.get('profit_factor',0):.4f}"))
             self._mini_table.setItem(i, 2, QTableWidgetItem(str(row.get('n_trades', 0))))
+
+    def update_cache_info(self, info: dict):
+        """Update the cache status label with HIT/MISS and size info."""
+        if not info:
+            return
+        hits   = info.get("cache_hits",    0)
+        misses = info.get("cache_misses",  0)
+        size   = info.get("cache_size_mb", 0.0)
+        total  = hits + misses
+        if total == 0:
+            return
+        hit_pct = int(hits / total * 100)
+        color   = _GREEN if hit_pct >= 80 else (_AMBER if hit_pct >= 50 else _TEXT)
+        self._cache_lbl.setText(
+            f"Cache: {hits}/{total} HIT ({hit_pct}%) | {size:.0f} MB"
+        )
+        self._cache_lbl.setStyleSheet(f"color:{color}; font-size:11px;")
+
+    def _on_clear_cache(self):
+        """Delete all cached indicator/regime files (blocking, fast)."""
+        try:
+            from research.engine.backtest_runner import BacktestRunner
+            n = BacktestRunner.clear_cache()
+            self._cache_lbl.setText(f"Cache cleared ({n} files deleted)")
+            self._cache_lbl.setStyleSheet(f"color:{_AMBER}; font-size:11px;")
+        except Exception as exc:
+            self._cache_lbl.setText(f"Clear failed: {exc}")
+            self._cache_lbl.setStyleSheet(f"color:#cc6666; font-size:11px;")
 
     def reset(self):
         self._bar.setRange(0, 100)
@@ -1797,6 +1854,8 @@ class ResearchLabPage(QWidget):
         self._worker.indeterminate.connect(self._progress_panel.set_indeterminate)
         self._worker.finished_ok.connect(self._on_baseline_done)
         self._worker.error_signal.connect(self._on_error)
+        # Session 45: wire cache info to progress panel display
+        self._worker.cache_info_sig.connect(self._progress_panel.update_cache_info)
         self._worker.start()
 
     @Slot()
