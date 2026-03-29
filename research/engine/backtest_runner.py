@@ -72,6 +72,23 @@ CONFLUENCE_TECHNICAL = "technical_only" # technical-only ConfluenceScorer gate
 ORCHESTRATION_NAIVE             = "naive"             # original; all compete by strength
 ORCHESTRATION_RESEARCH_PRIORITY = "research_priority" # Session 42: PBL/SLC beat Trend/MB
 
+# ── HMM confidence gate constants ─────────────────────────────────────────────
+# Controls the minimum HMM posterior probability required before TrendModel and
+# MomentumBreakout are allowed to generate signals in _run_unified_scenario().
+#
+# The HMMRegimeClassifier.classify() always returns a confidence score (0–1)
+# representing the posterior probability of the winning regime.  A low score
+# (e.g. <0.60) means the HMM sees the bar as ambiguous — TrendModel/MB entries
+# in that condition have historically produced PF<1.0 in the unified pool.
+#
+# HMM_CONFIDENCE_GATE_OFF (0.0) — no gating; original behavior (Naive/RP baseline).
+# Any positive value (e.g. 0.60, 0.70, 0.80) blocks HMM-family signals when the
+# HMM posterior for the chosen regime is below the threshold.
+#
+# This parameter does NOT affect mode="pbl_slc", which always calls _run_scenario().
+# It does NOT affect PBL or SLC, which use the ResearchRegimeClassifier.
+HMM_CONFIDENCE_GATE_OFF = 0.0   # no gating (default — preserves prior behavior)
+
 
 def _fingerprint_parquet(path: Path) -> str:
     """SHA-256 of first 64 KB of a parquet file (fast, stable)."""
@@ -116,13 +133,14 @@ class BacktestRunner:
 
     def __init__(
         self,
-        date_start:         Optional[str]        = None,
-        date_end:           Optional[str]        = None,
-        symbols:            Optional[list[str]]  = None,
-        mode:               str                  = "pbl_slc",
-        strategy_subset:    Optional[list[str]]  = None,
-        confluence_mode:    str                  = CONFLUENCE_NONE,
-        orchestration_mode: str                  = ORCHESTRATION_NAIVE,
+        date_start:           Optional[str]        = None,
+        date_end:             Optional[str]        = None,
+        symbols:              Optional[list[str]]  = None,
+        mode:                 str                  = "pbl_slc",
+        strategy_subset:      Optional[list[str]]  = None,
+        confluence_mode:      str                  = CONFLUENCE_NONE,
+        orchestration_mode:   str                  = ORCHESTRATION_NAIVE,
+        hmm_confidence_min:   float                = HMM_CONFIDENCE_GATE_OFF,
     ):
         """
         Parameters
@@ -148,14 +166,22 @@ class BacktestRunner:
             ORCHESTRATION_RESEARCH_PRIORITY ("research_priority") — PBL/SLC beat Trend/MB when both
                 fire on the same bar/symbol (Session 42 fix for full_system underperformance).
             Only applies to _run_unified_scenario(). mode="pbl_slc" is never affected.
+        hmm_confidence_min : float
+            Session 43: minimum HMM posterior confidence for TrendModel / MomentumBreakout
+            to generate signals.  When the HMMRegimeClassifier.classify() returns a
+            confidence score below this value, HMM-family signals are suppressed for that
+            bar/symbol.  0.0 (default) = no gating (HMM_CONFIDENCE_GATE_OFF).
+            Typical thresholds: 0.60, 0.70, 0.80.
+            Does NOT affect PBL/SLC (ResearchRegimeClassifier path) or mode="pbl_slc".
         """
-        self.date_start         = pd.Timestamp(date_start, tz="UTC") if date_start else None
-        self.date_end           = pd.Timestamp(date_end,   tz="UTC") if date_end   else None
-        self.symbols            = symbols or SYMBOLS
-        self.mode               = mode
-        self.strategy_subset    = strategy_subset
-        self.confluence_mode    = confluence_mode
-        self.orchestration_mode = orchestration_mode
+        self.date_start           = pd.Timestamp(date_start, tz="UTC") if date_start else None
+        self.date_end             = pd.Timestamp(date_end,   tz="UTC") if date_end   else None
+        self.symbols              = symbols or SYMBOLS
+        self.mode                 = mode
+        self.strategy_subset      = strategy_subset
+        self.confluence_mode      = confluence_mode
+        self.orchestration_mode   = orchestration_mode
+        self.hmm_confidence_min   = float(hmm_confidence_min)
         self._data_loaded    = False
         self._raw:  dict[str, dict[str, pd.DataFrame]] = {}
         self._ind:  dict[str, dict[str, pd.DataFrame]] = {}
@@ -743,11 +769,13 @@ class BacktestRunner:
         use_research   = bool(self._RESEARCH_MODELS & active_set)
         use_hmm        = bool(self._HMM_MODELS & active_set)
         _use_rp        = (self.orchestration_mode == ORCHESTRATION_RESEARCH_PRIORITY)
+        _conf_gate     = self.hmm_confidence_min  # 0.0 = no gating
 
         logger.info(
-            "UnifiedEngine mode=%s active=%s research=%s hmm=%s confluence=%s orchestration=%s",
+            "UnifiedEngine mode=%s active=%s research=%s hmm=%s "
+            "confluence=%s orchestration=%s hmm_conf_min=%.2f",
             self.mode, active_models, use_research, use_hmm,
-            self.confluence_mode, self.orchestration_mode,
+            self.confluence_mode, self.orchestration_mode, _conf_gate,
         )
 
         sig_gen = SignalGenerator()
@@ -780,6 +808,7 @@ class BacktestRunner:
         all_trades:      list[dict]      = []
         equity_curve:    list[float]     = [INITIAL_CAPITAL]
         rejected_heat = rejected_max = rejected_entry_gap = n_signals_gen = 0
+        rejected_confidence = 0  # Session 43: HMM bars blocked by confidence gate
 
         t_sim  = time.time()
         total  = len(self._master_ts)
@@ -930,13 +959,29 @@ class BacktestRunner:
                             logger.debug("UnifiedEngine SLC %s: %s", sym, exc)
 
                 # ── HMM regime path (Trend / Momentum) ────────────────────────
+                #
+                # Session 43 — HMM Confidence Gate:
+                # When hmm_confidence_min > 0, HMM-family signals (TrendModel,
+                # MomentumBreakout) are suppressed unless the HMM posterior
+                # confidence for the winning regime meets the threshold.
+                # Low confidence = ambiguous market state = unreliable HMM signal.
+                # Gate fires BEFORE generate() so no signal object is created;
+                # rejected_confidence counts bars (not signals) that were blocked.
                 _hmm_probs_this_sym: Optional[dict] = None
                 if use_hmm and sym in self._hmm:
                     try:
                         hmm_regime, hmm_conf, hmm_probs = self._hmm[sym].classify(df_window)
                         _hmm_probs_this_sym = hmm_probs
+
+                        # ── Confidence gate (Session 43) ────────────────────────
+                        if _conf_gate > 0.0 and hmm_conf < _conf_gate:
+                            rejected_confidence += 1
+                            logger.debug(
+                                "UnifiedEngine conf-gate %s: hmm_conf=%.3f < %.2f — HMM skipped",
+                                sym, hmm_conf, _conf_gate,
+                            )
                         # Skip signals in crisis/liquidation_cascade regimes
-                        if hmm_regime not in ("crisis", "liquidation_cascade"):
+                        elif hmm_regime not in ("crisis", "liquidation_cascade"):
                             hmm_active = [
                                 m for m in active_set if m in self._HMM_MODELS
                             ]
@@ -1093,8 +1138,10 @@ class BacktestRunner:
 
         elapsed = time.time() - t_sim
         logger.info(
-            "UnifiedEngine done [%s/%s]: %d trades in %.1fs  PF=%.4f  WR=%.1f%%  CAGR=%.1f%%",
-            self.mode, self.orchestration_mode, n_trades, elapsed, pf, wr * 100, cagr * 100,
+            "UnifiedEngine done [%s/%s/conf≥%.2f]: %d trades in %.1fs  "
+            "PF=%.4f  WR=%.1f%%  CAGR=%.1f%%  rej_conf=%d",
+            self.mode, self.orchestration_mode, _conf_gate,
+            n_trades, elapsed, pf, wr * 100, cagr * 100, rejected_confidence,
         )
 
         # ── Per-model breakdown (dynamic — covers all active models) ──────────
@@ -1128,6 +1175,8 @@ class BacktestRunner:
             "rejected_heat":       rejected_heat,
             "rejected_max":        rejected_max,
             "rejected_entry_gap":  rejected_entry_gap,
+            "rejected_confidence": rejected_confidence,   # Session 43: HMM conf gate
+            "hmm_confidence_min":  _conf_gate,            # Session 43: gate threshold used
             "elapsed_s":           round(elapsed, 1),
             "all_trades":          all_trades,
             # backward-compat keys (populated from model_stats where available)

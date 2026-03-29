@@ -36,17 +36,18 @@ sys.path.insert(0, str(ROOT))
 _worker_runner = None
 
 
-def _init_worker(date_start:         str        = "2022-03-22",
-                 date_end:           str        = "2026-03-21",
-                 symbols:            list | None = None,
-                 mode:               str        = "pbl_slc",
-                 strategy_subset:    list | None = None,
-                 confluence_mode:    str        = "none",
-                 orchestration_mode: str        = "naive"):
+def _init_worker(date_start:           str        = "2022-03-22",
+                 date_end:             str        = "2026-03-21",
+                 symbols:              list | None = None,
+                 mode:                 str        = "pbl_slc",
+                 strategy_subset:      list | None = None,
+                 confluence_mode:      str        = "none",
+                 orchestration_mode:   str        = "naive",
+                 hmm_confidence_min:   float      = 0.0):
     """
     Called once per worker process — loads BacktestRunner with the given period,
-    symbol set, engine mode, confluence mode, and orchestration mode.
-    All args are passed as Pool initargs.
+    symbol set, engine mode, confluence mode, orchestration mode, and HMM
+    confidence gate threshold.  All args are passed as Pool initargs.
     """
     global _worker_runner
     try:
@@ -54,13 +55,14 @@ def _init_worker(date_start:         str        = "2022-03-22",
         import logging
         logging.disable(logging.WARNING)   # suppress per-trial noise
         _worker_runner = BacktestRunner(
-            date_start         = date_start,
-            date_end           = date_end,
-            symbols            = symbols or SYMBOLS,
-            mode               = mode,
-            strategy_subset    = strategy_subset or None,
-            confluence_mode    = confluence_mode,
-            orchestration_mode = orchestration_mode,
+            date_start           = date_start,
+            date_end             = date_end,
+            symbols              = symbols or SYMBOLS,
+            mode                 = mode,
+            strategy_subset      = strategy_subset or None,
+            confluence_mode      = confluence_mode,
+            orchestration_mode   = orchestration_mode,
+            hmm_confidence_min   = hmm_confidence_min,
         )
         _worker_runner.load_data()
     except Exception as e:
@@ -162,24 +164,26 @@ class SweepEngine:
 
     def __init__(
         self,
-        n_workers:          int        = 2,
-        date_start:         str        = "2022-03-22",
-        date_end:           str        = "2026-03-21",
-        symbols:            list | None = None,
-        mode:               str        = "pbl_slc",
-        strategy_subset:    list | None = None,
-        confluence_mode:    str        = "none",
-        orchestration_mode: str        = "naive",
+        n_workers:            int        = 2,
+        date_start:           str        = "2022-03-22",
+        date_end:             str        = "2026-03-21",
+        symbols:              list | None = None,
+        mode:                 str        = "pbl_slc",
+        strategy_subset:      list | None = None,
+        confluence_mode:      str        = "none",
+        orchestration_mode:   str        = "naive",
+        hmm_confidence_min:   float      = 0.0,
     ):
-        self.n_workers          = max(1, min(n_workers, mp.cpu_count()))
-        self.date_start         = date_start
-        self.date_end           = date_end
-        self.symbols            = symbols
-        self.mode               = mode
-        self.strategy_subset    = strategy_subset
-        self.confluence_mode    = confluence_mode
-        self.orchestration_mode = orchestration_mode
-        self._cancelled         = False
+        self.n_workers            = max(1, min(n_workers, mp.cpu_count()))
+        self.date_start           = date_start
+        self.date_end             = date_end
+        self.symbols              = symbols
+        self.mode                 = mode
+        self.strategy_subset      = strategy_subset
+        self.confluence_mode      = confluence_mode
+        self.orchestration_mode   = orchestration_mode
+        self.hmm_confidence_min   = float(hmm_confidence_min)
+        self._cancelled           = False
 
     def cancel(self):
         self._cancelled = True
@@ -208,7 +212,8 @@ class SweepEngine:
             initializer = _init_worker,
             initargs    = (self.date_start, self.date_end, self.symbols,
                            self.mode, self.strategy_subset,
-                           self.confluence_mode, self.orchestration_mode),
+                           self.confluence_mode, self.orchestration_mode,
+                           self.hmm_confidence_min),
         )
         try:
             for result in pool.imap_unordered(_worker_run, args, chunksize=1):

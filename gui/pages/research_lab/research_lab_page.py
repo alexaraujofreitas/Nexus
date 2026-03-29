@@ -141,6 +141,8 @@ class _LabState:
     confluence_mode:    str  = "none"       # "none" | "technical_only"
     # Session 42: orchestration mode for full_system unified engine
     orchestration_mode: str  = "naive"      # "naive" | "research_priority"
+    # Session 43: HMM confidence gate threshold for TrendModel / MomentumBreakout
+    hmm_confidence_min: float = 0.0         # 0.0 = no gating; 0.60/0.70/0.80 = gate active
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,16 +195,18 @@ class SweepWorkerThread(QThread):
         # Phase 1 — load data (indeterminate, long)
         self.indeterminate.emit(True)
         self.progress.emit(0, PHASES, 0.0, "Phase 1/4 — Loading historical data…")
-        _mode   = getattr(state, "backtest_mode", "pbl_slc")
-        _subset = getattr(state, "strategy_subset", []) or None
-        _orch   = getattr(state, "orchestration_mode", "naive")
+        _mode     = getattr(state, "backtest_mode", "pbl_slc")
+        _subset   = getattr(state, "strategy_subset", []) or None
+        _orch     = getattr(state, "orchestration_mode", "naive")
+        _conf_min = float(getattr(state, "hmm_confidence_min", 0.0))
         runner = BacktestRunner(
-            date_start         = state.date_start,
-            date_end           = state.date_end,
-            symbols            = state.selected_symbols,
-            mode               = _mode,
-            strategy_subset    = _subset,
-            orchestration_mode = _orch,
+            date_start           = state.date_start,
+            date_end             = state.date_end,
+            symbols              = state.selected_symbols,
+            mode                 = _mode,
+            strategy_subset      = _subset,
+            orchestration_mode   = _orch,
+            hmm_confidence_min   = _conf_min,
         )
         runner.load_data()
         if self._cancel:
@@ -261,19 +265,21 @@ class SweepWorkerThread(QThread):
 
         exp_id = state.current_experiment or ExperimentStore.new_id()
         store  = ExperimentStore(exp_id)
-        _sw_mode   = getattr(state, "backtest_mode", "pbl_slc")
-        _sw_subset = getattr(state, "strategy_subset", []) or None
-        _sw_conf   = getattr(state, "confluence_mode", "none")
-        _sw_orch   = getattr(state, "orchestration_mode", "naive")
+        _sw_mode     = getattr(state, "backtest_mode", "pbl_slc")
+        _sw_subset   = getattr(state, "strategy_subset", []) or None
+        _sw_conf     = getattr(state, "confluence_mode", "none")
+        _sw_orch     = getattr(state, "orchestration_mode", "naive")
+        _sw_conf_min = float(getattr(state, "hmm_confidence_min", 0.0))
         engine = SweepEngine(
-            n_workers          = state.n_workers,
-            date_start         = state.date_start,
-            date_end           = state.date_end,
-            symbols            = state.selected_symbols or None,
-            mode               = _sw_mode,
-            strategy_subset    = _sw_subset,
-            confluence_mode    = _sw_conf,
-            orchestration_mode = _sw_orch,
+            n_workers            = state.n_workers,
+            date_start           = state.date_start,
+            date_end             = state.date_end,
+            symbols              = state.selected_symbols or None,
+            mode                 = _sw_mode,
+            strategy_subset      = _sw_subset,
+            confluence_mode      = _sw_conf,
+            orchestration_mode   = _sw_orch,
+            hmm_confidence_min   = _sw_conf_min,
         )
         best_pf = 0.0
 
@@ -824,6 +830,26 @@ class _SearchPanel(QWidget):
         vlay.addWidget(_form_row("Orchestration:", self._orch_cb))
         vlay.addWidget(_hsep())
 
+        # HMM Confidence Gate (Session 43)
+        self._hmm_conf_cb = QComboBox()
+        self._hmm_conf_cb.addItems([
+            "Off (no gate)",
+            "0.60 — moderate",
+            "0.70 — recommended",
+            "0.80 — strict",
+        ])
+        self._hmm_conf_cb.setStyleSheet(_cb_style)
+        self._hmm_conf_cb.setToolTip(
+            "Minimum HMM posterior confidence for TrendModel and MomentumBreakout\n"
+            "to generate signals.  When the HMM regime classifier confidence is\n"
+            "below the threshold, those models are silenced for that bar.\n"
+            "Off = original behavior (no gating).\n"
+            "0.70 = recommended starting point based on Session 43 validation.\n"
+            "Only affects full_system and custom modes; pbl_slc is unaffected."
+        )
+        vlay.addWidget(_form_row("HMM Conf Gate:", self._hmm_conf_cb))
+        vlay.addWidget(_hsep())
+
         vlay.addSpacing(6)
 
         # Start / Cancel buttons
@@ -852,17 +878,19 @@ class _SearchPanel(QWidget):
             1: "random",
             2: "bayesian",
         }
-        fee_map  = {0: 0.0004, 1: 0.0}
-        conf_map = {0: "none", 1: "technical_only"}
-        orch_map = {0: "naive", 1: "research_priority"}
+        fee_map      = {0: 0.0004, 1: 0.0}
+        conf_map     = {0: "none", 1: "technical_only"}
+        orch_map     = {0: "naive", 1: "research_priority"}
+        hmm_conf_map = {0: 0.0, 1: 0.60, 2: 0.70, 3: 0.80}
         return {
-            "search_strategy":   strategy_map[self._strategy_cb.currentIndex()],
-            "n_random_trials":   self._n_trials_spin.value(),
-            "n_workers":         self._workers_spin.value(),
-            "objective":         self._obj_cb.currentText().lower().replace(" ", "_"),
-            "cost_per_side":     fee_map[self._fee_cb.currentIndex()],
-            "confluence_mode":   conf_map[self._conf_cb.currentIndex()],
+            "search_strategy":    strategy_map[self._strategy_cb.currentIndex()],
+            "n_random_trials":    self._n_trials_spin.value(),
+            "n_workers":          self._workers_spin.value(),
+            "objective":          self._obj_cb.currentText().lower().replace(" ", "_"),
+            "cost_per_side":      fee_map[self._fee_cb.currentIndex()],
+            "confluence_mode":    conf_map[self._conf_cb.currentIndex()],
             "orchestration_mode": orch_map[self._orch_cb.currentIndex()],
+            "hmm_confidence_min": hmm_conf_map[self._hmm_conf_cb.currentIndex()],
         }
 
     def set_running(self, running: bool):
@@ -1811,6 +1839,7 @@ class ResearchLabPage(QWidget):
         self._state.cost_per_side      = search["cost_per_side"]
         self._state.confluence_mode    = search.get("confluence_mode", "none")
         self._state.orchestration_mode = search.get("orchestration_mode", "naive")
+        self._state.hmm_confidence_min = float(search.get("hmm_confidence_min", 0.0))
 
         from research.engine.experiment_store import ExperimentStore
         exp_id = ExperimentStore.new_id()
