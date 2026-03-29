@@ -139,6 +139,8 @@ class _LabState:
     strategy_subset:    list = field(default_factory=list)  # non-empty only for "custom" mode
     # Session 41: technical-only confluence mode
     confluence_mode:    str  = "none"       # "none" | "technical_only"
+    # Session 42: orchestration mode for full_system unified engine
+    orchestration_mode: str  = "naive"      # "naive" | "research_priority"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,12 +195,14 @@ class SweepWorkerThread(QThread):
         self.progress.emit(0, PHASES, 0.0, "Phase 1/4 — Loading historical data…")
         _mode   = getattr(state, "backtest_mode", "pbl_slc")
         _subset = getattr(state, "strategy_subset", []) or None
+        _orch   = getattr(state, "orchestration_mode", "naive")
         runner = BacktestRunner(
-            date_start      = state.date_start,
-            date_end        = state.date_end,
-            symbols         = state.selected_symbols,
-            mode            = _mode,
-            strategy_subset = _subset,
+            date_start         = state.date_start,
+            date_end           = state.date_end,
+            symbols            = state.selected_symbols,
+            mode               = _mode,
+            strategy_subset    = _subset,
+            orchestration_mode = _orch,
         )
         runner.load_data()
         if self._cancel:
@@ -260,14 +264,16 @@ class SweepWorkerThread(QThread):
         _sw_mode   = getattr(state, "backtest_mode", "pbl_slc")
         _sw_subset = getattr(state, "strategy_subset", []) or None
         _sw_conf   = getattr(state, "confluence_mode", "none")
+        _sw_orch   = getattr(state, "orchestration_mode", "naive")
         engine = SweepEngine(
-            n_workers       = state.n_workers,
-            date_start      = state.date_start,
-            date_end        = state.date_end,
-            symbols         = state.selected_symbols or None,
-            mode            = _sw_mode,
-            strategy_subset = _sw_subset,
-            confluence_mode = _sw_conf,
+            n_workers          = state.n_workers,
+            date_start         = state.date_start,
+            date_end           = state.date_end,
+            symbols            = state.selected_symbols or None,
+            mode               = _sw_mode,
+            strategy_subset    = _sw_subset,
+            confluence_mode    = _sw_conf,
+            orchestration_mode = _sw_orch,
         )
         best_pf = 0.0
 
@@ -804,6 +810,20 @@ class _SearchPanel(QWidget):
         vlay.addWidget(_form_row("Confluence:", self._conf_cb))
         vlay.addWidget(_hsep())
 
+        # Orchestration mode (Session 42)
+        self._orch_cb = QComboBox()
+        self._orch_cb.addItems(["Naive (all compete)", "Research Priority"])
+        self._orch_cb.setStyleSheet(_cb_style)
+        self._orch_cb.setToolTip(
+            "Naive: all models compete; highest-strength signal wins (original).\n"
+            "Research Priority: PBL + SLC take priority over Trend + Momentum\n"
+            "when multiple models fire on the same bar/symbol.  HMM models\n"
+            "only fire when no research signal exists for that bar.\n"
+            "Only affects full_system and custom modes; pbl_slc is unaffected."
+        )
+        vlay.addWidget(_form_row("Orchestration:", self._orch_cb))
+        vlay.addWidget(_hsep())
+
         vlay.addSpacing(6)
 
         # Start / Cancel buttons
@@ -834,13 +854,15 @@ class _SearchPanel(QWidget):
         }
         fee_map  = {0: 0.0004, 1: 0.0}
         conf_map = {0: "none", 1: "technical_only"}
+        orch_map = {0: "naive", 1: "research_priority"}
         return {
-            "search_strategy": strategy_map[self._strategy_cb.currentIndex()],
-            "n_random_trials": self._n_trials_spin.value(),
-            "n_workers":       self._workers_spin.value(),
-            "objective":       self._obj_cb.currentText().lower().replace(" ", "_"),
-            "cost_per_side":   fee_map[self._fee_cb.currentIndex()],
-            "confluence_mode": conf_map[self._conf_cb.currentIndex()],
+            "search_strategy":   strategy_map[self._strategy_cb.currentIndex()],
+            "n_random_trials":   self._n_trials_spin.value(),
+            "n_workers":         self._workers_spin.value(),
+            "objective":         self._obj_cb.currentText().lower().replace(" ", "_"),
+            "cost_per_side":     fee_map[self._fee_cb.currentIndex()],
+            "confluence_mode":   conf_map[self._conf_cb.currentIndex()],
+            "orchestration_mode": orch_map[self._orch_cb.currentIndex()],
         }
 
     def set_running(self, running: bool):
@@ -1786,8 +1808,9 @@ class ResearchLabPage(QWidget):
         self._state.search_strategy= search["search_strategy"]
         self._state.n_random_trials= search["n_random_trials"]
         self._state.n_workers      = search["n_workers"]
-        self._state.cost_per_side  = search["cost_per_side"]
-        self._state.confluence_mode= search.get("confluence_mode", "none")
+        self._state.cost_per_side      = search["cost_per_side"]
+        self._state.confluence_mode    = search.get("confluence_mode", "none")
+        self._state.orchestration_mode = search.get("orchestration_mode", "naive")
 
         from research.engine.experiment_store import ExperimentStore
         exp_id = ExperimentStore.new_id()

@@ -54,6 +54,24 @@ DATA_DIR        = ROOT / "backtest_data"
 CONFLUENCE_NONE      = "none"           # highest-strength single-winner (default)
 CONFLUENCE_TECHNICAL = "technical_only" # technical-only ConfluenceScorer gate
 
+# ── Orchestration mode constants ───────────────────────────────────────────────
+# Controls how candidate signals from different model families are selected when
+# multiple models fire on the same bar/symbol in _run_unified_scenario().
+#
+# NAIVE            — original behavior: all models compete, highest-strength wins.
+#                    Produces the SessionX37 full_system result (PF=1.01 zero fees).
+#
+# RESEARCH_PRIORITY — Session 42 fix: research-backed models (PBL/SLC) take priority
+#                    over HMM models (Trend/MB) when both fire on the same bar/symbol.
+#                    HMM models only fire when no research signal exists for that bar.
+#                    Rationale: PBL/SLC have established edge via dedicated backtest
+#                    (pbl_slc PF=1.37 zero fees). Crowding them out with MB/Trend
+#                    (which have PF<1.0 in the unified pool) hurts combined performance.
+#
+# This parameter does NOT affect mode="pbl_slc" which always calls _run_scenario().
+ORCHESTRATION_NAIVE             = "naive"             # original; all compete by strength
+ORCHESTRATION_RESEARCH_PRIORITY = "research_priority" # Session 42: PBL/SLC beat Trend/MB
+
 
 def _fingerprint_parquet(path: Path) -> str:
     """SHA-256 of first 64 KB of a parquet file (fast, stable)."""
@@ -98,12 +116,13 @@ class BacktestRunner:
 
     def __init__(
         self,
-        date_start:       Optional[str]        = None,
-        date_end:         Optional[str]        = None,
-        symbols:          Optional[list[str]]  = None,
-        mode:             str                  = "pbl_slc",
-        strategy_subset:  Optional[list[str]]  = None,
-        confluence_mode:  str                  = CONFLUENCE_NONE,
+        date_start:         Optional[str]        = None,
+        date_end:           Optional[str]        = None,
+        symbols:            Optional[list[str]]  = None,
+        mode:               str                  = "pbl_slc",
+        strategy_subset:    Optional[list[str]]  = None,
+        confluence_mode:    str                  = CONFLUENCE_NONE,
+        orchestration_mode: str                  = ORCHESTRATION_NAIVE,
     ):
         """
         Parameters
@@ -124,13 +143,19 @@ class BacktestRunner:
             CONFLUENCE_TECHNICAL ("technical_only") — technical-only ConfluenceScorer gate
             Only applies to _run_unified_scenario() (non pbl_slc modes).
             mode="pbl_slc" always calls _run_scenario() which is unaffected.
+        orchestration_mode : str
+            ORCHESTRATION_NAIVE             ("naive")             — all models compete by strength
+            ORCHESTRATION_RESEARCH_PRIORITY ("research_priority") — PBL/SLC beat Trend/MB when both
+                fire on the same bar/symbol (Session 42 fix for full_system underperformance).
+            Only applies to _run_unified_scenario(). mode="pbl_slc" is never affected.
         """
-        self.date_start      = pd.Timestamp(date_start, tz="UTC") if date_start else None
-        self.date_end        = pd.Timestamp(date_end,   tz="UTC") if date_end   else None
-        self.symbols         = symbols or SYMBOLS
-        self.mode            = mode
-        self.strategy_subset = strategy_subset
-        self.confluence_mode = confluence_mode
+        self.date_start         = pd.Timestamp(date_start, tz="UTC") if date_start else None
+        self.date_end           = pd.Timestamp(date_end,   tz="UTC") if date_end   else None
+        self.symbols            = symbols or SYMBOLS
+        self.mode               = mode
+        self.strategy_subset    = strategy_subset
+        self.confluence_mode    = confluence_mode
+        self.orchestration_mode = orchestration_mode
         self._data_loaded    = False
         self._raw:  dict[str, dict[str, pd.DataFrame]] = {}
         self._ind:  dict[str, dict[str, pd.DataFrame]] = {}
@@ -717,10 +742,12 @@ class BacktestRunner:
         active_set     = set(active_models)
         use_research   = bool(self._RESEARCH_MODELS & active_set)
         use_hmm        = bool(self._HMM_MODELS & active_set)
+        _use_rp        = (self.orchestration_mode == ORCHESTRATION_RESEARCH_PRIORITY)
 
         logger.info(
-            "UnifiedEngine mode=%s active=%s research=%s hmm=%s confluence=%s",
-            self.mode, active_models, use_research, use_hmm, self.confluence_mode,
+            "UnifiedEngine mode=%s active=%s research=%s hmm=%s confluence=%s orchestration=%s",
+            self.mode, active_models, use_research, use_hmm,
+            self.confluence_mode, self.orchestration_mode,
         )
 
         sig_gen = SignalGenerator()
@@ -927,7 +954,48 @@ class BacktestRunner:
                 if not candidate_signals:
                     continue
 
-                # ── Signal selection: highest-strength OR technical ConfluenceScorer ──
+                # ── Signal selection ───────────────────────────────────────────────
+                #
+                # Three selection policies, evaluated in order:
+                #
+                # 1. RESEARCH_PRIORITY (Session 42 orchestration fix):
+                #    Research-backed models (PBL, SLC) beat HMM models (Trend, MB)
+                #    when both fire on the same bar/symbol.  Within each family,
+                #    highest-strength wins.  HMM models only fill in when no research
+                #    signal exists for this bar/symbol.
+                #    Rationale: PBL/SLC have established research edge (pbl_slc mode
+                #    PF=1.37).  Naive strength competition crowds them out with MB/Trend
+                #    signals that have PF<1.0 in the unified pool.
+                #
+                # 2. CONFLUENCE_TECHNICAL (Session 41):
+                #    Technical-only ConfluenceScorer gate applied after family routing.
+                #    Compatible with RESEARCH_PRIORITY — both can be active.
+                #
+                # 3. NAIVE (default):
+                #    All models compete; highest-strength signal wins regardless of
+                #    model family.  Original full_system behavior.
+                #
+                if _use_rp:
+                    # Research-priority routing: partition by model family
+                    _research_sigs = [
+                        s for s in candidate_signals
+                        if s.model_name in self._RESEARCH_MODELS
+                    ]
+                    _hmm_sigs = [
+                        s for s in candidate_signals
+                        if s.model_name in self._HMM_MODELS
+                    ]
+                    if _research_sigs:
+                        # Research family wins — pick highest-strength research signal
+                        _research_sigs.sort(key=lambda s: s.strength, reverse=True)
+                        candidate_signals = _research_sigs  # narrow pool for scorer
+                    elif _hmm_sigs:
+                        # HMM family fires when research is silent
+                        _hmm_sigs.sort(key=lambda s: s.strength, reverse=True)
+                        candidate_signals = _hmm_sigs
+                    else:
+                        continue  # should never reach here given outer guard
+
                 if _use_conf and _scorer is not None:
                     # Technical-only ConfluenceScorer gate: uses deterministic scoring
                     # (model weights, regime affinity, direction dominance, correlation
@@ -1025,8 +1093,8 @@ class BacktestRunner:
 
         elapsed = time.time() - t_sim
         logger.info(
-            "UnifiedEngine done [%s]: %d trades in %.1fs  PF=%.4f  WR=%.1f%%  CAGR=%.1f%%",
-            self.mode, n_trades, elapsed, pf, wr * 100, cagr * 100,
+            "UnifiedEngine done [%s/%s]: %d trades in %.1fs  PF=%.4f  WR=%.1f%%  CAGR=%.1f%%",
+            self.mode, self.orchestration_mode, n_trades, elapsed, pf, wr * 100, cagr * 100,
         )
 
         # ── Per-model breakdown (dynamic — covers all active models) ──────────
