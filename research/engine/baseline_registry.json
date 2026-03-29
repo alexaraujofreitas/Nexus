@@ -1,7 +1,7 @@
 {
-  "name": "canonical_2026-03-28",
-  "locked_at": "2026-03-28",
-  "commit_hash": "90b94b1",
+  "name": "canonical_session50_2026-03-29",
+  "locked_at": "2026-03-29",
+  "commit_hash": "1ee94d1",
   "date_start": "2022-03-22",
   "date_end": "2026-03-21",
   "symbols": [
@@ -9,17 +9,17 @@
     "SOL/USDT",
     "ETH/USDT"
   ],
-  "n_trades": 1731,
-  "profit_factor": 1.3798,
-  "profit_factor_fees": 1.2758,
-  "win_rate": 0.5638,
-  "cagr": 0.6754,
-  "tol_n_min": 1705,
-  "tol_n_max": 1756,
-  "tol_pf_min": 1.3522,
-  "tol_pf_max": 1.4074,
-  "tol_pf_fees_min": 1.2503,
-  "tol_pf_fees_max": 1.3013,
+  "n_trades": 1412,
+  "profit_factor": 1.5462,
+  "profit_factor_fees": 1.441,
+  "win_rate": 0.5878,
+  "cagr": 0.892,
+  "tol_n_min": 1390,
+  "tol_n_max": 1433,
+  "tol_pf_min": 1.5153,
+  "tol_pf_max": 1.5771,
+  "tol_pf_fees_min": 1.4122,
+  "tol_pf_fees_max": 1.4698,
   "dataset_fingerprints": {
     "BTC/USDT/30m": "407654cf353f70d6",
     "BTC/USDT/4h": "f7088e8f19f1f0a5",
@@ -30,5 +30,13 @@
     "ETH/USDT/30m": "4fd2818df59e2c2a",
     "ETH/USDT/4h": "bd40fb48d618a3d5",
     "ETH/USDT/1h": "de1242932de4a2aa"
-  }
+  },
+  "_pbl_params_locked": {
+    "sl_atr_mult": 3.0,
+    "tp_atr_mult": 4.0,
+    "ema_prox_atr_mult": 0.4,
+    "rsi_min": 45.0,
+    "wick_strength": 1.5
+  },
+  "_note": "Updated Session 50 2026-03-29. PBL optimization (wick_strength=1.5, rsi_min=45, sl=3.0, tp=4.0). Prior baseline (n=1731, PF=1.2758) was pre-optimization."
 }
