@@ -1,0 +1,33 @@
+{
+  "session": 51,
+  "description": "Backtest Parity Validation",
+  "timestamp": "2026-03-29 21:14:00 UTC",
+  "constant_validation": {
+    "passed": true,
+    "checks": {
+      "parity_pos_frac == POS_FRAC": true,
+      "parity_max_heat == MAX_HEAT": true,
+      "parity_max_positions == MAX_POSITIONS": true,
+      "parity_initial_capital == INITIAL_CAPITAL": true
+    }
+  },
+  "exit_logic_validation": {
+    "passed": true,
+    "test_count": 10
+  },
+  "advanced_exit_suppression": {
+    "passed": true,
+    "checks": {
+      "trailing_stop_suppressed": true,
+      "breakeven_suppressed": true,
+      "time_exit_suppressed": true,
+      "auto_partial_suppressed": true
+    }
+  },
+  "backtest_baseline": {
+    "skipped": true,
+    "reason": "data files not found"
+  },
+  "overall_pass": true,
+  "elapsed_s": 0.04
+}

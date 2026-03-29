@@ -537,6 +537,25 @@ DEFAULT_CONFIG = {
         "enabled": True,               # apply ENTRY_BUFFER_ATR offsets
     },
     # LTF (Lower-Timeframe) confirmation for staged candidates.
+    # ── BACKTEST PARITY MODE (Session 51) ────────────────────────────────────
+    # When enabled, demo execution uses IDENTICAL sizing, exit logic, and
+    # constraints as BacktestRunner._run_scenario().  AI agents remain active
+    # as a FILTER-ONLY layer (may block trades, never alter trade structure).
+    #
+    # Purpose: ensure demo produces the same trades as backtest, minus any
+    # trades blocked by the AI confluence/orchestrator layer.
+    "execution_mode": {
+        "backtest_parity": False,     # master gate for parity mode
+        # Parity constants (must match backtest_runner.py exactly):
+        "parity_pos_frac":        0.35,
+        "parity_max_heat":        0.80,
+        "parity_max_positions":   10,
+        "parity_max_per_asset":   3,
+        "parity_initial_capital": 100_000.0,
+        # When True, AI agents can only FILTER (block) trades, never modify
+        # position size, SL, TP, or any trade parameter after signal generation.
+        "ai_filter_only":         True,
+    },
     # PBL + SLC model parameter overrides (Session 50 — PBL optimization)
     "mr_pbl_slc": {
         "pullback_long": {

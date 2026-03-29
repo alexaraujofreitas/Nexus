@@ -81,10 +81,17 @@ class PaperPosition:
         # v1.2 — auto partial-exit flag (33% at 1R, persisted across restarts)
         self._auto_partial_applied: bool = False
 
-    def update(self, current_price: float) -> Optional[str]:
+    def update(self, current_price: float, parity_mode: bool = False) -> Optional[str]:
         """
         Update position with new price. Returns exit reason if
         stop/take-profit was hit, else None.
+
+        Parameters
+        ----------
+        parity_mode : bool
+            When True (BACKTEST_PARITY_WITH_AI mode), disable trailing stops,
+            breakeven moves, time exits, and auto-partial — exactly matching
+            BacktestRunner._run_scenario() which uses static SL/TP only.
         """
         self.current_price = current_price
         self.bars_held += 1
@@ -94,6 +101,24 @@ class PaperPosition:
             self.highest_price = max(self.highest_price, current_price)
         else:
             self.lowest_price = min(self.lowest_price, current_price)
+
+        # ── Parity mode: static SL/TP only (match backtest exactly) ──
+        if parity_mode:
+            # Skip: time exit, trailing stop, breakeven move
+            # Only check static SL/TP (identical to BacktestRunner)
+            if self.side == "buy":
+                self.unrealized_pnl = (current_price - self.entry_price) / self.entry_price * 100
+                if current_price <= self.stop_loss:
+                    return "stop_loss"
+                if current_price >= self.take_profit:
+                    return "take_profit"
+            else:
+                self.unrealized_pnl = (self.entry_price - current_price) / self.entry_price * 100
+                if current_price >= self.stop_loss:
+                    return "stop_loss"
+                if current_price <= self.take_profit:
+                    return "take_profit"
+            return None
 
         # Time-based exit
         if self.max_hold_bars > 0 and self.bars_held >= self.max_hold_bars:
@@ -410,6 +435,59 @@ class PaperExecutor:
             return True
 
         return False
+
+    # ── Parity mode helpers ────────────────────────────────────
+
+    def _is_parity_mode(self) -> bool:
+        """Return True when BACKTEST_PARITY_WITH_AI mode is active.
+
+        In parity mode, demo execution uses identical sizing and exit logic
+        as BacktestRunner._run_scenario() — pos_frac sizing, static SL/TP,
+        no breakeven, no partial exits, no trailing stops.
+        AI agents remain active as a filter-only layer.
+        """
+        try:
+            from config.settings import settings as _s
+            return bool(_s.get("execution_mode.backtest_parity", False))
+        except Exception:
+            return False
+
+    def _parity_size_usdt(self, candidate: "OrderCandidate") -> float:
+        """Calculate position size using backtest pos_frac formula.
+
+        Identical to PositionSizer.calculate_pos_frac() but reads parity
+        constants from execution_mode config to guarantee exact match
+        with BacktestRunner constants.
+        """
+        try:
+            from config.settings import settings as _s
+            pos_frac      = float(_s.get("execution_mode.parity_pos_frac", 0.35))
+            max_heat      = float(_s.get("execution_mode.parity_max_heat", 0.80))
+            max_positions = int(_s.get("execution_mode.parity_max_positions", 10))
+            max_per_asset = int(_s.get("execution_mode.parity_max_per_asset", 3))
+        except Exception:
+            pos_frac, max_heat, max_positions, max_per_asset = 0.35, 0.80, 10, 3
+
+        # Count open positions
+        open_count = sum(len(pl) for pl in self._positions.values())
+        if open_count >= max_positions:
+            return 0.0
+
+        # Per-asset gate
+        sym_count = len(self._positions.get(candidate.symbol, []))
+        if sym_count >= max_per_asset:
+            return 0.0
+
+        # Proposed size
+        proposed = pos_frac * self._capital
+
+        # Heat gate (conservative: each open pos uses pos_frac of equity)
+        deployed_est = open_count * pos_frac * self._capital
+        heat_after = (deployed_est + proposed) / self._capital if self._capital > 0 else 1.0
+        if heat_after > max_heat:
+            return 0.0
+
+        return round(proposed, 2)
 
     @property
     def is_daily_limit_hit(self) -> bool:
@@ -728,10 +806,23 @@ class PaperExecutor:
             logger.warning("PaperExecutor: invalid entry price for %s", candidate.symbol)
             return False
 
-        # PositionSizer output (position_size_usdt) is final — SymbolAllocator
-        # is the single allocation mechanism.  No per-symbol overrides applied here.
-        # Section-5: apply rolling-PF size scalar BEFORE slippage calculation.
-        size_usdt = candidate.position_size_usdt * self._rolling_size_scalar()
+        # ── Parity mode: use backtest pos_frac sizing ─────────────────
+        # In BACKTEST_PARITY_WITH_AI mode, position sizing must match
+        # BacktestRunner._run_scenario() exactly: pos_frac × equity.
+        # This overrides the risk-based PositionSizer and Section-5 scalar.
+        if self._is_parity_mode():
+            size_usdt = self._parity_size_usdt(candidate)
+            if size_usdt <= 0:
+                logger.debug(
+                    "PaperExecutor: PARITY MODE — pos_frac sizing rejected %s "
+                    "(heat/position gate)", candidate.symbol,
+                )
+                return False
+        else:
+            # PositionSizer output (position_size_usdt) is final — SymbolAllocator
+            # is the single allocation mechanism.  No per-symbol overrides applied here.
+            # Section-5: apply rolling-PF size scalar BEFORE slippage calculation.
+            size_usdt = candidate.position_size_usdt * self._rolling_size_scalar()
 
         fill_price = self._apply_slippage(entry_price, candidate.side) if entry_price > 0 else entry_price
         slippage_cost = abs(fill_price - entry_price)
@@ -831,11 +922,16 @@ class PaperExecutor:
         """Update position mark-to-market and check stops."""
         if symbol not in self._positions:
             return
+
+        # ── Parity mode check (cached per tick batch for performance) ────
+        _parity = self._is_parity_mode()
+
         # Iterate over a copy — positions may be closed during iteration
         for pos in list(self._positions.get(symbol, [])):
-            exit_reason = pos.update(price)
+            exit_reason = pos.update(price, parity_mode=_parity)
 
             # ── v1.2: Auto-partial-exit at +1R (Phase 5 winning config) ──────
+            # DISABLED in parity mode — backtest uses static SL/TP only.
             # When unrealized P&L reaches exactly +1R (based on original risk),
             # close 33% of the position and move SL to breakeven.
             # The SL breakeven move is handled inside pos.update() via
@@ -844,7 +940,8 @@ class PaperExecutor:
             # Only fires when: price not already at SL/TP, initial risk > 0,
             # partial not already applied, and exit mode is "partial" in config.
             if (
-                not exit_reason
+                not _parity
+                and not exit_reason
                 and not pos._auto_partial_applied
                 and pos._initial_risk > 0
             ):
