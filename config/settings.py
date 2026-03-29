@@ -600,7 +600,21 @@ class AppSettings:
         config.yaml in a truncated state.  The rename() call on POSIX is
         atomic with respect to the filesystem, so readers always see either the
         old complete file or the new complete file — never a partial write.
+
+        WORKER-PROCESS GUARD: save() is a no-op in any process that is not the
+        main application process (e.g. ProcessPoolExecutor backtest workers).
+        Worker processes must never write config.yaml — only the main process
+        owns the file.  Concurrent saves from 30+ worker processes caused the
+        config.yaml corruption bug (Session 50 post-restart: WinError 5/32 storm
+        → truncated YAML at line 587).
         """
+        import multiprocessing
+        if multiprocessing.current_process().name != "MainProcess":
+            logger.debug(
+                "settings.save(): skipped — worker process '%s' must not write config.yaml",
+                multiprocessing.current_process().name,
+            )
+            return
         try:
             import os
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
