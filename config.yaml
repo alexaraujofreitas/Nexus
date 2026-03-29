@@ -1,7 +1,3 @@
-_test:
-  batch_key1: v1
-  batch_key2: v2
-  value: null
 adaptive_activation:
   crash_long_multiplier: 0.0
   crash_short_multiplier: 1.5
@@ -15,181 +11,22 @@ agents:
   funding_enabled: true
   liquidation_flow:
     enabled: true
-  liquidity_vacuum_enabled: false
   lunarcrush_api_key: __vault__
   min_confluence_boost: 0.25
-  miner_flow_enabled: false
-  narrative_enabled: false
   onchain:
     enabled: true
     symbols:
     - bitcoin
     - ethereum
-  options_enabled: false
+  options_enabled: true
   options_max_days_expiry: 35.0
-  orderbook_enabled: false
-  reddit_enabled: false
-  scalp_enabled: false
-  sector_rotation_enabled: false
-  social_sentiment_enabled: false
-  twitter_enabled: false
+  orderbook_enabled: true
   volatility_surface:
-    enabled: false
+    enabled: true
 ai:
-  active_provider: Local (Ollama)
-  agent_models:
-    crash_detection:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    funding_rate:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    geopolitical:
-      extra: {}
-      max_tokens: 512
-      model_name: vader
-      provider: vader
-      temperature: 0.1
-    leverage_crowding:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    liquidation_flow:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    liquidity_vacuum:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    macro:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    miner_flow:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    narrative_shift:
-      extra: {}
-      max_tokens: 512
-      model_name: ProsusAI/finbert
-      provider: finbert
-      temperature: 0.1
-    news:
-      extra: {}
-      max_tokens: 512
-      model_name: vader-v2
-      provider: vader
-      temperature: 0.1
-    onchain:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    options_flow:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    order_book:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    position_monitor:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    reddit:
-      extra: {}
-      max_tokens: 512
-      model_name: vader
-      provider: vader
-      temperature: 0.1
-    scalp:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    sector_rotation:
-      extra: {}
-      max_tokens: 512
-      model_name: vader
-      provider: vader
-      temperature: 0.1
-    social_sentiment:
-      extra: {}
-      max_tokens: 512
-      model_name: vader
-      provider: vader
-      temperature: 0.1
-    squeeze_detection:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    stablecoin:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    telegram:
-      extra: {}
-      max_tokens: 512
-      model_name: vader
-      provider: vader
-      temperature: 0.1
-    test_agent:
-      extra: {}
-      max_tokens: 256
-      model_name: vader-test
-      provider: vader
-      temperature: 0.5
-    twitter:
-      extra: {}
-      max_tokens: 512
-      model_name: vader
-      provider: vader
-      temperature: 0.1
-    volatility_surface:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
-    whale:
-      extra: {}
-      max_tokens: 512
-      model_name: rule-based
-      provider: rule
-      temperature: 0.1
+  active_provider: "Auto (Anthropic \u2192 OpenAI \u2192 Gemini)"
   anthropic_api_key: __vault__
-  anthropic_model: claude-sonnet-4-6
+  anthropic_model: claude-opus-4-6
   gemini_api_key: __vault__
   gemini_model: gemini-2.0-flash
   ml_confidence_threshold: 0.65
@@ -200,7 +37,7 @@ ai:
   retrain_interval_hours: 24.0
   strategy_generation_enabled: true
 app:
-  auto_start_feeds: true
+  auto_start_feeds: false
   language: en
   theme: dark
 backtesting:
@@ -210,15 +47,11 @@ backtesting:
   walk_forward_step_months: 3
   walk_forward_train_months: 24.0
   walk_forward_validate_months: 6.0
-capital:
-  scaling_enabled: false
 confluence:
   min_direction_dominance: 0.3
 correlation_dampening:
   enabled: true
   min_factor: 0.5
-crash_defense:
-  auto_execute: false
 crash_detector:
   enabled: true
   eval_interval_seconds: 60
@@ -239,22 +72,21 @@ crash_detector:
     price_velocity: 1.8
 data:
   cache_enabled: true
-  default_timeframe: 30m
+  default_timeframe: 1h
   feed_interval_seconds: 3
   historical_days: 365.0
   max_candles_per_request: 1000
-  websocket_enabled: false
+  websocket_enabled: true
   ws_reconnect_attempts: 5
 disabled_models:
 - mean_reversion
 - liquidity_sweep
-- vwap_reversion
-- order_book
+- trend
 dynamic_confluence:
   base_threshold: 0.2
   enabled: false
   max_ceiling: 0.2
-  min_floor: 0.45
+  min_floor: 0.2
   regime_confidence_high: 0.7
   regime_confidence_low: 0.4
   vol_compression_factor: 0.95
@@ -264,7 +96,7 @@ dynamic_confluence:
 entry_model:
   enabled: true
 execution:
-  auto_execute_enabled: true
+  auto_execute_enabled: false
   auto_execute_min_confidence: 0.72
   auto_execute_min_signal: 0.55
   auto_execute_regime_whitelist:
@@ -272,17 +104,13 @@ execution:
   - TRENDING_DOWN
   - RECOVERY
   base_size_usdt: 500.0
-exit:
-  mode: partial
-  partial_pct: 0.33
-  partial_r_trigger: 1.0
 expected_value:
   enabled: true
   ev_threshold: 0.05
   min_rr_floor: 1.0
   regime_uncertainty_penalty: 0.15
   score_midpoint: 0.5
-  sigmoid_steepness: 2.5
+  sigmoid_steepness: 8.0
 filters:
   btc_trend:
     enabled: false
@@ -315,7 +143,7 @@ hmm_regime:
   n_components: 6
   retrain_every_n_bars: 50
 idss:
-  min_confluence_score: 0.45
+  min_confluence_score: 0.55
 ltf_confirmation:
   ema_period: 9
   ema_slope_bars: 3
@@ -329,6 +157,7 @@ ltf_confirmation:
   volume_lookback: 20
   volume_ratio_min: 0.6
 model_weights:
+  donchian_breakout: 0.25
   funding_rate: 0.2
   liquidity_sweep: 0.15
   mean_reversion: 0.25
@@ -340,6 +169,15 @@ model_weights:
   trend: 0.35
   vwap_reversion: 0.28
 models:
+  donchian_breakout:
+    entry_buffer_atr: 0.1
+    lookback: 20
+    rsi_long_min: 50.0
+    rsi_short_max: 50.0
+    sl_atr_mult: 1.5
+    strength_base: 0.35
+    tp_atr_mult: 3.0
+    vol_mult_min: 1.3
   funding_rate:
     min_confidence: 0.55
     min_signal: 0.4
@@ -372,16 +210,16 @@ models:
     sl_atr_mult: 1.5
     tp_atr_mult: 2.0
   sentiment:
-    max_age_minutes: 480
+    max_age_minutes: 90
     min_confidence: 0.55
     min_headlines: 3
     min_signal: 0.35
     sl_atr_mult: 1.5
     tp_atr_mult: 2.5
   trend:
-    adx_bonus_max: 0.4
-    adx_min: 31.0
-    ema20_bonus: 0.25
+    adx_bonus_max: 0.3
+    adx_min: 25.0
+    ema20_bonus: 0.15
     entry_buffer_atr: 0.2
     macd_bonus: 0.2
     rsi_long_max: 70
@@ -400,22 +238,8 @@ models:
 mr_pbl_slc:
   enabled: true
   max_heat: 0.8
-  max_per_asset: 3
   max_positions: 10
   pos_frac: 0.35
-  pullback_long:
-    ema_prox_atr_mult: 0.5
-    htf_ema_fast: 20
-    htf_ema_slow: 50
-    rsi_min: 40.0
-    sl_atr_mult: 2.5
-    tp_atr_mult: 3.0
-  slc_1h_bars: 150
-  swing_low_continuation:
-    adx_min: 28.0
-    sl_atr_mult: 2.5
-    swing_bars: 10
-    tp_atr_mult: 2.0
 ms_garch:
   enabled: true
   refit_every_n_bars: 100
@@ -431,36 +255,36 @@ notifications:
   dedup_window_seconds: 60
   desktop_enabled: true
   email:
-    enabled: true
-    from_address: alexaraujofreitas@gmail.com
+    enabled: false
+    from_address: ''
     password: nejadcuayofrlfce
     smtp_host: smtp.gmail.com
     smtp_port: '587'
-    to_addresses: alexaraujofreitas@gmail.com
+    to_addresses: ''
     use_tls: true
-    username: alexaraujofreitas@gmail.com
+    username: ''
   email_password: __vault__
   gemini:
     ai_enrich: false
     enabled: false
     password: nejadcuayofrlfce
-    to_address: alexaraujofreitas@gmail.com
-    username: alexaraujofreitas@gmail.com
+    to_address: ''
+    username: ''
   gemini_password: __vault__
   preferences:
     daily_summary: true
     emergency_stop: true
     health_check: true
-    health_check_interval_hours: 1
+    health_check_interval_hours: 6
     market_condition: false
     risk_warning: true
     strategy_signal: false
-    system_error: false
+    system_error: true
     trade_closed: true
     trade_modified: false
     trade_opened: true
     trade_rejected: false
-    trade_stopped: false
+    trade_stopped: true
   sms:
     enabled: false
     from_number: ''
@@ -513,6 +337,19 @@ regime:
   rule_weight: 0.65
   use_ensemble: true
 regime_affinity:
+  donchian_breakout:
+    accumulation: 0.35
+    bear_trend: 0.85
+    bull_trend: 0.85
+    crisis: 0.0
+    distribution: 0.5
+    liquidation_cascade: 0.0
+    ranging: 0.15
+    recovery: 0.65
+    squeeze: 0.75
+    uncertain: 0.25
+    volatility_compression: 0.1
+    volatility_expansion: 0.9
   funding_rate:
     accumulation: 0.5
     bear_trend: 0.8
@@ -646,11 +483,9 @@ regime_affinity:
 risk:
   default_stop_loss_pct: 2.0
   default_take_profit_pct: 4.0
-  max_capital_usdt: 0.0
   max_concurrent_positions: 10
   max_open_positions: 10
-  max_portfolio_drawdown_pct: 4.0
-  max_position_capital_pct: 25.0
+  max_portfolio_drawdown_pct: 15.0
   max_position_pct: 2.0
   max_spread_pct: 0.3
   max_strategy_drawdown_pct: 10.0
@@ -663,7 +498,6 @@ risk_engine:
   kelly_fraction: 0.25
   loss_streak_size_multiplier: 0.5
   loss_streak_trigger: 3
-  max_capital_pct: 0.04
   max_leverage_by_regime:
     bear_trend: 2.0
     bull_trend: 3.0
@@ -680,7 +514,7 @@ risk_engine:
   sizing_mode: risk_based
   vol_adjusted_sizing: true
 rl:
-  enabled: true
+  enabled: false
   model_dir: ''
   replay_buffer_size: 50000
   reward_leverage: 10.0
@@ -700,7 +534,7 @@ scanner:
   auto_execute: true
   auto_execute_cooldown_seconds: 30
   btc_only_mode: false
-  capital_usdt: 100016.0
+  capital_usdt: 100000.0
   ohlcv_bars: 300
   watchlists:
     Default:
@@ -721,7 +555,7 @@ sentiment:
   onchain_enabled: false
   reddit_client_id: __vault__
   reddit_client_secret: __vault__
-  reddit_enabled: true
+  reddit_enabled: false
   twitter_enabled: false
   update_interval_minutes: 15
 staged_candidates:

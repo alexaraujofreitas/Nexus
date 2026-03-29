@@ -341,8 +341,9 @@ class BacktestRunner:
 
     # Models that use the ResearchRegimeClassifier (vectorized)
     _RESEARCH_MODELS = frozenset({"pullback_long", "swing_low_continuation"})
-    # Models that use HMMRegimeClassifier (bar-by-bar)
-    _HMM_MODELS      = frozenset({"trend", "momentum_breakout"})
+    # Models that use HMMRegimeClassifier / NexusTrader rule-based regime (bar-by-bar)
+    # donchian_breakout: ACTIVE_REGIMES=[] (fires in all NX regimes via the HMM/NX path)
+    _HMM_MODELS      = frozenset({"trend", "momentum_breakout", "donchian_breakout"})
 
     def __init__(
         self,
@@ -1488,7 +1489,11 @@ class BacktestRunner:
             self.MODE_TREND:       ["trend"],
             self.MODE_MOMENTUM:    ["momentum_breakout"],
             self.MODE_FULL_SYSTEM: ["pullback_long", "swing_low_continuation",
-                                    "trend", "momentum_breakout"],
+                                    "momentum_breakout"],
+            # NOTE: "trend" (TrendModel) permanently removed from full_system
+            # Session 47: confirmed net-negative (PF 0.9592 at 0.04%/side fees,
+            # 5,320+ trades, position crowding reduces PBL/SLC quality).
+            # Use MODE_TREND for research-only studies.
         }.get(self.mode, ["pullback_long", "swing_low_continuation"])
 
     def _fit_hmm(self, progress_cb=None) -> None:
@@ -2387,6 +2392,7 @@ class BacktestRunner:
             "swing_low_continuation": "slc",
             "trend":                  "trend",
             "momentum_breakout":      "mb",
+            "donchian_breakout":      "db",
         }
         model_stats: dict = {}
         for model_name in active_models:

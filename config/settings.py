@@ -17,6 +17,7 @@ DEFAULT_CONFIG = {
         "trend": 0.35,
         "mean_reversion": 0.25,
         "momentum_breakout": 0.25,
+        "donchian_breakout": 0.25,   # Session 48 — same weight as momentum_breakout (research)
         "vwap_reversion": 0.28,
         "liquidity_sweep": 0.15,
         "funding_rate": 0.20,
@@ -44,6 +45,16 @@ DEFAULT_CONFIG = {
             "vol_mult_min": 1.5,
             "rsi_bullish": 55,
             "rsi_bearish": 45,
+            "strength_base": 0.35,
+        },
+        "donchian_breakout": {
+            "entry_buffer_atr": 0.10,
+            "lookback": 20,
+            "vol_mult_min": 1.3,
+            "sl_atr_mult": 1.5,
+            "tp_atr_mult": 3.0,
+            "rsi_long_min": 50.0,
+            "rsi_short_max": 50.0,
             "strength_base": 0.35,
         },
         "vwap_reversion": {
@@ -96,6 +107,7 @@ DEFAULT_CONFIG = {
         "trend": {"bull_trend": 1.0, "bear_trend": 0.9, "ranging": 0.1, "volatility_expansion": 0.25, "volatility_compression": 0.2, "uncertain": 0.3, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.3, "recovery": 0.7, "accumulation": 0.2, "distribution": 0.2},
         "mean_reversion": {"bull_trend": 0.05, "bear_trend": 0.08, "ranging": 1.0, "volatility_expansion": 0.02, "volatility_compression": 0.8, "uncertain": 0.20, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.4, "recovery": 0.4, "accumulation": 0.8, "distribution": 0.7},
         "momentum_breakout": {"bull_trend": 0.7, "bear_trend": 0.7, "ranging": 0.1, "volatility_expansion": 0.70, "volatility_compression": 0.1, "uncertain": 0.2, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.8, "recovery": 0.6, "accumulation": 0.3, "distribution": 0.4},
+        "donchian_breakout": {"bull_trend": 0.85, "bear_trend": 0.85, "ranging": 0.15, "volatility_expansion": 0.90, "volatility_compression": 0.10, "uncertain": 0.25, "crisis": 0.0, "liquidation_cascade": 0.0, "squeeze": 0.75, "recovery": 0.65, "accumulation": 0.35, "distribution": 0.50},
         "vwap_reversion": {"bull_trend": 0.5, "bear_trend": 0.5, "ranging": 0.8, "volatility_expansion": 0.15, "volatility_compression": 0.7, "uncertain": 0.5, "crisis": 0.1, "liquidation_cascade": 0.1, "squeeze": 0.4, "recovery": 0.5, "accumulation": 0.7, "distribution": 0.6},
         "liquidity_sweep": {"bull_trend": 0.4, "bear_trend": 0.6, "ranging": 0.9, "volatility_expansion": 0.25, "volatility_compression": 0.5, "uncertain": 0.4, "crisis": 0.2, "liquidation_cascade": 0.3, "squeeze": 0.5, "recovery": 0.5, "accumulation": 0.7, "distribution": 0.8},
         "funding_rate": {"bull_trend": 0.8, "bear_trend": 0.8, "ranging": 0.5, "volatility_expansion": 0.7, "volatility_compression": 0.4, "uncertain": 0.5, "crisis": 0.6, "liquidation_cascade": 0.7, "squeeze": 0.8, "recovery": 0.7, "accumulation": 0.5, "distribution": 0.6},
@@ -627,7 +639,26 @@ class AppSettings:
             keys = key_path.split(".")
             d = self._config
             for k in keys[:-1]:
-                d = d.setdefault(k, {})
+                # Guard: if the current traversal node is not a dict (e.g. a string
+                # was stored where a dict is expected), replace it with an empty dict
+                # so the navigation can continue.  This prevents the
+                # 'str' object does not support item assignment error.
+                existing = d.get(k) if isinstance(d, dict) else None
+                if not isinstance(existing, dict):
+                    if not isinstance(d, dict):
+                        logger.error(
+                            "settings.set(%r): cannot navigate through non-dict "
+                            "node at key %r (type=%s) — aborting set",
+                            key_path, k, type(d).__name__,
+                        )
+                        return
+                    logger.warning(
+                        "settings.set(%r): intermediate key %r held %s=%r "
+                        "instead of dict — replacing with empty dict",
+                        key_path, k, type(existing).__name__, existing,
+                    )
+                    d[k] = {}
+                d = d[k]
             d[keys[-1]] = value
         if auto_save:
             self.save()

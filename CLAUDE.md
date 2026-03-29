@@ -64,6 +64,8 @@ scanner:
 disabled_models:
   - mean_reversion            # Disabled: backtest PF 0.21, -$18k (Study 4)
   - liquidity_sweep           # Disabled: backtest PF 0.28, -$15k (Study 4)
+  - trend                     # Disabled Session 48: net-negative at 0.04%/side fees (PF 0.9592)
+  - donchian_breakout         # Gated Session 48: research candidate — not validated yet
 multi_tf:
   confirmation_required: true  # v1.2: 30m primary → 4h HTF gate (Phase 5 winning)
 risk_engine:
@@ -84,7 +86,7 @@ models:
 ### Active Models & Backtest Baselines (Study 4, 13 months; Phase 5 combined PF = 2.976)
 | Model | WR | PF | Avg R | Status |
 |-------|----|----|-------|--------|
-| TrendModel | 50.3% | 1.47 | +0.22 | ✅ Active |
+| TrendModel | 50.3% | 0.9592 | — | ❌ Disabled Session 48 (net-negative at fees) |
 | MomentumBreakout | 63.5% | 4.17 | +1.21 | ✅ Active |
 | FundingRateModel | — | — | — | ✅ Active (context enrichment, low weight) |
 | SentimentModel | — | — | — | ✅ Active (FinBERT/VADER, low weight) |
@@ -94,6 +96,7 @@ models:
 | LiquiditySweep | 19.3% | 0.28 | — | ❌ Archived v1.2 (−$15k Study 4) |
 | VWAPReversion | — | 0.28 | — | ❌ Archived v1.2 (below 1.0 threshold, 2026-03-24) |
 | OrderBook | — | ≤1.0 | — | ❌ Archived v1.2 (structural 1h+ TF gate) |
+| DonchianBreakout | — | 1.1053 (zero fee) | — | 🔬 Research candidate Session 48 — gated (disabled_models) |
 
 ### v1.3 PBL+SLC System Backtest (commit c2c5e30 — 2026-03-28)
 4 years (2022-03-22 → 2026-03-21), BTC+SOL+ETH, 30m primary, 200-bar rolling regime window
@@ -539,6 +542,62 @@ All critical components confirmed healthy:
 
 ---
 
+## Session 48 — TrendModel Removal + DonchianBreakout Research (2026-03-29)
+
+### Settings Save Fix
+- **Root cause**: `settings.set()` used `dict.setdefault(k, {})` to traverse dotted key paths. When any intermediate key held a string (in-memory config corruption), `setdefault` returned the existing string, making `d` a string. Subsequent `d[keys[-1]] = value` raised `TypeError: 'str' object does not support item assignment`.
+- **Fix** (`config/settings.py`): Added guard in the key traversal loop — if `d.get(k)` is not a dict, replace it with `{}` and log a warning; if `d` itself is not a dict, log error and return early.
+- **Logging hardening** (`gui/pages/settings/settings_page.py`): Added `exc_info=True` to the settings save error log so full traceback surfaces.
+- **Exact errors** (from live logs, 6 occurrences between 08:15:19 and 08:16:57 UTC): `TypeError: 'str' object does not support item assignment` inside `settings.set()`.
+- **Investigation**: Could not reproduce with base config.yaml (all keys are dicts) — corruption occurs in the running app's in-memory config dict. `set()` is now robust to any such corruption regardless of source.
+
+### TrendModel Removed from Production
+- **Evidence**: Session 47 confirmed TrendModel net-negative at production fees (PF 0.9592 at 0.04%/side, 5,320+ trades). Decision: permanently disable via `disabled_models` gate (never remove code).
+- **config.yaml**: Added `trend` to `disabled_models` → `[mean_reversion, liquidity_sweep, trend]` (now also includes `donchian_breakout` — see below).
+- **`research/engine/backtest_runner.py`**: Removed `"trend"` from `MODE_FULL_SYSTEM` model list. Added comment explaining permanent removal and that `MODE_TREND` exists for research-only studies.
+- **`signal_generator.py`** comment block: Added archival entry — `TrendModel disabled Session 48, PF 0.9592, reason: net-negative at fees`.
+
+### DonchianBreakoutModel — New Research Candidate (Session 48)
+- **File**: `core/signals/sub_models/donchian_breakout_model.py` (NEW)
+- **Thesis**: Price breaking the N-period Donchian channel high/low (of the PRECEDING lookback bars — no look-ahead) on elevated volume signals a high-probability continuation.
+- **Regime**: `ACTIVE_REGIMES = []` (fires in all NX regimes via HMM/NX path); `REGIME_AFFINITY` suppresses it in crisis/liquidation_cascade.
+- **Config defaults** (added to `config/settings.py` DEFAULT_CONFIG):
+  - `models.donchian_breakout.lookback = 20`
+  - `models.donchian_breakout.vol_mult_min = 1.3`
+  - `models.donchian_breakout.sl_atr_mult = 1.5`
+  - `models.donchian_breakout.tp_atr_mult = 3.0`
+  - `models.donchian_breakout.rsi_long_min = 50.0`
+  - `models.donchian_breakout.rsi_short_max = 50.0`
+  - `models.donchian_breakout.strength_base = 0.35`
+  - `models.donchian_breakout.entry_buffer_atr = 0.10`
+- **Registered in**: `signal_generator.py` `_ALL_MODELS`, `research/engine/backtest_runner.py` `_MODEL_KEY` + `_HMM_MODELS`.
+- **Production gate**: `donchian_breakout` added to `disabled_models` — will NOT fire in production until Phase 5 backtest validates it.
+
+### Phase 5 Backtest Results (4 years, BTC+SOL+ETH, 30m)
+Script: `scripts/trend_replacement/phase5_comparison.py`
+Results: `reports/phase5_trend_replacement_comparison.json`
+
+| Scenario | PF (0 fee) | PF (0.04%) | CAGR (0.04%) | WR | MaxDD (0.04%) | n |
+|----------|-----------|-----------|-------------|-----|--------------|---|
+| A: PBL+SLC only (baseline) | 1.3798 | 1.2758 | 48.54% | 56.4% | 20.60% | 1,731 |
+| B: PBL+SLC+MomentumBreakout | 1.2713 | 1.1729 | 45.67% | 47.1% | 20.47% | 2,552 |
+| C: PBL+SLC+DonchianBreakout | 1.1053 | 1.0072 | 2.66% | 47.3% | 44.00% | 4,642 |
+
+**Key findings:**
+- **Scenario A** matches v9 baseline exactly (n=1,731, PF=1.3798/1.2758). ✅ Baseline intact after TrendModel removal.
+- **Scenario B (PBL+SLC+MB)**: MB adds 821 trades. Zero-fee CAGR is higher (74% vs 68%) but at real fees PF drops to 1.1729 and CAGR to 45.7% — worse than baseline on both PF and CAGR. MB dilutes portfolio quality under naive orchestration.
+- **Scenario C (PBL+SLC+Donchian)**: Donchian adds 2,911 trades (total 4,642). With fees PF collapses to 1.0072 and CAGR to 2.7%, MaxDD explodes to 44%. **Failed validation.** Root cause: `ACTIVE_REGIMES=[]` causes Donchian to fire indiscriminately across all regimes at current default params (lookback=20, vol_mult=1.3 are too permissive). Fee drag across 2,911 trades destroys returns.
+
+**Decision**: `donchian_breakout` remains in `disabled_models`. Next research steps: tune regime filter (consider restricting REGIME_AFFINITY threshold), raise `vol_mult_min` to 1.8+, extend `lookback` to 40+, or add a 4h HTF gate. Target: PF ≥ 1.18 with fees, MaxDD ≤ 25%, n ≥ 200 trades before production consideration.
+
+### BacktestRunner: `_HMM_MODELS` updated
+- Added `"donchian_breakout"` to `_HMM_MODELS` frozenset so the unified engine's NX regime path dispatches it correctly in MODE_CUSTOM runs. Comment added explaining ACTIVE_REGIMES=[] behavior.
+
+### Branch
+All work committed on `trend-replacement-study` branch then merged to main.
+
+---
+
 ## Pending Actions
 - Remove or hide `🧪 Test Position` button before any public release
 - Wire `FilterStatsTracker.record_trade_outcome()` into `paper_executor._close_position()` per filter (realized_r quality proxy incomplete without this)
@@ -550,6 +609,7 @@ All critical components confirmed healthy:
 - If stop tightness flag fires in calm markets: review ATR multipliers in sub-model `REGIME_ATR_MULTIPLIERS`
 - **[v1.3 PBL/SLC]** ~~Investigate regime alignment gap~~ — **RESOLVED Session 36**: `research_regime_classifier.py` is now the primary gate for both models; production HMM no longer used for PBL/SLC regime decisions
 - **[v1.3 PBL/SLC]** ~~Run Stage 8 runtime validation~~ — **RESOLVED Session 36**: 52/52 checks passed. PBL signals fire in bull_trend (dir=long, SL/TP correct), SLC signals fire in bear_trend (dir=short, SL/TP correct), ACTIVE_REGIMES gate confirmed, PositionSizer path validated, no context injection. `mr_pbl_slc.enabled: true` is production-ready.
+- **[Session 48 DonchianBreakout]** Tune parameters for production: target PF ≥ 1.18 (fees), MaxDD ≤ 25%, n ≥ 200. Candidates: `vol_mult_min` → 1.8+, `lookback` → 40+, restrict REGIME_AFFINITY floors, add 4h HTF gate, or restrict ACTIVE_REGIMES to vol_expansion + bull_trend/bear_trend only. Run `scripts/trend_replacement/phase5_comparison.py` (Scenario C) after each change.
 
 ---
 
