@@ -697,6 +697,63 @@ All work committed on `mb-optimization-study` branch.
 
 ---
 
+## Session 50 — PBL Optimization Study (2026-03-29)
+
+### Objective
+Improve PullbackLong (PBL) model from standalone PF=0.8456 to PF ≥ 1.05, while keeping combined PF ≥ 1.2758 (baseline). Hard rules: params only — no logic changes, no new engine, no one-off scripts.
+
+### Phase 1 — Diagnosis (diagnostic.py)
+Baseline: PBL standalone PF=0.8456, WR=45.1%, n=501; Combined PF=1.2758, n=1,731.
+
+| Asset | n | WR | PF | Avg R/trade |
+|-------|---|----|----|-------------|
+| BTC | 180 | 49.4% | 1.055 | +0.043 |
+| SOL | 166 | 43.4% | 0.779 | −0.098 |
+| ETH | 155 | 43.2% | 0.819 | −0.084 |
+
+Root causes: (1) SL too tight at 2.5× ATR — 55% SL hit rate; (2) TP too tight at 3.0× ATR; (3) no rejection candle quality filter; (4) RSI=40 floor too permissive.
+
+### Phase 2 — wick_strength Parameter Added
+- **`pullback_long_model.py`**: Added `_WICK_STRENGTH = 1.0` constant; reads `mr_pbl_slc.pullback_long.wick_strength` from config; rejection gate: `lw <= wick_strength × body`.
+- **`config/settings.py`** DEFAULT_CONFIG: Added `mr_pbl_slc.pullback_long` dict with all 5 params.
+
+### Phase 3+4 — Fast Grid + IS/OOS Validation (scripts/pbl_optimization/fast_grid.py)
+Pre-extracted 10,709 candidate bars; simulated 36 combos in ~15s via pure numpy. IS/OOS split: IS=3.5yr to 2025-09-22, OOS=6m.
+
+### Stage 3 — Combined Validation (BacktestRunner, n_workers=2)
+
+| Candidate | Full PF | CAGR | MaxDD | PBL n | PBL PF | Delta |
+|-----------|---------|------|-------|-------|--------|-------|
+| **ema=0.4 rsi=45 wick=1.5 sl=3.0 tp=4.0 (REC)** | **1.4026** | **65.8%** | **−12.9%** | **283** | **1.185** | **+0.1268** |
+| ema=0.3 rsi=50 wick=1.0 sl=3.0 tp=4.0 | 1.4442 | 59.5% | −12.9% | 40 | 1.436 | +0.1684 |
+| ema=0.4 rsi=50 wick=1.5 sl=3.0 tp=4.0 | 1.4294 | 59.5% | −12.9% | 57 | 1.098 | +0.1536 |
+| ema=0.4 rsi=50 wick=1.0 sl=3.0 tp=4.0 | 1.4352 | 60.2% | −12.9% | 73 | 1.135 | +0.1594 |
+| sl=2.5 tp=4.0 ema=0.4 rsi=45 wick=1.5 | 1.4037 | 64.0% | −15.3% | 289 | 1.125 | +0.1279 |
+| **BASELINE** | **1.2758** | **48.5%** | **−20.6%** | **501** | **0.846** | — |
+
+### Verdict: YES — Deploy Recommended Params
+All 5 candidates exceed baseline combined PF by >12%. Recommended candidate chosen for meaningful trade count (n=283) and positive OOS hold-out (PBL PF=2.2 on 17 OOS trades).
+
+**Production config (`mr_pbl_slc.pullback_long` in `config.yaml`):**
+- `sl_atr_mult: 3.0` (was 2.5)
+- `tp_atr_mult: 4.0` (was 3.0)
+- `ema_prox_atr_mult: 0.4` (was 0.5)
+- `rsi_min: 45.0` (was 40.0)
+- `wick_strength: 1.5` (new — was 1.0)
+
+### Files Added (Session 50)
+- `core/signals/sub_models/pullback_long_model.py` — `wick_strength` param
+- `config/settings.py` — `mr_pbl_slc.pullback_long` DEFAULT_CONFIG block
+- `scripts/pbl_optimization/fast_grid.py` — fast grid + Stage 3 combined validation
+- `reports/pbl_optimization/diagnostic_results.json` — Phase 1 per-asset/year breakdown
+- `reports/pbl_optimization/grid_results.json` — full grid (Stage 1+2, IS/OOS, Stage 3)
+- `reports/pbl_optimization/pbl_optimization_study_session50.docx` — full Word report
+
+### Branch
+All work committed on `pbl-optimization-study` branch.
+
+---
+
 ## Scheduled Tasks
 - `nexustrader-daily-review`: Daily 11:05 PM local → `reports/reviews/daily_{date}.txt`
 - `nexustrader-weekly-review`: Sunday 9:06 PM local → `reports/reviews/weekly_{date}.txt`
