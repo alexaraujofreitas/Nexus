@@ -1012,6 +1012,16 @@ class BacktestRunner:
 
         sig_gen = SignalGenerator()
         sig_gen._warmup_complete = True
+        # Disable RL inference during backtesting.
+        # RL calls select_action() per bar which launches a CUDA GPU kernel for a
+        # 1-sample batch (~50-100 µs kernel-launch overhead per call).  On a
+        # 70k-bar × 3-symbol run this becomes ~630,000 tiny GPU dispatches that
+        # saturate the GPU while producing near-zero useful compute.  RL is
+        # shadow_only=True anyway so it never contributes to backtest trade
+        # generation.  Setting _rl_model=None makes SignalGenerator skip the RL
+        # path entirely for this backtest instance only (live production
+        # SignalGenerator is unaffected).
+        sig_gen._rl_model = None
         sizer   = PositionSizer()
 
         # Index structures for O(log n) lookups
@@ -1358,6 +1368,8 @@ class BacktestRunner:
 
         sig_gen = SignalGenerator()
         sig_gen._warmup_complete = True
+        # Disable RL inference during backtesting (see comment in _run_scenario).
+        sig_gen._rl_model = None
         sizer   = PositionSizer()
 
         # ── Technical-only ConfluenceScorer (optional gate) ───────────────────
