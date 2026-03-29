@@ -198,17 +198,24 @@ class TestPullbackLongModel:
     def test_returns_none_rsi_too_low(self):
         df = self._make_pbl_df(rsi=35.0)
         sig = self.model.evaluate("BTC/USDT", df, "bull_trend", "30m")
-        assert sig is None, "PBL must not fire when RSI14 ≤ 40"
+        assert sig is None, "PBL must not fire when RSI14 ≤ 45 (Session 50: rsi_min=45.0)"
 
-    def test_rsi_boundary_exactly_40(self):
-        df = self._make_pbl_df(rsi=40.0)
+    def test_rsi_boundary_exactly_45(self):
+        """Session 50: rsi_min=45.0. RSI=45.0 (not strictly greater than) must reject."""
+        df = self._make_pbl_df(rsi=45.0)
         sig = self.model.evaluate("BTC/USDT", df, "bull_trend", "30m")
-        assert sig is None, "RSI14 = 40.0 (not strictly greater than) should reject"
+        assert sig is None, "RSI14 = 45.0 (not strictly greater than) should reject"
 
-    def test_rsi_boundary_just_above_40(self):
-        df = self._make_pbl_df(rsi=40.01)
+    def test_rsi_boundary_just_above_45(self):
+        """Session 50: rsi_min raised to 45.0. RSI=45.01 must pass, 44.99 must reject."""
+        df = self._make_pbl_df(rsi=45.01)
         sig = self.model.evaluate("BTC/USDT", df, "bull_trend", "30m")
-        assert sig is not None, "RSI14 = 40.01 should pass"
+        assert sig is not None, "RSI14 = 45.01 should pass (rsi_min=45.0 per Session 50)"
+
+    def test_rsi_boundary_just_below_45(self):
+        df = self._make_pbl_df(rsi=44.99)
+        sig = self.model.evaluate("BTC/USDT", df, "bull_trend", "30m")
+        assert sig is None, "RSI14 = 44.99 must reject (rsi_min=45.0 per Session 50)"
 
     def test_htf_bearish_rejects(self):
         df = self._make_pbl_df()
@@ -234,12 +241,14 @@ class TestPullbackLongModel:
         assert sig.take_profit > sig.entry_price, "Take profit must be above entry for long"
 
     def test_sl_tp_multiples(self):
-        """SL = entry − 2.5×ATR and TP = entry + 3.0×ATR (default config)."""
+        """SL = entry − 3.0×ATR and TP = entry + 4.0×ATR (Session 50 approved params)."""
         df = self._make_pbl_df()
         sig = self.model.evaluate("BTC/USDT", df, "bull_trend", "30m")
         atr = float(df["atr_14"].iloc[-1])
-        assert abs((sig.entry_price - sig.stop_loss) / atr - 2.5) < 0.01
-        assert abs((sig.take_profit - sig.entry_price) / atr - 3.0) < 0.01
+        assert abs((sig.entry_price - sig.stop_loss) / atr - 3.0) < 0.01, \
+            f"Expected sl_atr_mult=3.0, got {(sig.entry_price - sig.stop_loss) / atr:.3f}"
+        assert abs((sig.take_profit - sig.entry_price) / atr - 4.0) < 0.01, \
+            f"Expected tp_atr_mult=4.0, got {(sig.take_profit - sig.entry_price) / atr:.3f}"
 
     def test_insufficient_bars_returns_none(self):
         df = self._make_pbl_df(n=30)  # need 60

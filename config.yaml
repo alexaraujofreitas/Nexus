@@ -24,7 +24,7 @@ agents:
   volatility_surface:
     enabled: true
 ai:
-  active_provider: "Auto (Anthropic \u2192 OpenAI \u2192 Gemini)"
+  active_provider: Auto (Anthropic → OpenAI → Gemini)
   anthropic_api_key: __vault__
   anthropic_model: claude-opus-4-6
   gemini_api_key: __vault__
@@ -72,16 +72,33 @@ crash_detector:
     price_velocity: 1.8
 data:
   cache_enabled: true
-  default_timeframe: 1h
+  default_timeframe: 30m
   feed_interval_seconds: 3
   historical_days: 365.0
   max_candles_per_request: 1000
-  websocket_enabled: true
+  websocket_enabled: false
   ws_reconnect_attempts: 5
+demo_mode:
+  approved_models:
+  - pullback_long
+  - swing_low_continuation
+  - funding_rate
+  - sentiment
+  locked: true
+  locked_pbl_params:
+    ema_prox_atr_mult: 0.4
+    rsi_min: 45.0
+    sl_atr_mult: 3.0
+    tp_atr_mult: 4.0
+    wick_strength: 1.5
+  note: LOCKED 2026-03-29 Session 50. No param changes during demo phase.
+  parameter_lock_version: session50
 disabled_models:
 - mean_reversion
 - liquidity_sweep
 - trend
+- donchian_breakout
+- momentum_breakout
 dynamic_confluence:
   base_threshold: 0.2
   enabled: false
@@ -143,7 +160,7 @@ hmm_regime:
   n_components: 6
   retrain_every_n_bars: 50
 idss:
-  min_confluence_score: 0.55
+  min_confluence_score: 0.45
 ltf_confirmation:
   ema_period: 9
   ema_slope_bars: 3
@@ -240,6 +257,12 @@ mr_pbl_slc:
   max_heat: 0.8
   max_positions: 10
   pos_frac: 0.35
+  pullback_long:
+    ema_prox_atr_mult: 0.4
+    rsi_min: 45.0
+    sl_atr_mult: 3.0
+    tp_atr_mult: 4.0
+    wick_strength: 1.5
 ms_garch:
   enabled: true
   refit_every_n_bars: 100
