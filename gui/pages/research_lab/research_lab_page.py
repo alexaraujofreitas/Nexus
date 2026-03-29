@@ -195,7 +195,7 @@ class SweepWorkerThread(QThread):
 
         # Phase 1 — load data (indeterminate, long)
         self.indeterminate.emit(True)
-        self.progress.emit(0, PHASES, 0.0, "Phase 1/4 — Loading historical data…")
+        self.progress.emit(0, PHASES, 0.0, "Phase 1/4 — Loading historical data (checking cache)…")
         _mode     = getattr(state, "backtest_mode", "pbl_slc")
         _subset   = getattr(state, "strategy_subset", []) or None
         _orch     = getattr(state, "orchestration_mode", "naive")
@@ -222,20 +222,59 @@ class SweepWorkerThread(QThread):
         if self._cancel:
             return
 
-        # Phase 2+3 — zero-fee and fee scenarios run in PARALLEL.
-        # runner.run() is safe to call concurrently: all shared runner state
-        # (_ind, _highs/_lows/_opens, _nx_regime, _master_ts) is read-only
-        # after load_data() completes.  Each run() creates its own local
-        # sig_gen, sizer, positions dict, and pending_entries, so there is no
-        # mutable state shared between the two threads.
-        # NumPy operations inside generate() release the GIL, giving true
-        # CPU parallelism even under Python's threading model.
+        # Session 47: Pre-compute all PBL/SLC signals ONCE using the host's
+        # 32-core ProcessPoolExecutor, then share the result with BOTH the
+        # zero-fee and fee simulation scenarios.
+        #
+        # Why compute once:  signal generation is deterministic and cost-independent
+        # (entry conditions depend only on OHLCV + regime, not on cost_per_side).
+        # Running precompute twice for Test A and Test B would waste ~1 s.
+        #
+        # Architecture:
+        #   1. _parallel_precompute() → GPU pre-filter → 32-core pool.map()
+        #      → {ts: {sym: [_SigProxy, …]}}  (~1-2 s total)
+        #   2. Phase 2+3 passes _precomp_sigs_override to both run() calls.
+        #      Each simulation loop does O(1) dict lookup instead of generate().
+        #      (~3-4 s each, but run in parallel → ~3-4 s wall clock)
+        #
+        # Fallback: if mode != pbl_slc or n_workers == 1, _parallel_precompute
+        # returns {} and run() uses the legacy per-bar ThreadPoolExecutor path.
         import concurrent.futures as _cf
-        self.progress.emit(1, PHASES, 0.0,
-            "Phase 2+3/4 — Running zero-fee & fee scenarios in parallel…")
+        _n_w = getattr(state, "n_workers", None) or __import__('multiprocessing').cpu_count()
+        _mode_is_pbl_slc = (_mode == "pbl_slc")
+
+        _precomp: dict = {}
+        if _mode_is_pbl_slc and _n_w > 1:
+            self.progress.emit(1, PHASES, 0.0,
+                f"Phase 2/4 — Pre-computing signals ({_n_w} cores + GPU)…")
+            def _precomp_progress(msg: str, pct: float):
+                self.progress.emit(int(1 + pct / 100), PHASES, 0.0, msg)
+            try:
+                _precomp = runner._parallel_precompute(
+                    params={},
+                    n_workers=_n_w,
+                    progress_cb=_precomp_progress,
+                )
+            except Exception as _pe:
+                import logging as _lg
+                _lg.getLogger(__name__).warning(
+                    "_parallel_precompute failed (%s) — falling back to per-bar mode", _pe
+                )
+                _precomp = {}
+
+        if self._cancel:
+            return
+
+        # Phase 3 — zero-fee and fee scenarios run in PARALLEL.
+        # Both share the same precomputed signal dict (_precomp_sigs_override).
+        # Each run() still creates its own local sizer, positions, equity curve —
+        # no shared mutable state.
+        self.progress.emit(2, PHASES, 0.0,
+            "Phase 3/4 — Running zero-fee & fee scenarios in parallel…")
+        _kwargs = {"_precomp_sigs_override": _precomp} if _precomp else {}
         with _cf.ThreadPoolExecutor(max_workers=2) as _ex:
-            _f0 = _ex.submit(runner.run, {}, 0.0)
-            _f1 = _ex.submit(runner.run, {}, 0.0004)
+            _f0 = _ex.submit(runner.run, {}, 0.0,      None, None, _precomp or None)
+            _f1 = _ex.submit(runner.run, {}, 0.0004,   None, None, _precomp or None)
             r0 = _f0.result()
             r1 = _f1.result()
         if self._cancel:
@@ -243,7 +282,7 @@ class SweepWorkerThread(QThread):
 
         # Phase 4 — validate (fast)
         self.indeterminate.emit(False)
-        self.progress.emit(3, PHASES, 0.0, "Phase 4/4 — Validating against baseline lock…")
+        self.progress.emit(PHASES - 1, PHASES, 0.0, "Phase 4/4 — Validating against baseline lock…")
         bl = load_baseline()
         passed, failures = bl.check(r0, r1)
         summary = {
