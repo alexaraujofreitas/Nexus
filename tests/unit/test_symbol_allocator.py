@@ -674,11 +674,10 @@ class TestNoSideEffects:
 
     def test_sa17e_symbol_allocator_has_no_order_router_import(self):
         """symbol_allocator.py must not import order_router (safety)."""
-        import importlib.util, pathlib
-        path = pathlib.Path(
-            "/sessions/exciting-epic-bell/mnt/NexusTrader/"
-            "core/analytics/symbol_allocator.py"
-        )
+        import importlib.util, pathlib, inspect
+        # Use inspect to find the actual file location (portable across environments)
+        from core.analytics import symbol_allocator as _mod
+        path = pathlib.Path(inspect.getfile(_mod))
         source = path.read_text()
         assert "order_router" not in source
 

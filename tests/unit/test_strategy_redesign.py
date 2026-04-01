@@ -192,7 +192,8 @@ class TestSettingsIntegration:
         assert "models" in DEFAULT_CONFIG
         expected_models = {
             "trend", "momentum_breakout", "vwap_reversion", "mean_reversion",
-            "liquidity_sweep", "funding_rate", "order_book", "sentiment"
+            "liquidity_sweep", "funding_rate", "order_book", "sentiment",
+            "donchian_breakout",
         }
         assert set(DEFAULT_CONFIG["models"].keys()) == expected_models
 
@@ -953,7 +954,7 @@ class TestRegimeAffinity:
         ra = DEFAULT_CONFIG["regime_affinity"]
         expected = {"trend", "mean_reversion", "momentum_breakout", "vwap_reversion",
                     "liquidity_sweep", "funding_rate", "order_book", "sentiment",
-                    "rl_ensemble", "orchestrator"}
+                    "donchian_breakout", "rl_ensemble", "orchestrator"}
         assert set(ra.keys()) == expected
 
     def test_ra003_each_model_has_12_regimes(self):

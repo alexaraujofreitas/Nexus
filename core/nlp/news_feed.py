@@ -212,7 +212,6 @@ class NewsFeed:
             f"&kind=news"
             f"&public=true"
             f"&currencies={currencies_param}"
-            f"&size=50"
         )
         response = requests.get(url, timeout=10, headers=_HEADERS)
         response.raise_for_status()

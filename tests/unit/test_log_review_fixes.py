@@ -576,14 +576,19 @@ class TestNewsFeedMaxAgeDefault:
             "Article published 3 hours ago must be included when max_age_minutes=240"
         )
 
-    def test_lr10_articles_outside_window_are_excluded(self):
-        """Articles older than max_age_minutes must be filtered out."""
+    def test_lr10_articles_outside_window_use_stale_fallback(self):
+        """Articles older than max_age_minutes but within 24h are returned with _stale tag.
+
+        Session 44 added a 24h fallback: when the primary window is empty,
+        articles up to 24h old are returned tagged _stale=True so callers
+        can down-weight the signal.
+        """
         from datetime import datetime, timezone, timedelta
         from unittest.mock import patch
         from core.nlp.news_feed import NewsFeed
 
         feed = NewsFeed()
-        # Article published 5 hours ago — outside 4-hour window
+        # Article published 5 hours ago — outside 4-hour primary window
         five_hours_ago = datetime.now(timezone.utc) - timedelta(hours=5)
 
         with patch.object(feed, "_fetch_cryptopanic", return_value=[]), \
@@ -595,6 +600,59 @@ class TestNewsFeedMaxAgeDefault:
              }]):
             headlines = feed.fetch_headlines(max_age_minutes=240)
 
-        assert len(headlines) == 0, (
-            "Article published 5 hours ago must be excluded when max_age_minutes=240"
+        # With 24h fallback (Session 44), stale articles are returned when
+        # the primary window is empty — tagged _stale=True
+        assert len(headlines) == 1, (
+            "Article within 24h should be returned via stale fallback"
         )
+        assert headlines[0].get("_stale") is True, (
+            "Stale fallback articles must be tagged _stale=True"
+        )
+
+    def test_lr10b_articles_beyond_24h_are_excluded(self):
+        """Articles older than 24h must be excluded even with fallback."""
+        from datetime import datetime, timezone, timedelta
+        from unittest.mock import patch
+        from core.nlp.news_feed import NewsFeed
+
+        feed = NewsFeed()
+        # Article published 25 hours ago — beyond 24h fallback window
+        old_article = datetime.now(timezone.utc) - timedelta(hours=25)
+
+        with patch.object(feed, "_fetch_cryptopanic", return_value=[]), \
+             patch.object(feed, "_fetch_rss", return_value=[{
+                 "title": "Very old news",
+                 "source": "CoinDesk",
+                 "timestamp": old_article,
+                 "url": "https://example.com/very-old",
+             }]):
+            headlines = feed.fetch_headlines(max_age_minutes=240)
+
+        assert len(headlines) == 0, (
+            "Article beyond 24h must be excluded even with stale fallback"
+        )
+
+    def test_lr10c_stale_articles_excluded_when_fresh_available(self):
+        """When fresh articles exist, stale articles are properly excluded."""
+        from datetime import datetime, timezone, timedelta
+        from unittest.mock import patch
+        from core.nlp.news_feed import NewsFeed
+
+        feed = NewsFeed()
+        fresh = datetime.now(timezone.utc) - timedelta(hours=2)
+        stale = datetime.now(timezone.utc) - timedelta(hours=5)
+
+        with patch.object(feed, "_fetch_cryptopanic", return_value=[]), \
+             patch.object(feed, "_fetch_rss", return_value=[
+                 {"title": "Fresh BTC news", "source": "CoinDesk",
+                  "timestamp": fresh, "url": "https://example.com/fresh"},
+                 {"title": "Old BTC news", "source": "Decrypt",
+                  "timestamp": stale, "url": "https://example.com/stale"},
+             ]):
+            headlines = feed.fetch_headlines(max_age_minutes=240)
+
+        # Only the fresh article should be returned (primary window has results)
+        assert len(headlines) == 1, (
+            "When fresh articles exist, only those within primary window are returned"
+        )
+        assert headlines[0]["title"] == "Fresh BTC news"

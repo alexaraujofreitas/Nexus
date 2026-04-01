@@ -118,13 +118,15 @@ class TestModeRouting:
         assert r._get_active_models() == ["momentum_breakout"]
 
     def test_full_system_active_models(self):
+        """MODE_FULL_SYSTEM active models — trend removed Session 48 (PF 0.9592)."""
         from research.engine.backtest_runner import BacktestRunner
         r = BacktestRunner(mode="full_system")
         active = set(r._get_active_models())
         assert "pullback_long"          in active
         assert "swing_low_continuation" in active
-        assert "trend"                  in active
         assert "momentum_breakout"      in active
+        # trend removed Session 48: net-negative at production fees (PF 0.9592)
+        assert "trend" not in active
 
     def test_custom_subset_override(self):
         from research.engine.backtest_runner import BacktestRunner

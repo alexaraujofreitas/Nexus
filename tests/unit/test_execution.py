@@ -261,10 +261,11 @@ def test_pe006_close_nonexistent_symbol_returns_false(paper_executor):
 def test_pe007_close_all_closes_every_position(paper_executor):
     """close_all() must close all open positions and return the count."""
     symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-    for s in symbols:
-        paper_executor.submit(make_candidate(
-            symbol=s, entry=65_000.0, sl=63_000.0, tp=68_000.0
-        ))
+    with patch.object(paper_executor, "_is_parity_mode", return_value=False):
+        for s in symbols:
+            paper_executor.submit(make_candidate(
+                symbol=s, entry=65_000.0, sl=63_000.0, tp=68_000.0
+            ))
 
     count = paper_executor.close_all()
 
@@ -468,8 +469,9 @@ def test_available_capital_decreases_when_position_open(paper_executor):
     Opening a position must reduce available_capital by the position size.
     """
     before = paper_executor.available_capital
-    paper_executor.submit(make_candidate(symbol="ETH/USDT", size=200.0,
-                                          entry=3_500.0, sl=3_400.0, tp=3_700.0))
+    with patch.object(paper_executor, "_is_parity_mode", return_value=False):
+        paper_executor.submit(make_candidate(symbol="ETH/USDT", size=200.0,
+                                              entry=3_500.0, sl=3_400.0, tp=3_700.0))
     after = paper_executor.available_capital
     assert after < before
     assert before - after == pytest.approx(200.0, abs=1.0)

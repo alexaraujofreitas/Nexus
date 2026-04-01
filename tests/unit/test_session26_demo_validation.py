@@ -46,7 +46,9 @@ class TestTradeExecutionFields:
         )
         cand.symbol_weight  = 1.3
         cand.adjusted_score = 0.72 * 1.3
-        ok = paper_executor.submit(cand)
+        # Disable BACKTEST_PARITY mode so standard risk-based sizing is used
+        with patch.object(paper_executor, "_is_parity_mode", return_value=False):
+            ok = paper_executor.submit(cand)
         assert ok
         pos_list = paper_executor._positions.get("SOL/USDT", [])
         assert pos_list, "Position was not created"

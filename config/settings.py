@@ -623,6 +623,15 @@ class AppSettings:
                     file_config = yaml.safe_load(f) or {}
                 self._config = self._deep_merge(self._config, file_config)
                 logger.debug("Configuration loaded from %s", CONFIG_PATH)
+                # Guard: detect truncated config.yaml (missing critical sections)
+                _expected_keys = {"phase_2c", "mr_pbl_slc", "risk_engine", "scanner", "exit"}
+                _missing = _expected_keys - set(file_config.keys())
+                if _missing:
+                    logger.warning(
+                        "settings.load(): config.yaml may be truncated — missing top-level keys: %s. "
+                        "Defaults will be used for missing sections. Run 'git checkout HEAD -- config.yaml' to restore.",
+                        sorted(_missing),
+                    )
             except Exception as e:
                 logger.warning("Could not load config file: %s — using defaults", e)
         else:

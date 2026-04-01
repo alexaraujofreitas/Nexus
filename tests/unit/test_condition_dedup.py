@@ -146,9 +146,12 @@ class TestConditionDedup:
         c1 = _cand(models=["mean_reversion"], regime="ranging")
         c2 = _cand(models=["trend"],          regime="bull_trend")
         c3 = _cand(models=["momentum_breakout"], regime="vol_expansion")
-        assert pe.submit(c1) is True
-        assert pe.submit(c2) is True
-        assert pe.submit(c3) is True
+        # Disable BACKTEST_PARITY mode to avoid heat-check blocking the 3rd
+        # position (parity mode uses 35% pos_frac × 3 > 80% max_heat).
+        with patch.object(pe, "_is_parity_mode", return_value=False):
+            assert pe.submit(c1) is True
+            assert pe.submit(c2) is True
+            assert pe.submit(c3) is True
         assert len(pe._positions.get("BTC/USDT", [])) == 3
 
     def test_cd10_has_duplicate_condition_standalone(self, paper_executor):

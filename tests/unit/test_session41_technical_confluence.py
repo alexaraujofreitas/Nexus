@@ -275,7 +275,7 @@ class TestPBLSLCParityUnchanged(unittest.TestCase):
 
         sentinel = object()
 
-        def fake_run_scenario(cost_per_side, progress_cb=None):
+        def fake_run_scenario(cost_per_side, progress_cb=None, _precomp_sigs=None):
             run_scenario_called.append(1)
             return {"profit_factor": 1.0, "n_trades": 0}
 
@@ -295,7 +295,9 @@ class TestPBLSLCParityUnchanged(unittest.TestCase):
         except Exception:
             pass  # may fail on other missing data, that's fine
 
-        # _run_scenario must have been entered; _run_unified_scenario must NOT
+        # MODE_PBL_SLC must call _run_scenario() (the reference implementation),
+        # NOT _run_unified_scenario().  This guarantees parity with
+        # n=1,731 / PF=1.3798 / PF(fees)=1.2682.
         self.assertGreater(len(run_scenario_called), 0,
                            "MODE_PBL_SLC must call _run_scenario(), not unified engine")
         self.assertEqual(len(unified_called), 0,

@@ -610,12 +610,13 @@ class NotificationManager:
         """
         Schedule daily summary to fire at the configured hour (local time).
         """
+        from datetime import timedelta
         now = datetime.now()
         target = now.replace(hour=self._daily_summary_hour, minute=0, second=0, microsecond=0)
 
         # If target time has passed today, schedule for tomorrow
         if target <= now:
-            target = target.replace(day=target.day + 1)
+            target = target + timedelta(days=1)
 
         delay = (target - now).total_seconds()
 

@@ -197,7 +197,7 @@ class DashboardPage(QWidget):
         # Start live feed for default watch symbols
         QTimer.singleShot(1500, self._start_feed)
         # Populate scanner + last trade rows from current runtime state
-        QTimer.singleShot(2000, self._update_scanner_row_startup)
+        QTimer.singleShot(10000, self._update_scanner_row_startup)
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -506,7 +506,7 @@ class DashboardPage(QWidget):
             self._start_feed()
             # Update ML, strategy, and scanner status now that exchange is ready
             QTimer.singleShot(3000, self._update_ml_and_strategy_status)
-            QTimer.singleShot(3500, self._update_scanner_row_startup)
+            QTimer.singleShot(10000, self._update_scanner_row_startup)
         else:
             self._sig_scanner_status.emit("Waiting for exchange…", "#4A5568")
 

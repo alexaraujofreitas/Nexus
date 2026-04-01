@@ -61,6 +61,9 @@ class FinBERTPipeline:
         self.model_name = model_name
         self.device = device
         self._backend: str | None = None  # "finbert" | "vader" | "keyword"
+        # Propagate device to class-level so _load_finbert() uses the right device
+        if device == "cuda" and FinBERTPipeline._device_str != "cuda":
+            FinBERTPipeline._device_str = "cuda"
 
     def analyze(self, texts: list[str]) -> list[dict]:
         """
@@ -229,38 +232,87 @@ class FinBERTPipeline:
 
     # ── Private: FinBERT loader and analyzer ─────────────────────
 
+    # Class-level device setting (set by first instance to request cuda)
+    _device_str: str = "cpu"
+
+    # Project-local cache dir for FinBERT weights (persists across HF cache wipes)
+    _PROJECT_CACHE_DIR: str | None = None
+
+    @classmethod
+    def _get_cache_dir(cls) -> str:
+        """Return project-local cache dir for FinBERT weights."""
+        if cls._PROJECT_CACHE_DIR is None:
+            from pathlib import Path
+            _root = Path(__file__).resolve().parent.parent.parent
+            cls._PROJECT_CACHE_DIR = str(_root / "models" / "finbert")
+        return cls._PROJECT_CACHE_DIR
+
     @classmethod
     def _load_finbert(cls) -> None:
         """Load FinBERT model from local cache (no network check).
 
-        Sets HF_HUB_OFFLINE=1 and local_files_only=True to prevent
-        huggingface_hub from making blocking HTTP requests to check
-        for model updates. The model is already cached locally (~438 MB).
-        This eliminates the 10-30s TLS hang on startup.
+        Checks both the project-local cache (models/finbert/) and the
+        default HuggingFace cache. Sets HF_HUB_OFFLINE=1 on the first
+        attempt to prevent blocking HTTP requests (~10-30s TLS hang).
+        If the model isn't cached anywhere, falls back to a network
+        download into the project-local cache dir.
         """
         import os
-        os.environ["HF_HUB_OFFLINE"] = "1"
+        from pathlib import Path
+
+        cache_dir = cls._get_cache_dir()
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
 
         try:
             from transformers import pipeline as hf_pipeline
         except ImportError:
             raise ImportError("transformers library not installed")
 
+        _device = 0 if cls._device_str == "cuda" else -1
+
+        # Attempt 1: project-local cache (offline, no network)
+        os.environ["HF_HUB_OFFLINE"] = "1"
         try:
             cls._model = hf_pipeline(
                 "text-classification",
                 model="ProsusAI/finbert",
-                device=("cuda" if "cuda" in cls().device else -1),
+                device=_device,
+                model_kwargs={"cache_dir": cache_dir},
             )
-        except OSError:
-            # Model not cached yet — fall back to network download
-            logger.warning("FinBERT not in local cache, downloading (one-time)...")
-            os.environ.pop("HF_HUB_OFFLINE", None)
+            logger.info("FinBERTPipeline: loaded from project cache (%s)", cache_dir)
+            return
+        except (OSError, ValueError):
+            pass
+
+        # Attempt 2: default HF system cache (offline, no network)
+        try:
             cls._model = hf_pipeline(
                 "text-classification",
                 model="ProsusAI/finbert",
-                device=("cuda" if "cuda" in cls().device else -1),
+                device=_device,
             )
+            logger.info("FinBERTPipeline: loaded from HF system cache")
+            return
+        except (OSError, ValueError):
+            pass
+
+        # Attempt 3: network download into project-local cache
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        logger.warning("FinBERT not in local cache, downloading (one-time)...")
+        try:
+            cls._model = hf_pipeline(
+                "text-classification",
+                model="ProsusAI/finbert",
+                device=_device,
+                model_kwargs={"cache_dir": cache_dir},
+            )
+            logger.info("FinBERTPipeline: downloaded to project cache (%s)", cache_dir)
+        except Exception as e:
+            # Restore offline flag and re-raise so caller falls back to VADER
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            raise OSError(
+                f"FinBERT unavailable — not cached and download failed: {e}"
+            ) from e
 
     def _analyze_with_finbert(self, texts: list[str]) -> list[dict]:
         """Analyze using FinBERT."""

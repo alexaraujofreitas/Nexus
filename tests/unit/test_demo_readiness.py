@@ -411,6 +411,7 @@ class TestDemoStartupValidation(unittest.TestCase):
                 "multi_tf.confirmation_required":       True,
                 "scanner.auto_execute":                 True,
                 "data.websocket_enabled":               False,
+                "execution_mode.backtest_parity":       True,
             }.get(k, d)
 
             from core.orchestrator.demo_startup_log import run_demo_startup_validation
