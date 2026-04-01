@@ -566,6 +566,30 @@ DEFAULT_CONFIG = {
             "wick_strength":      1.0,    # lower_wick ≥ mult × body  (1.0 = original lw>body)
         },
     },
+    # Phase 2c — Enhancement Layer + RangeBreakout + Shadow Tracking
+    "phase_2c": {
+        "pullback_enhancement": {
+            "enabled": False,
+            "boost_flat": 0.10,
+            "boost_confidence_scale": 0.30,
+            "mode_b_level": 0,
+            "relaxed_strength_cap": 0.75,
+        },
+        "range_breakout": {
+            "enabled": False,
+            "entry_buffer_atr": 0.1,
+            "sl_range_pct": 0.10,
+            "tp_range_mult": 1.0,
+            "min_confidence": 0.35,
+            "strength_base": 0.35,
+            "strength_cap": 0.80,
+            "max_positions": 1,
+            "max_capital_pct": 0.03,
+        },
+        "shadow_tracking": {
+            "enabled": True,
+        },
+    },
     # 15m closed-candle confirmation before executing HTF signals.
     "ltf_confirmation": {
         "ema_period": 9,               # EMA span for trend alignment

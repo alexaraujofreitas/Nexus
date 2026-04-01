@@ -787,6 +787,71 @@ class PaperExecutor:
                          self._max_positions_per_symbol, candidate.symbol)
             return False
 
+        # ── Phase 2c RangeBreakout position limit + capital cap ──────
+        cand_models_raw = list(getattr(candidate, "models_fired", []))
+        _is_rb_trade = "range_breakout" in cand_models_raw
+        if _is_rb_trade:
+            try:
+                from config.settings import settings as _s_rb
+                _rb_max_pos = int(_s_rb.get("phase_2c.range_breakout.max_positions", 1))
+                _rb_max_cap = float(_s_rb.get("phase_2c.range_breakout.max_capital_pct", 0.03))
+                # Count existing RB positions
+                _rb_open = sum(
+                    1 for sym_positions in self._positions.values()
+                    for p in sym_positions
+                    if "range_breakout" in (p.models_fired or [])
+                )
+                _rb_pos_blocked = _rb_open >= _rb_max_pos
+                if _rb_pos_blocked:
+                    logger.info(
+                        "PaperExecutor: RB position limit (%d/%d) — blocking %s",
+                        _rb_open, _rb_max_pos, candidate.symbol,
+                    )
+                    try:
+                        from core.scanning.shadow_tracker import shadow_tracker as _st
+                        _st.record_signal(
+                            symbol=candidate.symbol, model="range_breakout",
+                            direction=candidate.side, strength=candidate.score or 0.0,
+                            entry_price=candidate.entry_price or 0.0,
+                            stop_loss=candidate.stop_loss or 0.0,
+                            take_profit=candidate.take_profit or 0.0,
+                            regime=getattr(candidate, "regime", ""),
+                            was_executed=False,
+                            rejection_reason="rb_position_limit",
+                            rb_pos_blocked=True,
+                            position_size_usdt=candidate.position_size_usdt or 0.0,
+                        )
+                    except Exception:
+                        pass
+                    return False
+                # Cap size to max_capital_pct
+                _cap_usdt = self._capital * _rb_max_cap
+                _rb_cap_applied = False
+                if candidate.position_size_usdt > _cap_usdt > 0:
+                    logger.info(
+                        "PaperExecutor: RB capital cap %.1f%% — %.2f → %.2f USDT for %s",
+                        _rb_max_cap * 100, candidate.position_size_usdt, _cap_usdt, candidate.symbol,
+                    )
+                    candidate.position_size_usdt = _cap_usdt
+                    _rb_cap_applied = True
+                    try:
+                        from core.scanning.shadow_tracker import shadow_tracker as _st
+                        _st.record_signal(
+                            symbol=candidate.symbol, model="range_breakout",
+                            direction=candidate.side, strength=candidate.score or 0.0,
+                            entry_price=candidate.entry_price or 0.0,
+                            stop_loss=candidate.stop_loss or 0.0,
+                            take_profit=candidate.take_profit or 0.0,
+                            regime=getattr(candidate, "regime", ""),
+                            was_executed=True,
+                            rb_cap_applied=True,
+                            position_size_usdt=_cap_usdt,
+                        )
+                    except Exception:
+                        pass
+            except Exception as _rb_exc:
+                logger.debug("PaperExecutor: RB control check error: %s", _rb_exc)
+
         # ── Condition deduplication ──────────────────────────────────
         # Reject if an open position for this symbol already shares the
         # exact same condition (side + models_fired set + regime).
@@ -1720,6 +1785,31 @@ class PaperExecutor:
             _get_store().record(trade)
         except Exception as _l2_exc:
             logger.debug("PaperExecutor: L2 learning record failed (non-fatal): %s", _l2_exc)
+
+        # ── Phase 2c shadow tracker outcome recording ────────────────────
+        _p2c_models = {"pullback_long", "swing_low_continuation", "range_breakout"}
+        if _models and any(m in _p2c_models for m in _models):
+            try:
+                from core.scanning.shadow_tracker import shadow_tracker as _st
+                _p2c_model = next((m for m in _models if m in _p2c_models), _models[0])
+                _st.record_outcome(
+                    symbol=symbol,
+                    model=_p2c_model,
+                    direction=pos.side,
+                    entry_price=pos.entry_price,
+                    exit_price=exit_fill,
+                    stop_loss=pos.stop_loss or 0.0,
+                    take_profit=pos.take_profit or 0.0,
+                    pnl_usdt=round(pnl_usdt, 4),
+                    r_value=_realized_r if _realized_r is not None else 0.0,
+                    exit_reason=reason,
+                    duration_s=duration_s,
+                    size_usdt=pos.size_usdt,
+                    was_boosted="Phase2c ModeA" in (pos.rationale or ""),
+                    was_relaxed="ModeA+B" in (pos.rationale or ""),
+                )
+            except Exception as _st_exc:
+                logger.debug("PaperExecutor: shadow tracker outcome error (non-fatal): %s", _st_exc)
 
         # ── Feed CalibratorMonitor (Session 23) ──────────────────────────
         # Record the prediction that was made at entry time vs the actual outcome.

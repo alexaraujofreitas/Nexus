@@ -760,6 +760,59 @@ class ScanWorker(QThread):
         except Exception as _ctx_outer:
             logger.debug("Scanner: context fetch outer error for %s: %s", symbol, _ctx_outer)
 
+        # ── Phase 2c: Transition event detection on 1h data ────────────────
+        _p2c_enabled:        bool = False
+        _p2c_rb_enabled:     bool = False
+        _p2c_enh_enabled:    bool = False
+        _p2c_transition_ev   = None
+        _p2c_rb_event        = None
+        _p2c_breakout_active: bool = False
+
+        try:
+            from config.settings import settings as _s_p2c
+            _p2c_enh_enabled = bool(_s_p2c.get("phase_2c.pullback_enhancement.enabled", False))
+            _p2c_rb_enabled  = bool(_s_p2c.get("phase_2c.range_breakout.enabled", False))
+            _p2c_enabled = _p2c_enh_enabled or _p2c_rb_enabled
+        except Exception:
+            pass
+
+        if _p2c_enabled and _df_1h_ctx is not None and len(_df_1h_ctx) >= 30:
+            try:
+                from core.regime.feature_transition_detector import (
+                    FeatureTransitionDetector,
+                )
+                _ftd = FeatureTransitionDetector(params={
+                    "range_breakout.require_confirmation_bar": False,
+                })
+                _ftd_loc = len(_df_1h_ctx) - 1
+                _ftd_idx_4h = None
+                if _df_4h_ctx is not None and not _df_4h_ctx.empty:
+                    _ts_1h_last = _df_1h_ctx.index[-1]
+                    _ftd_idx_4h = int(_df_4h_ctx.index.searchsorted(_ts_1h_last, side="right")) - 1
+                    if _ftd_idx_4h < 0:
+                        _ftd_idx_4h = None
+
+                _ftd_events = _ftd.detect(
+                    _df_1h_ctx, _ftd_loc, df_4h=_df_4h_ctx, idx_4h=_ftd_idx_4h
+                )
+
+                for _ev in _ftd_events:
+                    if _ev.event_type == "pullback_continuation" and _p2c_enh_enabled:
+                        _p2c_transition_ev = _ev
+                        logger.debug(
+                            "Scanner: %s Phase2c pullback_continuation — dir=%s conf=%.3f",
+                            symbol, _ev.direction, _ev.confidence,
+                        )
+                    elif _ev.event_type == "range_breakout" and _p2c_rb_enabled:
+                        _p2c_rb_event = _ev
+                        _p2c_breakout_active = True
+                        logger.debug(
+                            "Scanner: %s Phase2c range_breakout — dir=%s conf=%.3f",
+                            symbol, _ev.direction, _ev.confidence,
+                        )
+            except Exception as _ftd_exc:
+                logger.debug("Scanner: %s Phase2c FTD error: %s", symbol, _ftd_exc)
+
         # ── Main model signal generation (NexusTrader HMM regime) ────────────
         # TrendModel, MomentumBreakout, FundingRate, Sentiment, RL use the
         # HMM+rule-based blended regime from classify_combined() above.
@@ -775,17 +828,26 @@ class ScanWorker(QThread):
         # ── PBL dedicated call (ResearchRegimeClassifier 30m → ACTIVE_REGIMES gate)
         if _pbl_slc_enabled:
             try:
+                # Build PBL context with Phase 2c enhancement layer
+                _pbl_ctx = {}
+                if _df_4h_ctx is not None:
+                    _pbl_ctx["df_4h"] = _df_4h_ctx
+                if _p2c_transition_ev is not None:
+                    _pbl_ctx["transition_event"] = _p2c_transition_ev
+                _pbl_ctx["breakout_active"] = _p2c_breakout_active
+
                 _pbl_raw = self._sig_gen.generate(
                     symbol, df, _res_regime_30m_str, "30m",
                     regime_probs={},
-                    context={"df_4h": _df_4h_ctx} if _df_4h_ctx is not None else {},
+                    context=_pbl_ctx,
                 ) or []
                 _pbl_only = [s for s in _pbl_raw if s.model_name == "pullback_long"]
                 if _pbl_only:
                     signals = list(signals or []) + _pbl_only
                     logger.debug(
-                        "Scanner: %s PBL signal (%s) — regime=%s",
+                        "Scanner: %s PBL signal (%s) — regime=%s p2c_boost=%s",
                         symbol, _pbl_only[0].direction, _res_regime_30m_str,
+                        _p2c_transition_ev is not None,
                     )
             except Exception as _pbl_exc:
                 logger.debug("Scanner: PBL generate error %s: %s", symbol, _pbl_exc)
@@ -793,10 +855,14 @@ class ScanWorker(QThread):
             # ── SLC dedicated call (ResearchRegimeClassifier 1h → ACTIVE_REGIMES gate)
             if _df_1h_ctx is not None:
                 try:
+                    _slc_ctx = {"df_1h": _df_1h_ctx}
+                    if _p2c_transition_ev is not None:
+                        _slc_ctx["transition_event"] = _p2c_transition_ev
+
                     _slc_raw = self._sig_gen.generate(
                         symbol, df, _res_regime_1h_str, "1h",
                         regime_probs={},
-                        context={"df_1h": _df_1h_ctx},
+                        context=_slc_ctx,
                     ) or []
                     _slc_only = [s for s in _slc_raw if s.model_name == "swing_low_continuation"]
                     if _slc_only:
@@ -807,6 +873,64 @@ class ScanWorker(QThread):
                         )
                 except Exception as _slc_exc:
                     logger.debug("Scanner: SLC generate error %s: %s", symbol, _slc_exc)
+
+        # ── Phase 2c RangeBreakout dedicated call ────────────────────────────
+        if _p2c_rb_enabled and _p2c_rb_event is not None:
+            try:
+                _rb_ctx = {"transition_event": _p2c_rb_event}
+                _rb_raw = self._sig_gen.generate(
+                    symbol, df, regime, self._timeframe,
+                    regime_probs=regime_probs,
+                    context=_rb_ctx,
+                ) or []
+                _rb_only = [s for s in _rb_raw if s.model_name == "range_breakout"]
+                if _rb_only:
+                    signals = list(signals or []) + _rb_only
+                    logger.info(
+                        "Scanner: %s RB signal (%s) — conf=%.3f range=[%.2f,%.2f]",
+                        symbol, _rb_only[0].direction,
+                        _p2c_rb_event.confidence,
+                        _p2c_rb_event.features_snapshot.get("range_low", 0),
+                        _p2c_rb_event.features_snapshot.get("range_high", 0),
+                    )
+            except Exception as _rb_exc:
+                logger.debug("Scanner: RB generate error %s: %s", symbol, _rb_exc)
+
+        # ── Phase 2c signal counts + shadow tracker ─────────────────────
+        _signal_count_pbl = len([s for s in (signals or []) if s.model_name == "pullback_long"])
+        _signal_count_slc = len([s for s in (signals or []) if s.model_name == "swing_low_continuation"])
+        _signal_count_rb  = len([s for s in (signals or []) if s.model_name == "range_breakout"])
+        if _signal_count_pbl or _signal_count_slc or _signal_count_rb:
+            logger.info(
+                "Scanner: %s Phase2c signals — PBL=%d SLC=%d RB=%d",
+                symbol, _signal_count_pbl, _signal_count_slc, _signal_count_rb,
+            )
+        if (_signal_count_pbl + _signal_count_slc + _signal_count_rb) > 0:
+            try:
+                from core.scanning.shadow_tracker import shadow_tracker as _st
+                for _sig in (signals or []):
+                    if _sig.model_name not in ("pullback_long", "swing_low_continuation", "range_breakout"):
+                        continue
+                    _st.record_signal(
+                        symbol=symbol,
+                        model=_sig.model_name,
+                        direction=_sig.direction,
+                        strength=_sig.strength,
+                        entry_price=getattr(_sig, "entry_price", 0.0) or 0.0,
+                        stop_loss=_sig.stop_loss,
+                        take_profit=_sig.take_profit,
+                        regime=regime,
+                        was_boosted="Phase2c ModeA" in (_sig.rationale or ""),
+                        was_relaxed="ModeA+B" in (_sig.rationale or ""),
+                        breakout_active=_p2c_breakout_active,
+                        rb_confidence=_p2c_rb_event.confidence if (_sig.model_name == "range_breakout" and _p2c_rb_event) else 0.0,
+                        rb_range_width=(
+                            _p2c_rb_event.features_snapshot.get("range_high", 0) - _p2c_rb_event.features_snapshot.get("range_low", 0)
+                        ) if (_sig.model_name == "range_breakout" and _p2c_rb_event) else 0.0,
+                        rationale=_sig.rationale or "",
+                    )
+            except Exception as _st_exc:
+                logger.debug("Scanner: shadow tracker error: %s", _st_exc)
 
         # ── Model-level diagnostics for rationale panel ───────────────
         try:
