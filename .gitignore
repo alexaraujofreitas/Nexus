@@ -107,6 +107,12 @@ backtest_data/
 # must never be committed.
 .fuse_hidden*
 
+# ── Node.js / Frontend ────────────────────────────────────
+node_modules/
+playwright-report/
+test-results/
+.playwright/
+
 # ── Jupyter ───────────────────────────────────────────────
 .ipynb_checkpoints/
 

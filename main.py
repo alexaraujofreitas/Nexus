@@ -329,7 +329,8 @@ def main():
         from config.settings import settings
         from core.security.key_vault import key_vault
 
-        notif_cfg: dict = settings.get("notifications", {})
+        import copy
+        notif_cfg: dict = copy.deepcopy(settings.get_section("notifications"))
 
         # Inject secrets from vault into channel configs
         # key_vault.load() returns "" when key is absent — no default kwarg needed

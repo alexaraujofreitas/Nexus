@@ -1,0 +1,187 @@
+{
+  "passed": 36,
+  "failed": 0,
+  "total": 36,
+  "tests": [
+    {
+      "name": "Unauthenticated API returns 401",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Login returns access_token",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Authenticated request succeeds",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Wrong password returns 401/400",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Dashboard route returns 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "React root element present",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Vite module scripts injected",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Scanner route returns 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Scanner API endpoint accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Trading route returns 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Positions API endpoint accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Settings route returns 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Settings API endpoint accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Settings update API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Logs route returns 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Logs API with level filter accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Logs API with component filter accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Analytics route returns 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Equity curve API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Performance metrics API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Trade distribution API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Model breakdown API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Backtest route returns 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Backtest start API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Backtest status API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Validation route returns 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Health API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Readiness API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Data integrity API accessible",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "All 11 routes return 200",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Viewport meta tag set for mobile",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "CSS delivery mechanism present (Vite HMR or <link>)",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "No Vite error overlay in HTML",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "WebSocket endpoint reachable",
+      "status": "PASS",
+      "detail": "Status 404"
+    },
+    {
+      "name": "All 27 engine actions accepted",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Invalid action correctly rejected",
+      "status": "PASS",
+      "detail": ""
+    }
+  ]
+}

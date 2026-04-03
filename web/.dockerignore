@@ -1,0 +1,8 @@
+frontend/node_modules
+frontend/dist
+frontend/.vite
+backend/__pycache__
+backend/.pytest_cache
+playwright-report
+test-results
+*.log

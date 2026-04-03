@@ -1,0 +1,94 @@
+# ============================================================
+# NexusTrader E2E Test Stack
+#
+# Full-stack composition for running Playwright browser tests:
+#   postgres -> redis -> api (FastAPI) -> frontend (Vite preview) -> playwright
+#
+# Usage (from NexusTrader repo root):
+#   docker compose -f web/docker-compose.e2e.yml up --build --abort-on-container-exit
+# ============================================================
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus_test
+      POSTGRES_DB: nexus_test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus_test"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      NEXUS_DATABASE_URL: postgresql+asyncpg://nexus:nexus_test@postgres:5432/nexus_test
+      NEXUS_REDIS_URL: redis://redis:6379/0
+      NEXUS_JWT_SECRET: e2e-test-secret-key-not-for-production
+      NEXUS_CORS_ORIGINS: http://frontend:5173,http://localhost:5173
+      NEXUS_DEBUG: "true"
+      NEXUS_RATE_LIMIT_AUTH: "1000"
+      NEXUS_RATE_LIMIT_GLOBAL: "5000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 10s
+      retries: 15
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_BASE_URL: http://api:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5173/"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  playwright:
+    build:
+      context: .
+      dockerfile: playwright/Dockerfile
+    environment:
+      BASE_URL: http://frontend:5173
+      API_URL: http://api:8000
+      CI: "true"
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ./playwright-report:/app/playwright-report
+      - ./test-results:/app/test-results

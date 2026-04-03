@@ -228,6 +228,58 @@ class NotificationManager:
             "NotificationManager: configured %d channel(s)", len(channels)
         )
 
+    def _on_settings_changed(self, event: Event) -> None:
+        """Reconfigure channels when user saves notification settings."""
+        try:
+            changed = event.data if hasattr(event, "data") else (event if isinstance(event, dict) else {})
+            # Only reconfigure if a notification-related key was changed
+            notif_keys = [k for k in changed if isinstance(k, str) and k.startswith("notifications.")]
+            if not notif_keys:
+                return
+
+            from config.settings import settings
+            import copy
+            notif_cfg = copy.deepcopy(settings.get_section("notifications"))
+
+            # Inject secrets from vault (same as main.py startup path)
+            try:
+                from core.security.key_vault import key_vault
+                email_pass = key_vault.load("notifications.email_password")
+                if email_pass:
+                    em_cfg = notif_cfg.get("email", {})
+                    em_cfg["password"] = email_pass
+                    notif_cfg["email"] = em_cfg
+
+                tg_token = key_vault.load("notifications.telegram_token")
+                if tg_token:
+                    tg_cfg = notif_cfg.get("telegram", {})
+                    tg_cfg["bot_token"] = tg_token
+                    notif_cfg["telegram"] = tg_cfg
+
+                twilio_sid = key_vault.load("notifications.twilio_sid")
+                twilio_token = key_vault.load("notifications.twilio_token")
+                if twilio_sid and twilio_token:
+                    for ch_key in ("whatsapp", "sms"):
+                        ch_cfg = notif_cfg.get(ch_key, {})
+                        ch_cfg.update({"account_sid": twilio_sid, "auth_token": twilio_token})
+                        notif_cfg[ch_key] = ch_cfg
+
+                gemini_pass = key_vault.load("notifications.gemini_password")
+                if gemini_pass:
+                    gm_cfg = notif_cfg.get("gemini", {})
+                    gm_cfg["password"] = gemini_pass
+                    notif_cfg["gemini"] = gm_cfg
+            except Exception:
+                pass
+
+            self.configure(notif_cfg)
+            logger.info(
+                "NotificationManager: reconfigured after settings change — %d channel(s)",
+                len(self._channels),
+            )
+        except Exception as exc:
+            logger.error("NotificationManager: failed to reconfigure on settings change: %s", exc)
+
     # ── Lifecycle ─────────────────────────────────────────────
 
     def start(self) -> None:
@@ -250,6 +302,7 @@ class NotificationManager:
             (Topics.SYSTEM_ALERT,       self._on_system_alert),
             (Topics.CANDIDATE_APPROVED, self._on_candidate_approved),
             (Topics.FEED_STATUS,        self._on_feed_status),
+            (Topics.SETTINGS_CHANGED,   self._on_settings_changed),
         ]
 
         for topic, handler in subs:

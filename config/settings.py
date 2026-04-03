@@ -769,12 +769,15 @@ class AppSettings:
         return self._config.get(section, {})
 
     def _deep_merge(self, base: dict, override: dict) -> dict:
-        result = base.copy()
+        import copy
+        result = {}
+        for k, v in base.items():
+            result[k] = copy.deepcopy(v) if isinstance(v, (dict, list)) else v
         for k, v in override.items():
             if k in result and isinstance(result[k], dict) and isinstance(v, dict):
                 result[k] = self._deep_merge(result[k], v)
             else:
-                result[k] = v
+                result[k] = copy.deepcopy(v) if isinstance(v, (dict, list)) else v
         return result
 
 

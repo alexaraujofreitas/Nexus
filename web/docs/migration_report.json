@@ -1,0 +1,139 @@
+{
+  "mode": "execute",
+  "sqlite_path": "data/nexus_trader.db",
+  "tables": {
+    "exchanges": {
+      "status": "migrated",
+      "rows": 3,
+      "columns": 12
+    },
+    "assets": {
+      "status": "migrated",
+      "rows": 4,
+      "columns": 11
+    },
+    "strategies": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 12
+    },
+    "settings": {
+      "status": "migrated",
+      "rows": 9,
+      "columns": 4
+    },
+    "system_logs": {
+      "status": "migrated",
+      "rows": 2043885,
+      "columns": 6
+    },
+    "agent_signals": {
+      "status": "migrated",
+      "rows": 156173,
+      "columns": 12
+    },
+    "signal_log": {
+      "status": "migrated",
+      "rows": 1382,
+      "columns": 15
+    },
+    "ohlcv": {
+      "status": "migrated",
+      "rows": 31771,
+      "columns": 9
+    },
+    "features": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 6
+    },
+    "strategy_metrics": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 15
+    },
+    "signals": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 16
+    },
+    "trades": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 19
+    },
+    "orders": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 14
+    },
+    "positions": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 15
+    },
+    "sentiment_data": {
+      "status": "migrated",
+      "rows": 449,
+      "columns": 8
+    },
+    "ml_models": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 12
+    },
+    "model_predictions": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 8
+    },
+    "market_regimes": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 7
+    },
+    "portfolio_snapshots": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 10
+    },
+    "backtest_results": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 17
+    },
+    "paper_trades": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 22
+    },
+    "live_trades": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 23
+    },
+    "trade_feedback": {
+      "status": "migrated",
+      "rows": 7,
+      "columns": 34
+    },
+    "strategy_tuning_proposals": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 20
+    },
+    "applied_strategy_changes": {
+      "status": "migrated",
+      "rows": 2,
+      "columns": 10
+    },
+    "tuning_proposal_outcomes": {
+      "status": "migrated",
+      "rows": 0,
+      "columns": 19
+    }
+  },
+  "errors": [],
+  "total_rows_migrated": 2233685,
+  "duration_seconds": 53.37
+}

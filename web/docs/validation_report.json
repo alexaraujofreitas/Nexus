@@ -1,0 +1,424 @@
+{
+  "timestamp": "2026-04-03T00:12:11Z",
+  "sqlite_path": "data/nexus_trader.db",
+  "checks": {
+    "row_counts": {
+      "total_tables": 29,
+      "matched": 29,
+      "mismatched": 0,
+      "details": [
+        {
+          "table": "agent_signals",
+          "sqlite_rows": 156173,
+          "pg_rows": 156173,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "ai_conversations",
+          "sqlite_rows": 0,
+          "pg_rows": null,
+          "match": true,
+          "note": "legacy table (not in PG, 0 rows)"
+        },
+        {
+          "table": "ai_messages",
+          "sqlite_rows": 0,
+          "pg_rows": null,
+          "match": true,
+          "note": "legacy table (not in PG, 0 rows)"
+        },
+        {
+          "table": "applied_strategy_changes",
+          "sqlite_rows": 2,
+          "pg_rows": 2,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "assets",
+          "sqlite_rows": 4,
+          "pg_rows": 4,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "backtest_results",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "exchanges",
+          "sqlite_rows": 3,
+          "pg_rows": 3,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "features",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "live_trades",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "market_regimes",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "ml_models",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "model_predictions",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "ohlcv",
+          "sqlite_rows": 31771,
+          "pg_rows": 31771,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "orders",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "paper_trades",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "portfolio_snapshots",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "positions",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "sentiment_data",
+          "sqlite_rows": 449,
+          "pg_rows": 449,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "settings",
+          "sqlite_rows": 9,
+          "pg_rows": 9,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "signal_log",
+          "sqlite_rows": 1382,
+          "pg_rows": 1382,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "signals",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "strategies",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "strategy_metrics",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "strategy_tuning_proposals",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "system_logs",
+          "sqlite_rows": 2043885,
+          "pg_rows": 2043885,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "trade_feedback",
+          "sqlite_rows": 7,
+          "pg_rows": 7,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "trades",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        },
+        {
+          "table": "trading_rules",
+          "sqlite_rows": 0,
+          "pg_rows": null,
+          "match": true,
+          "note": "legacy table (not in PG, 0 rows)"
+        },
+        {
+          "table": "tuning_proposal_outcomes",
+          "sqlite_rows": 0,
+          "pg_rows": 0,
+          "match": true,
+          "note": null
+        }
+      ],
+      "passed": true
+    },
+    "aggregates": {
+      "total_checks": 6,
+      "passed_count": 6,
+      "failed_count": 0,
+      "details": [
+        {
+          "table": "paper_trades",
+          "aggregate": "total_pnl",
+          "sqlite_value": null,
+          "pg_value": null,
+          "match": true
+        },
+        {
+          "table": "paper_trades",
+          "aggregate": "distinct_symbols",
+          "sqlite_value": 0,
+          "pg_value": 0,
+          "match": true
+        },
+        {
+          "table": "paper_trades",
+          "aggregate": "total_trades",
+          "sqlite_value": 0,
+          "pg_value": 0,
+          "match": true
+        },
+        {
+          "table": "live_trades",
+          "aggregate": "total_live_trades",
+          "sqlite_value": 0,
+          "pg_value": 0,
+          "match": true
+        },
+        {
+          "table": "signal_log",
+          "aggregate": "total_signals",
+          "sqlite_value": 1382,
+          "pg_value": 1382,
+          "match": true
+        },
+        {
+          "table": "agent_signals",
+          "aggregate": "total_agent_signals",
+          "sqlite_value": 156173,
+          "pg_value": 156173,
+          "match": true
+        }
+      ],
+      "passed": true
+    },
+    "fk_integrity": {
+      "total_checks": 10,
+      "passed_count": 10,
+      "failed_count": 0,
+      "details": [
+        {
+          "child": "signals.strategy_id",
+          "parent": "strategies.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "signals.asset_id",
+          "parent": "assets.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "trades.strategy_id",
+          "parent": "strategies.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "trades.asset_id",
+          "parent": "assets.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "orders.trade_id",
+          "parent": "trades.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "positions.strategy_id",
+          "parent": "strategies.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "positions.asset_id",
+          "parent": "assets.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "strategy_metrics.strategy_id",
+          "parent": "strategies.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "model_predictions.model_id",
+          "parent": "ml_models.id",
+          "orphan_rows": 0,
+          "passed": true
+        },
+        {
+          "child": "model_predictions.asset_id",
+          "parent": "assets.id",
+          "orphan_rows": 0,
+          "passed": true
+        }
+      ],
+      "passed": true
+    },
+    "jsonb_validity": {
+      "total_checks": 13,
+      "passed_count": 13,
+      "failed_count": 0,
+      "details": [
+        {
+          "table": "signals",
+          "column": "timeframe_alignment",
+          "non_null_rows": 0,
+          "passed": true
+        },
+        {
+          "table": "signals",
+          "column": "indicator_values",
+          "non_null_rows": 0,
+          "passed": true
+        },
+        {
+          "table": "signals",
+          "column": "ai_prediction",
+          "non_null_rows": 0,
+          "passed": true
+        },
+        {
+          "table": "trades",
+          "column": "explanation",
+          "non_null_rows": 0,
+          "passed": true
+        },
+        {
+          "table": "paper_trades",
+          "column": "models_fired",
+          "non_null_rows": 0,
+          "passed": true
+        },
+        {
+          "table": "live_trades",
+          "column": "models_fired",
+          "non_null_rows": 0,
+          "passed": true
+        },
+        {
+          "table": "system_logs",
+          "column": "details",
+          "non_null_rows": 265,
+          "passed": true
+        },
+        {
+          "table": "agent_signals",
+          "column": "payload",
+          "non_null_rows": 156173,
+          "passed": true
+        },
+        {
+          "table": "signal_log",
+          "column": "models_fired",
+          "non_null_rows": 1382,
+          "passed": true
+        },
+        {
+          "table": "trade_feedback",
+          "column": "models_fired",
+          "non_null_rows": 7,
+          "passed": true
+        },
+        {
+          "table": "trade_feedback",
+          "column": "hard_overrides",
+          "non_null_rows": 7,
+          "passed": true
+        },
+        {
+          "table": "trade_feedback",
+          "column": "root_causes",
+          "non_null_rows": 7,
+          "passed": true
+        },
+        {
+          "table": "trade_feedback",
+          "column": "recommendations",
+          "non_null_rows": 7,
+          "passed": true
+        }
+      ],
+      "passed": true
+    }
+  },
+  "overall_pass": true,
+  "errors": [],
+  "duration_seconds": 2.37
+}

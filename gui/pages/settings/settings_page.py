@@ -987,10 +987,13 @@ class SettingsPage(QWidget):
                         _vault_save(key, str_val)
                         vault_saved.append(key)
                         # Mark as vault-managed in YAML so llm_provider knows
-                        settings.set(key, "__vault__")
+                        settings.set(key, "__vault__", auto_save=False)
                     else:
-                        settings.set(key, value)
+                        settings.set(key, value, auto_save=False)
                         changed[key] = value
+
+            # Single atomic save after all fields are set
+            settings.save()
 
             # Notify all live components to reload their parameters
             bus.publish(Topics.SETTINGS_CHANGED, changed, source="settings_page")

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=375, initial-scale=1.0">
+  <title>NexusTrader Dashboard — Mobile Validation (375px)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <!-- Simulated mobile viewport wrapper -->
+  <div class="min-h-screen">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+          <span class="text-white font-bold text-sm">N</span>
+        </div>
+        <span class="font-semibold text-gray-900">NexusTrader</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-green-500"></span>
+          <span class="text-xs text-gray-500">Running</span>
+        </span>
+        <button class="text-xs text-gray-400 hover:text-gray-600">Sign out</button>
+      </div>
+    </header>
+
+    <!-- Main content (Dashboard) -->
+    <main class="p-4 space-y-6">
+      <!-- Page title + WS status -->
+      <div class="flex items-center justify-between">
+        <h1 class="text-xl font-semibold text-gray-900">Dashboard</h1>
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-green-500"></span>
+          <span class="text-xs text-gray-500">Live</span>
+        </div>
+      </div>
+
+      <!-- Stats Grid: 2 cols on mobile -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Capital -->
+        <div class="bg-white rounded-lg border border-gray-200 p-4">
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Capital</p>
+          <p class="text-2xl font-semibold mt-1 text-gray-900">$10,250</p>
+        </div>
+        <!-- PnL -->
+        <div class="bg-white rounded-lg border border-gray-200 p-4">
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">PnL</p>
+          <p class="text-2xl font-semibold mt-1 text-green-600">+$250.00</p>
+        </div>
+        <!-- Drawdown -->
+        <div class="bg-white rounded-lg border border-gray-200 p-4">
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Drawdown</p>
+          <p class="text-2xl font-semibold mt-1 text-gray-900">-1.2%</p>
+        </div>
+        <!-- Open Positions -->
+        <div class="bg-white rounded-lg border border-gray-200 p-4">
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Open Positions</p>
+          <p class="text-2xl font-semibold mt-1 text-gray-900">2</p>
+        </div>
+      </div>
+
+      <!-- Second row: stacks to 1 col on mobile -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Win Rate -->
+        <div class="bg-white rounded-lg border border-gray-200 p-4">
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Win Rate</p>
+          <p class="text-2xl font-semibold mt-1 text-gray-900">56.4%</p>
+          <p class="text-xs text-gray-400 mt-1">All closed trades</p>
+        </div>
+        <!-- Profit Factor -->
+        <div class="bg-white rounded-lg border border-gray-200 p-4">
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Profit Factor</p>
+          <p class="text-2xl font-semibold mt-1 text-gray-900">1.28</p>
+          <p class="text-xs text-gray-400 mt-1">Gross profit / loss</p>
+        </div>
+        <!-- Crash Defense -->
+        <div class="bg-white rounded-lg border border-gray-200 p-4">
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Crash Defense</p>
+          <div class="flex items-center gap-2 mt-2">
+            <span class="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">NORMAL</span>
+            <span class="text-sm text-gray-600">Score: 1.2</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Trades Table -->
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Recent Trades</p>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs text-gray-500">
+                <th class="pb-2 font-medium">Symbol</th>
+                <th class="pb-2 font-medium">Side</th>
+                <th class="pb-2 font-medium text-right">PnL</th>
+                <th class="pb-2 font-medium text-right">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-t border-gray-100">
+                <td class="py-1.5 font-medium text-gray-900">SOL/USDT</td>
+                <td class="py-1.5 text-red-600">SELL</td>
+                <td class="py-1.5 text-right font-mono text-green-600">+$42.50</td>
+                <td class="py-1.5 text-right text-gray-400">2h ago</td>
+              </tr>
+              <tr class="border-t border-gray-100">
+                <td class="py-1.5 font-medium text-gray-900">BTC/USDT</td>
+                <td class="py-1.5 text-green-600">BUY</td>
+                <td class="py-1.5 text-right font-mono text-red-600">-$18.20</td>
+                <td class="py-1.5 text-right text-gray-400">4h ago</td>
+              </tr>
+              <tr class="border-t border-gray-100">
+                <td class="py-1.5 font-medium text-gray-900">ETH/USDT</td>
+                <td class="py-1.5 text-red-600">SELL</td>
+                <td class="py-1.5 text-right font-mono text-green-600">+$67.30</td>
+                <td class="py-1.5 text-right text-gray-400">6h ago</td>
+              </tr>
+              <tr class="border-t border-gray-100">
+                <td class="py-1.5 font-medium text-gray-900">SOL/USDT</td>
+                <td class="py-1.5 text-green-600">BUY</td>
+                <td class="py-1.5 text-right font-mono text-green-600">+$31.15</td>
+                <td class="py-1.5 text-right text-gray-400">8h ago</td>
+              </tr>
+              <tr class="border-t border-gray-100">
+                <td class="py-1.5 font-medium text-gray-900">BTC/USDT</td>
+                <td class="py-1.5 text-red-600">SELL</td>
+                <td class="py-1.5 text-right font-mono text-green-600">+$55.80</td>
+                <td class="py-1.5 text-right text-gray-400">12h ago</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- System Status -->
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">System Status</p>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-500">Exchange</span>
+            <span class="text-green-600">ok</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Database</span>
+            <span class="text-green-600">ok</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Scanner</span>
+            <span class="text-gray-900">Running</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Threads</span>
+            <span class="text-gray-900">51</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Uptime</span>
+            <span class="text-gray-900">14h 32m</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

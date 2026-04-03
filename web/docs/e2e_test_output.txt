@@ -1,0 +1,73 @@
+╔══════════════════════════════════════════════╗
+║  NexusTrader E2E Test Suite — HTTP + JSDOM   ║
+║  Running against live servers                ║
+╚══════════════════════════════════════════════╝
+
+── Test 01: Login Flow ──
+  ✅ PASS: Unauthenticated API returns 401
+  ✅ PASS: Login returns access_token
+  ✅ PASS: Authenticated request succeeds
+  ✅ PASS: Wrong password returns 401/400
+
+── Test 02: Dashboard Page ──
+  ✅ PASS: Dashboard route returns 200
+  ✅ PASS: React root element present
+  ✅ PASS: Vite module scripts injected
+
+── Test 03: Scanner Page ──
+  ✅ PASS: Scanner route returns 200
+  ✅ PASS: Scanner API endpoint accessible
+
+── Test 04: Trading Page ──
+  ✅ PASS: Trading route returns 200
+  ✅ PASS: Positions API endpoint accessible
+
+── Test 05: Settings Page ──
+  ✅ PASS: Settings route returns 200
+  ✅ PASS: Settings API endpoint accessible
+  ✅ PASS: Settings update API accessible
+
+── Test 06: Logs Page ──
+  ✅ PASS: Logs route returns 200
+  ✅ PASS: Logs API with level filter accessible
+  ✅ PASS: Logs API with component filter accessible
+
+── Test 07: Analytics Page ──
+  ✅ PASS: Analytics route returns 200
+  ✅ PASS: Equity curve API accessible
+  ✅ PASS: Performance metrics API accessible
+  ✅ PASS: Trade distribution API accessible
+  ✅ PASS: Model breakdown API accessible
+
+── Test 08: Backtest Page ──
+  ✅ PASS: Backtest route returns 200
+  ✅ PASS: Backtest start API accessible
+  ✅ PASS: Backtest status API accessible
+
+── Test 09: Validation Page ──
+  ✅ PASS: Validation route returns 200
+  ✅ PASS: Health API accessible
+  ✅ PASS: Readiness API accessible
+  ✅ PASS: Data integrity API accessible
+
+── Test 10: Mobile & Route Coverage ──
+  ✅ PASS: All 11 routes return 200
+  ✅ PASS: Viewport meta tag set for mobile
+  ✅ PASS: CSS delivery mechanism present (Vite HMR or <link>)
+  ✅ PASS: No Vite error overlay in HTML
+
+── Test 11: WebSocket Endpoint ──
+  ✅ PASS: WebSocket endpoint reachable — Status 404
+
+── Test 12: API Contract Validation ──
+  ✅ PASS: All 27 engine actions accepted
+  ✅ PASS: Invalid action correctly rejected
+
+══════════════════════════════════════════════════
+
+  TOTAL: 36 | PASS: 36 | FAIL: 0
+
+
+══════════════════════════════════════════════════
+
+Results written to /tmp/e2e_results.json
