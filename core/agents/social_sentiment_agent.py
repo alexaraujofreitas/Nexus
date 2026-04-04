@@ -267,12 +267,28 @@ class SocialSentimentAgent(BaseAgent):
             comb_sig, comb_conf, sentiment_label, len(components),
         )
 
-        return {
+        result = {
             "signal":          round(comb_sig, 4),
             "confidence":      round(comb_conf, 4),
             "sentiment_label": sentiment_label,
             "components":      components,
         }
+
+        # ── MIL Phase 4B: Sentiment enhancement (upstream enrichment) ──
+        # Gated by mil.global_enabled AND agents.sentiment_enhanced
+        try:
+            from config.settings import settings
+            _mil_on = settings.get("mil.global_enabled", False)
+            _agent_on = settings.get("agents.sentiment_enhanced", False)
+            if _mil_on and _agent_on:
+                from core.agents.mil.sentiment_enhanced import get_sentiment_enhancer
+                enhancer = get_sentiment_enhancer()
+                enhancer.record(comb_sig)
+                result = enhancer.enhance(result)
+        except Exception as exc:
+            logger.debug("SocialSentimentAgent: MIL enhancement failed — %s", exc)
+
+        return result
 
     # ── Data fetchers ─────────────────────────────────────────
 

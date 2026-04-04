@@ -1,8 +1,13 @@
 """
-Symbol Priority & Allocation System — Session 24.
+Symbol Priority & Allocation System — Session 24 + Phase 3A.
 
 Implements configurable, optionally dynamic per-symbol weighting so that IDSS
 candidate selection favours symbols with stronger historical performance.
+
+Phase 3A (web mode): In STATIC mode, when PostgreSQL is available,
+allocation_weight is read from the Asset table on the active exchange.
+This makes the web Asset Management page the SINGLE SOURCE OF TRUTH
+for symbol weights. Falls back to config.yaml for desktop-only mode.
 
 Study 4 Baseline Rankings (Backtest Study, March 2026)
     SOL/USDT — highest profit  (+1.3× weight)
@@ -12,7 +17,8 @@ Study 4 Baseline Rankings (Backtest Study, March 2026)
     XRP/USDT — mid-tier        (+0.8×)
 
 Two operating modes
-    STATIC   — weights are fixed per symbol (user-configurable in Settings)
+    STATIC   — weights are fixed per symbol (user-configurable in Settings
+               or via web Asset Management page when PostgreSQL is present)
     DYNAMIC  — weights switch between three profiles based on BTC Dominance:
                   BTC_DOMINANT  (dominance > high_threshold  %)
                   NEUTRAL       (low_threshold ≤ dominance ≤ high_threshold)
@@ -59,11 +65,70 @@ Configuration (config.yaml / config/settings.py)
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 from config.settings import settings as _s
 
 logger = logging.getLogger(__name__)
+
+# ── Phase 3A: DB weight cache ────────────────────────────────────────────────
+_db_weight_cache: Optional[dict[str, float]] = None
+_db_weight_cache_ts: float = 0.0
+_DB_WEIGHT_CACHE_TTL = 60.0  # seconds
+
+
+def _try_db_weights() -> Optional[dict[str, float]]:
+    """
+    Attempt to read allocation_weight from PostgreSQL (web mode).
+
+    Returns {symbol: weight} dict if DB is available with tradable assets,
+    or None if not in web mode / DB unreachable.  Cached for 60s.
+    """
+    global _db_weight_cache, _db_weight_cache_ts
+
+    now = time.monotonic()
+    if _db_weight_cache is not None and (now - _db_weight_cache_ts) < _DB_WEIGHT_CACHE_TTL:
+        return _db_weight_cache
+
+    try:
+        from app.database import get_sync_session
+        from app.models.trading import Asset, Exchange
+        from sqlalchemy import select
+    except ImportError:
+        return None
+
+    try:
+        with get_sync_session() as session:
+            active_ex = session.execute(
+                select(Exchange).where(Exchange.is_active.is_(True))
+            ).scalar_one_or_none()
+            if active_ex is None:
+                return None
+
+            rows = session.execute(
+                select(Asset.symbol, Asset.allocation_weight)
+                .where(
+                    Asset.exchange_id == active_ex.id,
+                    Asset.is_tradable.is_(True),
+                )
+            ).all()
+
+            if not rows:
+                return None
+
+            weights = {sym.upper().strip(): float(w) for sym, w in rows}
+            _db_weight_cache = weights
+            _db_weight_cache_ts = now
+            logger.debug(
+                "SymbolAllocator: DB weights loaded → %d symbols", len(weights),
+            )
+            return weights
+    except Exception as exc:
+        logger.warning(
+            "SymbolAllocator: PostgreSQL weight query failed, using config: %s", exc,
+        )
+        return None
 
 # ── Regime identifiers ────────────────────────────────────────────────────────
 REGIME_BTC_DOMINANT = "BTC_DOMINANT"
@@ -110,9 +175,11 @@ class SymbolAllocator:
         """
         Return the allocation weight for *symbol*.
 
-        In STATIC mode, returns the configured static weight (default 1.0).
+        In STATIC mode:
+          1. (Phase 3A) Try PostgreSQL Asset.allocation_weight first
+          2. Fall back to config.yaml static_weights
         In DYNAMIC mode, selects the active profile based on BTC dominance
-        and returns the profile weight.
+        and returns the profile weight (DB not used — profiles are config-driven).
         """
         mode = _s.get("symbol_allocation.mode", "STATIC").upper().strip()
 
@@ -121,8 +188,13 @@ class SymbolAllocator:
             profile = _PROFILE_KEY[regime]
             raw     = _s.get(f"symbol_allocation.profiles.{profile}.{symbol}", _DEFAULT_WEIGHT)
         else:
-            # STATIC (default)
-            raw = _s.get(f"symbol_allocation.static_weights.{symbol}", _DEFAULT_WEIGHT)
+            # STATIC — Phase 3A: DB-authoritative path
+            db_weights = _try_db_weights()
+            if db_weights is not None:
+                raw = db_weights.get(symbol.upper().strip(), _DEFAULT_WEIGHT)
+            else:
+                # Desktop fallback: config.yaml
+                raw = _s.get(f"symbol_allocation.static_weights.{symbol}", _DEFAULT_WEIGHT)
 
         weight = _clamp_weight(float(raw))
         return weight

@@ -1,8 +1,8 @@
 /**
- * Phase 8B: Exchange Management API Client
+ * Phase 8B + Phase 3A: Exchange Management & Asset Management API Client
  *
  * CRUD operations for exchange connections, credential management,
- * connection testing, and asset synchronization.
+ * connection testing, asset synchronization, and asset tradability control.
  */
 import api from './client';
 
@@ -45,6 +45,10 @@ export interface ExchangeAsset {
   min_amount: number | null;
   min_cost: number | null;
   is_active: boolean;
+  is_tradable: boolean;
+  allocation_weight: number;
+  market_snapshot: Record<string, unknown> | null;
+  snapshot_updated_at: string | null;
   last_updated: string | null;
 }
 
@@ -57,7 +61,18 @@ export interface ConnectionTestResult {
   error?: string;
 }
 
-// ── API Calls ─────────────────────────────────────────────
+export interface AssetUpdate {
+  is_tradable?: boolean;
+  allocation_weight?: number;
+}
+
+export interface BulkAssetUpdate {
+  asset_ids: number[];
+  is_tradable?: boolean;
+  allocation_weight?: number;
+}
+
+// ── Exchange API Calls ───────────────────────────────────
 
 export async function getSupportedExchanges(): Promise<SupportedExchange[]> {
   const resp = await api.get('/exchanges/supported');
@@ -123,15 +138,41 @@ export async function testConnection(data: {
   return resp.data;
 }
 
+// ── Asset Management API Calls ───────────────────────────
+
 export async function getExchangeAssets(
   exchangeId: number,
-  params?: { quote?: string; search?: string },
-): Promise<{ assets: ExchangeAsset[]; count: number }> {
+  params?: { quote?: string; search?: string; is_tradable?: boolean },
+): Promise<{ assets: ExchangeAsset[]; count: number; total: number }> {
   const resp = await api.get(`/exchanges/${exchangeId}/assets`, { params });
+  return resp.data;
+}
+
+export async function getTradableAssets(
+  exchangeId: number,
+): Promise<{ symbols: string[]; assets: Array<{ id: number; symbol: string; allocation_weight: number }>; count: number }> {
+  const resp = await api.get(`/exchanges/${exchangeId}/assets/tradable`);
   return resp.data;
 }
 
 export async function syncExchangeAssets(exchangeId: number): Promise<{ status: string; new_count?: number }> {
   const resp = await api.post(`/exchanges/${exchangeId}/sync-assets`);
+  return resp.data;
+}
+
+export async function updateAsset(
+  exchangeId: number,
+  assetId: number,
+  data: AssetUpdate,
+): Promise<ExchangeAsset> {
+  const resp = await api.patch(`/exchanges/${exchangeId}/assets/${assetId}`, data);
+  return resp.data;
+}
+
+export async function bulkUpdateAssets(
+  exchangeId: number,
+  data: BulkAssetUpdate,
+): Promise<{ updated: number; asset_ids: number[] }> {
+  const resp = await api.patch(`/exchanges/${exchangeId}/assets/bulk`, data);
   return resp.data;
 }

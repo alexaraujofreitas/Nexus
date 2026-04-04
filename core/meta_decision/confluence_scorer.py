@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
+import time as _time
+from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -263,6 +266,11 @@ class ConfluenceScorer:
         #       dominant_side, below_threshold, failed_at.
         self._last_diagnostics: dict = {}
 
+        # ── Section 5: score() performance tracking ──────────────
+        # Rolling window of last 200 score() call durations (seconds).
+        self._score_durations: deque[float] = deque(maxlen=200)
+        self._mil_cap_trigger_times: list[float] = []
+
     def score(
         self,
         signals: list[ModelSignal],
@@ -307,6 +315,8 @@ class ConfluenceScorer:
         regime_probs : dict, optional
             Regime probability distribution for dynamic weighting
         """
+        _score_t0 = _time.perf_counter()
+
         if not signals:
             return None
 
@@ -351,6 +361,7 @@ class ConfluenceScorer:
 
             # ── Inject OrchestratorEngine as weighted vote (A-1 fix) ───────
             # Excluded in technical_only: OrchestratorEngine aggregates live agents.
+            orch_sig = None  # Phase 4B: used later for agent_contributions
             try:
                 if self._orchestrator is None:
                     from core.orchestrator.orchestrator_engine import get_orchestrator
@@ -507,6 +518,28 @@ class ConfluenceScorer:
             if _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name)) > 0.0
         ) if total_weight > 0 else 0.0
 
+        # ── Pure technical baseline (MIL cap reference) ──────────────
+        # Compute the weighted score from ONLY technical model signals,
+        # excluding the orchestrator.  This is the true baseline that
+        # the MIL cap is measured against.  MIL influence = orchestrator
+        # injection + OI/Liq modifiers.  The cap enforces:
+        #   abs(final_score - _mil_technical_baseline) <= CAP * baseline
+        _tech_signals = [s for s in active_signals if s.model_name != "orchestrator"]
+        _tech_total_weight = sum(
+            _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name))
+            * _damp_factors.get(s.model_name, 1.0)
+            for s in _tech_signals
+        )
+        _mil_technical_baseline = sum(
+            (
+                _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name))
+                * _damp_factors.get(s.model_name, 1.0)
+                / _tech_total_weight
+            ) * s.strength
+            for s in _tech_signals
+            if _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name)) > 0.0
+        ) if _tech_total_weight > 0 else 0.0
+
         # ── Populate per-model diagnostics ────────────────────────────
         _pm_diag: dict = {}
         for _ds in active_signals:
@@ -576,14 +609,17 @@ class ConfluenceScorer:
         # to false in config to disable each component individually.
         # Per-fire INFO logs emitted inside get_oi_modifier / get_liquidation_modifier.
         # Excluded in technical_only mode: live Coinglass data not historically available.
-        _pre_modifier_score = weighted_score
+        #
+        # Track individual OI/Liq deltas for MIL breakdown diagnostics.
+        _oi_mod_val = 0.0
+        _liq_mod_val = 0.0
         if not technical_only:
             try:
                 if _s.get("oi_signal.enabled", True):
                     from core.signals.oi_signal import get_oi_modifier, get_liquidation_modifier
-                    _oi_mod, _oi_reason = get_oi_modifier(symbol=symbol, direction=side)
-                    _liq_mod, _liq_reason = get_liquidation_modifier(symbol=symbol, direction=side)
-                    _total_mod = _oi_mod + _liq_mod
+                    _oi_mod_val, _oi_reason = get_oi_modifier(symbol=symbol, direction=side)
+                    _liq_mod_val, _liq_reason = get_liquidation_modifier(symbol=symbol, direction=side)
+                    _total_mod = _oi_mod_val + _liq_mod_val
                     if abs(_total_mod) > 0.001:
                         _score_before = weighted_score
                         weighted_score = max(0.0, min(1.0, weighted_score + _total_mod))
@@ -592,8 +628,8 @@ class ConfluenceScorer:
                             "(oi=%+.3f '%s' | liq=%+.3f '%s') "
                             "score %.3f → %.3f",
                             symbol, _total_mod,
-                            _oi_mod, _oi_reason,
-                            _liq_mod, _liq_reason,
+                            _oi_mod_val, _oi_reason,
+                            _liq_mod_val, _liq_reason,
                             _score_before, weighted_score,
                         )
                         # Record in diagnostics for rationale panel
@@ -602,6 +638,164 @@ class ConfluenceScorer:
                         self._last_diagnostics["liq_reason"] = _liq_reason
             except Exception as _oi_exc:
                 logger.debug("ConfluenceScorer: OI modifier error (non-fatal): %s", _oi_exc)
+
+        # ── MIL Hard Cap Enforcement (Phase 4A) ──────────────────────────
+        # Central authoritative clamp: the TOTAL MIL contribution to the
+        # weighted score MUST NOT exceed MIL_INFLUENCE_CAP × baseline.
+        #
+        # MIL influence = orchestrator signal injection + OI modifier +
+        # liquidation modifier.  The baseline is `_mil_technical_baseline`,
+        # computed from ONLY technical model signals (no orchestrator).
+        #
+        # Enforced HERE (not in individual enhancers) so that even if
+        # downstream logic changes, the cap cannot be exceeded.
+        #
+        # Invariant: abs(final_score - _mil_technical_baseline)
+        #            <= MIL_INFLUENCE_CAP × _mil_technical_baseline
+        #
+        # Section 4 guardrail: if baseline < 0.05, skip MIL entirely
+        # (avoids extreme ratios on near-zero scores).
+        if not technical_only and _mil_technical_baseline > 0:
+            from core.agents.mil.funding_rate_enhanced import MIL_INFLUENCE_CAP
+
+            # ── Section 4 guardrail: low-baseline protection ─────────
+            if _mil_technical_baseline < 0.05:
+                # Revert to pure technical score — MIL too risky at this level
+                weighted_score = _mil_technical_baseline
+                logger.debug(
+                    "ConfluenceScorer %s: MIL disabled — tech baseline %.4f < 0.05",
+                    symbol, _mil_technical_baseline,
+                )
+                self._last_diagnostics["mil_disabled_low_baseline"] = True
+            else:
+                _mil_max_delta = MIL_INFLUENCE_CAP * _mil_technical_baseline
+                _mil_actual_delta = weighted_score - _mil_technical_baseline
+
+                # ── Section 4 guardrail: NaN/Inf protection ──────────
+                if math.isnan(_mil_actual_delta) or math.isinf(_mil_actual_delta):
+                    weighted_score = _mil_technical_baseline
+                    logger.warning(
+                        "ConfluenceScorer %s: MIL produced invalid delta (NaN/Inf) — "
+                        "reverting to tech baseline %.4f",
+                        symbol, _mil_technical_baseline,
+                    )
+                    _mil_actual_delta = 0.0
+                    self._last_diagnostics["mil_nan_fallback"] = True
+
+                _was_capped = abs(_mil_actual_delta) > _mil_max_delta
+                if _was_capped:
+                    _clamped_delta = max(-_mil_max_delta, min(_mil_max_delta, _mil_actual_delta))
+                    weighted_score = max(0.0, min(1.0, _mil_technical_baseline + _clamped_delta))
+                    logger.info(
+                        "ConfluenceScorer %s: MIL cap enforced — raw delta %+.4f "
+                        "clamped to %+.4f (cap=%.0f%% of tech_baseline %.4f)",
+                        symbol, _mil_actual_delta, _clamped_delta,
+                        MIL_INFLUENCE_CAP * 100, _mil_technical_baseline,
+                    )
+
+                # ── Section 1: expanded MIL diagnostics ──────────────
+                _orch_delta = weighted_score - _oi_mod_val - _liq_mod_val - _mil_technical_baseline
+                # Clamp orchestrator delta attribution to actual total
+                # (rounding can cause micro-drift)
+                _total_delta = weighted_score - _mil_technical_baseline
+                _orch_delta_attr = _total_delta - _oi_mod_val - _liq_mod_val
+                _mil_delta_pct = (_total_delta / _mil_technical_baseline) if _mil_technical_baseline > 0 else 0.0
+
+                # ── Section 4 guardrail: warn on high MIL pressure ───
+                if abs(_mil_delta_pct) > 0.25:
+                    logger.warning(
+                        "ConfluenceScorer %s: MIL delta %.1f%% of baseline (threshold 25%%)",
+                        symbol, _mil_delta_pct * 100,
+                    )
+
+                self._last_diagnostics["mil_technical_baseline"] = round(_mil_technical_baseline, 4)
+                self._last_diagnostics["mil_total_delta"] = round(_total_delta, 4)
+                self._last_diagnostics["mil_delta_pct"] = round(_mil_delta_pct, 4)
+
+                # ── Phase 4B: MIL breakdown via agent_contributions ──
+                # Decompose orchestrator_delta using magnitude_share from
+                # OrchestratorSignal.agent_contributions (Phase S2 design).
+                # Attribution semantics: diagnostic proportional attribution
+                # based on pre-post-processing linear contributions.
+                # Invariant A: sentiment + news + other == orchestrator (by construction).
+                _sentiment_delta = 0.0
+                _news_delta = 0.0
+                try:
+                    _contribs = orch_sig.agent_contributions if orch_sig is not None else {}
+                    _news_share = _contribs.get("news", {}).get("magnitude_share", 0.0)
+                    _sentiment_share = _contribs.get("social_sentiment", {}).get("magnitude_share", 0.0)
+                    _sentiment_delta = _orch_delta_attr * _sentiment_share
+                    _news_delta = _orch_delta_attr * _news_share
+                except Exception:
+                    pass  # fail-open: both remain 0.0
+                _other_orch_delta = _orch_delta_attr - _sentiment_delta - _news_delta
+
+                # ── Invariant A: sentiment + news + other == orchestrator ──
+                _inv_a_err = abs(
+                    (_sentiment_delta + _news_delta + _other_orch_delta) - _orch_delta_attr
+                )
+                if _inv_a_err > 1e-6:
+                    logger.error(
+                        "ConfluenceScorer %s: MIL invariant A violated: "
+                        "sentiment(%.4f) + news(%.4f) + other(%.4f) = %.4f != orch(%.4f)",
+                        symbol, _sentiment_delta, _news_delta, _other_orch_delta,
+                        _sentiment_delta + _news_delta + _other_orch_delta, _orch_delta_attr,
+                    )
+
+                # ── Invariant B: orchestrator + oi + liquidation == total ──
+                _inv_b_sum = _orch_delta_attr + _oi_mod_val + _liq_mod_val
+                _inv_b_err = abs(_inv_b_sum - _total_delta)
+                if _inv_b_err > 1e-3:
+                    logger.error(
+                        "ConfluenceScorer %s: MIL invariant B violated: "
+                        "orch(%.4f) + oi(%.4f) + liq(%.4f) = %.4f != total(%.4f)",
+                        symbol, _orch_delta_attr, _oi_mod_val, _liq_mod_val,
+                        _inv_b_sum, _total_delta,
+                    )
+
+                _breakdown = {
+                    "orchestrator_delta":       round(_orch_delta_attr, 4),
+                    "sentiment_delta":          round(_sentiment_delta, 4),
+                    "news_delta":               round(_news_delta, 4),
+                    "other_orchestrator_delta":  round(_other_orch_delta, 4),
+                    "oi_delta":                 round(_oi_mod_val, 4),
+                    "liquidation_delta":        round(_liq_mod_val, 4),
+                }
+                self._last_diagnostics["mil_breakdown"] = _breakdown
+
+                # ── Phase S1: dominant source (computed here, passed through API) ──
+                _sources = {
+                    "orchestrator": abs(_orch_delta_attr),
+                    "sentiment":    abs(_sentiment_delta),
+                    "news":         abs(_news_delta),
+                    "oi":           abs(_oi_mod_val),
+                    "liquidation":  abs(_liq_mod_val),
+                }
+                _max_src = max(_sources, key=_sources.get)
+                self._last_diagnostics["mil_dominant_source"] = (
+                    _max_src if _sources[_max_src] > 0.001 else "none"
+                )
+
+                self._last_diagnostics["mil_delta_raw"] = round(_mil_actual_delta, 4)
+                self._last_diagnostics["mil_delta_max"] = round(_mil_max_delta, 4)
+                self._last_diagnostics["mil_capped"] = _was_capped
+
+                # ── Section 4: cap-trigger rate tracking ─────────────
+                if _was_capped:
+                    _now = _time.monotonic()
+                    if not hasattr(self, "_mil_cap_trigger_times"):
+                        self._mil_cap_trigger_times: list[float] = []
+                    self._mil_cap_trigger_times.append(_now)
+                    # Keep only last 60s
+                    self._mil_cap_trigger_times = [
+                        t for t in self._mil_cap_trigger_times if _now - t <= 60.0
+                    ]
+                    if len(self._mil_cap_trigger_times) > 5:
+                        logger.warning(
+                            "ConfluenceScorer: MIL cap triggered %d times in last 60s "
+                            "(threshold 5)",
+                            len(self._mil_cap_trigger_times),
+                        )
 
         self._last_diagnostics["effective_threshold"] = round(effective_threshold, 4)
         self._last_diagnostics["below_threshold"] = weighted_score < effective_threshold
@@ -612,6 +806,9 @@ class ConfluenceScorer:
                 weighted_score, effective_threshold,
             )
             self._last_diagnostics["failed_at"] = "below_threshold"
+            _score_elapsed = _time.perf_counter() - _score_t0
+            self._score_durations.append(_score_elapsed)
+            self._last_diagnostics["score_duration_ms"] = round(_score_elapsed * 1000, 2)
             return None
 
         # ── Synthesize entry/stop/target from signals ─────────
@@ -705,6 +902,11 @@ class ConfluenceScorer:
         )
 
         logger.debug("ConfluenceScorer: %s — building OrderCandidate (about to return)", symbol)
+        # ── Section 5: record score() duration ────────────────────────
+        _score_elapsed = _time.perf_counter() - _score_t0
+        self._score_durations.append(_score_elapsed)
+        self._last_diagnostics["score_duration_ms"] = round(_score_elapsed * 1000, 2)
+
         return OrderCandidate(
             symbol             = symbol,
             side               = side,
@@ -721,3 +923,13 @@ class ConfluenceScorer:
             atr_value          = atr,
             expiry             = expiry,
         )
+
+    def get_score_perf_stats(self) -> dict:
+        """Return p50 and p95 score() duration in milliseconds."""
+        if not self._score_durations:
+            return {"p50_ms": 0.0, "p95_ms": 0.0, "n": 0}
+        sorted_d = sorted(self._score_durations)
+        n = len(sorted_d)
+        p50 = sorted_d[int(n * 0.50)] * 1000
+        p95 = sorted_d[min(int(n * 0.95), n - 1)] * 1000
+        return {"p50_ms": round(p50, 2), "p95_ms": round(p95, 2), "n": n}

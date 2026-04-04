@@ -274,6 +274,7 @@ class OrchestratorSignal:
         "consensus_score",
         "divergence_penalty",
         "vix_dampener",
+        "agent_contributions",      # Phase S2: per-agent attribution diagnostics
     )
 
     def __init__(
@@ -292,6 +293,7 @@ class OrchestratorSignal:
         consensus_score:          float = 0.5,
         divergence_penalty:       float = 0.0,
         vix_dampener:             float = 1.0,
+        agent_contributions:      dict | None = None,
     ):
         self.meta_signal              = meta_signal
         self.meta_confidence          = meta_confidence
@@ -308,6 +310,7 @@ class OrchestratorSignal:
         self.consensus_score          = consensus_score
         self.divergence_penalty       = divergence_penalty
         self.vix_dampener             = vix_dampener
+        self.agent_contributions      = agent_contributions or {}
 
     def to_dict(self) -> dict:
         return {
@@ -328,6 +331,7 @@ class OrchestratorSignal:
             "consensus_score":          round(self.consensus_score, 4),
             "divergence_penalty":       round(self.divergence_penalty, 4),
             "vix_dampener":             round(self.vix_dampener, 4),
+            "agent_contributions":      self.agent_contributions,
         }
 
 
@@ -496,7 +500,7 @@ class OrchestratorEngine(QObject):
         """Recompute the meta-signal from the current agent cache."""
         now = datetime.now(timezone.utc)
         agent_summaries: dict[str, dict] = {}
-        weighted_parts: list[tuple[float, float, float]] = []  # (signal, eff_conf, weight)
+        weighted_parts: list[tuple[str, float, float, float]] = []  # (name, signal, eff_conf, weight)
 
         # ── Get macro context and regime ───────────────────────
         macro_data       = self._agent_cache.get("macro", {})
@@ -535,29 +539,48 @@ class OrchestratorEngine(QObject):
                 # Apply HMM confidence multiplier to effective confidence
                 hmm_adjusted_conf = effective_conf * regime_confidence
 
-                weighted_parts.append((sig, hmm_adjusted_conf, weight))
+                weighted_parts.append((agent_name, sig, hmm_adjusted_conf, weight))
                 effective_agent_count += 1
 
         # ── Meta-signal calculation ────────────────────────────
         if not weighted_parts:
             meta_sig  = 0.0
             meta_conf = 0.0
+            total_wc  = 0.0
         else:
-            total_wc = sum(w * c for _, c, w in weighted_parts)
+            total_wc = sum(w * c for _, _, c, w in weighted_parts)
             meta_sig = (
-                sum(s * c * w for s, c, w in weighted_parts) / total_wc
+                sum(s * c * w for _, s, c, w in weighted_parts) / total_wc
                 if total_wc > 0 else 0.0
             )
             meta_conf = (
-                sum(c * w for _, c, w in weighted_parts) /
-                sum(w for _, _, w in weighted_parts)
+                sum(c * w for _, _, c, w in weighted_parts) /
+                sum(w for _, _, _, w in weighted_parts)
             )
+
+        # ── Per-agent contribution breakdown (Phase S2 diagnostics) ────
+        # signed_contribution: exact additive to pre-post-processing meta_sig
+        # magnitude_share: |contribution_i| / Σ|contribution_j| — sums to 1.0
+        # Computed BEFORE post-processing (consensus, divergence, VIX, veto).
+        _agent_contributions: dict[str, dict] = {}
+        if total_wc > 0 and weighted_parts:
+            _abs_sum = sum(
+                abs(s * c * w / total_wc) for _, s, c, w in weighted_parts
+            )
+            for _name, _s, _c, _w in weighted_parts:
+                _sc = (_s * _c * _w) / total_wc
+                _ms = abs(_sc) / _abs_sum if _abs_sum > 1e-12 else 0.0
+                _agent_contributions[_name] = {
+                    "signed_contribution": round(_sc, 6),
+                    "magnitude_share":     round(_ms, 4),
+                    "weight_used":         round(_w, 4),
+                }
 
         # ── Consensus score ────────────────────────────────────
         # Fraction of active agents agreeing on direction (0.5 = no consensus, 1.0 = unanimous)
         if weighted_parts:
-            bull_count = sum(1 for s, _, _ in weighted_parts if s > 0.05)
-            bear_count = sum(1 for s, _, _ in weighted_parts if s < -0.05)
+            bull_count = sum(1 for _, s, _, _ in weighted_parts if s > 0.05)
+            bear_count = sum(1 for _, s, _, _ in weighted_parts if s < -0.05)
             neutral_count = len(weighted_parts) - bull_count - bear_count
             total_active = len(weighted_parts)
             consensus_score = max(bull_count, bear_count) / total_active if total_active > 0 else 0.5
@@ -672,6 +695,7 @@ class OrchestratorEngine(QObject):
             consensus_score          = consensus_score,
             divergence_penalty       = divergence_penalty,
             vix_dampener             = vix_dampener,
+            agent_contributions      = _agent_contributions,
         )
         self._current_signal = orch_signal
 
@@ -781,6 +805,7 @@ class OrchestratorEngine(QObject):
             consensus_score=0.5,
             divergence_penalty=0.0,
             vix_dampener=1.0,
+            agent_contributions={},
         )
 
     def is_veto_active(self) -> bool:
@@ -795,6 +820,13 @@ class OrchestratorEngine(QObject):
         if self._current_signal is None:
             return 0.0
         return self._current_signal.confluence_threshold_adj
+
+    def get_agent_contributions(self) -> dict[str, dict]:
+        """Convenience accessor for per-agent attribution diagnostics.
+        Primary source of truth is signal.agent_contributions."""
+        if self._current_signal is not None:
+            return self._current_signal.agent_contributions
+        return {}
 
 
 # ── Module-level singleton ────────────────────────────────────

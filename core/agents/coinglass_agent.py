@@ -222,12 +222,25 @@ class CoinglassAgent:
                 if oi_old and oi_old != 0:
                     oi_change_1h_pct = ((oi_now - oi_old) / abs(oi_old)) * 100.0
 
-        return {
+        result = {
             "oi_change_1h_pct": round(oi_change_1h_pct, 4),
             "age_seconds": round(age_s, 1),
             "raw_oi_usd": round(oi_now, 2),
             "source": source,
         }
+
+        # ── MIL Phase 4A: Enhanced OI metadata ──────────────
+        # Gated by mil.global_enabled AND agents.oi_enhanced.
+        # Fail-open: if enhancer fails, result is unchanged.
+        try:
+            from core.agents.mil.oi_enhanced import get_oi_enhancer
+            _oi_enhancer = get_oi_enhancer()
+            if _oi_enhancer.is_enabled():
+                result = _oi_enhancer.enhance_oi_result(symbol, result)
+        except Exception as exc:
+            logger.debug("CoinglassAgent: MIL OI enhance skipped: %s", exc)
+
+        return result
 
 
 # ── Module-level singleton ─────────────────────────────────────────────────

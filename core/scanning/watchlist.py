@@ -2,8 +2,13 @@
 # NEXUS TRADER — Watchlist Manager
 #
 # Manages named groups of symbols to scan.
-# Stored in config.yaml under scanner.watchlists key.
-# Supports: manual lists, tagging, enable/disable per list.
+#
+# Phase 3A (web mode): When PostgreSQL is available, the scan
+# universe is read from Asset.is_tradable on the active exchange.
+# This makes the web Asset Management page the SINGLE SOURCE
+# OF TRUTH for which symbols the scanner scans.
+#
+# Desktop mode: Falls back to config.yaml under scanner.watchlists.
 # ============================================================
 from __future__ import annotations
 
@@ -22,10 +27,60 @@ DEFAULT_WATCHLIST = {
 }
 
 
+def _try_db_tradable_symbols() -> Optional[list[str]]:
+    """
+    Attempt to read tradable symbols from PostgreSQL (web mode).
+
+    Returns a list of symbols if PostgreSQL is available and the
+    active exchange has tradable assets; returns None if PostgreSQL
+    is unreachable or not configured (desktop-only mode).
+    """
+    try:
+        from app.database import get_sync_session
+        from app.models.trading import Asset, Exchange
+        from sqlalchemy import select
+    except ImportError:
+        # app.database not on sys.path → desktop-only mode
+        return None
+
+    try:
+        with get_sync_session() as session:
+            # Find the active exchange
+            active_ex = session.execute(
+                select(Exchange).where(Exchange.is_active.is_(True))
+            ).scalar_one_or_none()
+            if active_ex is None:
+                logger.debug("WatchlistManager: no active exchange in DB")
+                return None
+
+            rows = session.execute(
+                select(Asset.symbol)
+                .where(
+                    Asset.exchange_id == active_ex.id,
+                    Asset.is_tradable.is_(True),
+                )
+                .order_by(Asset.symbol)
+            ).scalars().all()
+
+            symbols = [s.upper().strip() for s in rows]
+            logger.info(
+                "WatchlistManager: DB source → %d tradable symbols on %s",
+                len(symbols), active_ex.name,
+            )
+            return symbols
+    except Exception as exc:
+        logger.warning(
+            "WatchlistManager: PostgreSQL query failed, falling back to config: %s", exc,
+        )
+        return None
+
+
 class WatchlistManager:
     """
     Manages named watchlists of trading symbols.
-    Persisted to config.yaml.
+
+    Web mode (Phase 3A): delegates to PostgreSQL Asset.is_tradable.
+    Desktop mode: persisted to config.yaml.
     """
 
     _SETTING_KEY = "scanner.watchlists"
@@ -39,7 +94,21 @@ class WatchlistManager:
         return wl
 
     def get_active_symbols(self) -> list[str]:
-        """Return deduplicated symbols from all enabled watchlists."""
+        """
+        Return deduplicated symbols for the scan universe.
+
+        Primary (web mode): PostgreSQL Asset.is_tradable == True
+        on the active exchange.  Falls through to config.yaml if
+        PostgreSQL is unavailable, not configured, or returns empty.
+        """
+        # ── Phase 3A: DB-authoritative path ──────────────────
+        db_symbols = _try_db_tradable_symbols()
+        if db_symbols is not None:
+            # DB answered (even if empty list — that means user
+            # deliberately has zero tradable assets).  DB is SOT.
+            return db_symbols
+
+        # ── Fallback: config.yaml (desktop-only) ─────────────
         seen: set[str] = set()
         out:  list[str] = []
         for wl_data in self.get_all().values():

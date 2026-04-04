@@ -203,6 +203,20 @@ class NewsAgent(BaseAgent):
             "engine":        self._engine_name,
         }
 
+        # ── MIL Phase 4B: News enhancement (upstream enrichment) ──
+        # Gated by mil.global_enabled AND agents.news_enhanced
+        try:
+            from config.settings import settings
+            _mil_on = settings.get("mil.global_enabled", False)
+            _agent_on = settings.get("agents.news_enhanced", False)
+            if _mil_on and _agent_on:
+                from core.agents.mil.news_enhanced import get_news_enhancer
+                enhancer = get_news_enhancer()
+                enhancer.record(avg_signal, len(scored))
+                result = enhancer.enhance(result)
+        except Exception as exc:
+            logger.debug("NewsAgent: MIL enhancement failed — %s", exc)
+
         with self._lock:
             self._cache = result
 

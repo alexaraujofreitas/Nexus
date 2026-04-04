@@ -254,6 +254,15 @@ class TradingEngineService:
         """Import scanner singleton and auto-start if configured."""
         from core.scanning.scanner import scanner
         self._scanner = scanner
+
+        # Phase 3B: capture full per-symbol scan results (all symbols, not just approved)
+        # for the pipeline-status endpoint.
+        self._last_pipeline_results: list[dict] = []
+        self._last_pipeline_ts: str = ""
+        if hasattr(self._scanner, "scan_all_results"):
+            self._scanner.scan_all_results.connect(self._on_scan_all_results)
+            logger.info("Engine: connected scan_all_results signal for pipeline-status")
+
         # config.yaml: scanner.auto_execute MUST always be true per CLAUDE.md
         auto_start = True
         if self._settings:
@@ -263,6 +272,13 @@ class TradingEngineService:
             logger.info("Scanner auto-started")
         else:
             logger.info("Scanner imported (auto_execute=false, idle)")
+
+    def _on_scan_all_results(self, results: list):
+        """Store per-symbol scan results (all symbols incl. rejected/filtered)."""
+        from datetime import datetime
+        self._last_pipeline_results = results or []
+        self._last_pipeline_ts = datetime.utcnow().isoformat()
+        logger.debug("Engine: stored %d pipeline results", len(self._last_pipeline_results))
 
     # ── Command Loop ────────────────────────────────────────
 
@@ -322,6 +338,7 @@ class TradingEngineService:
             "get_dashboard": self._cmd_get_dashboard,
             "get_crash_defense": self._cmd_get_crash_defense,
             "get_scanner_results": self._cmd_get_scanner_results,
+            "get_pipeline_status": self._cmd_get_pipeline_status,
             "get_watchlist": self._cmd_get_watchlist,
             "get_agent_status": self._cmd_get_agent_status,
             "get_signals": self._cmd_get_signals,
@@ -614,8 +631,457 @@ class TradingEngineService:
             "scanner_running": self._scanner._running,
         }
 
+    async def _cmd_get_pipeline_status(self, params: dict) -> dict:
+        """Return full per-asset pipeline status for all tradable assets.
+
+        Phase 3B: merges DB tradable universe with scanner results so the
+        Scan page shows every tradable asset and where it stands in the
+        scan -> regime -> strategy -> confluence -> risk -> trade pipeline.
+
+        Assets that have not yet been scanned show status 'Waiting'.
+        """
+        # ── 1. Get tradable universe from DB ──────────────────
+        tradable_assets: list[dict] = []
+        try:
+            from app.database import get_async_session_factory
+            from app.models.trading import Asset, Exchange
+            from sqlalchemy import select
+
+            factory = get_async_session_factory()
+            async with factory() as session:
+                ex_result = await session.execute(
+                    select(Exchange).where(Exchange.is_active.is_(True))
+                )
+                active_ex = ex_result.scalar_one_or_none()
+                if active_ex:
+                    result = await session.execute(
+                        select(Asset)
+                        .where(
+                            Asset.exchange_id == active_ex.id,
+                            Asset.is_tradable.is_(True),
+                        )
+                        .order_by(Asset.symbol)
+                    )
+                    for a in result.scalars().all():
+                        tradable_assets.append({
+                            "asset_id": a.id,
+                            "symbol": a.symbol,
+                            "allocation_weight": a.allocation_weight,
+                        })
+        except Exception as e:
+            logger.warning("_cmd_get_pipeline_status: DB query failed: %s", e)
+
+        # ── 2. Build scanner results lookup ───────────────────
+        scan_by_symbol: dict[str, dict] = {}
+        for r in getattr(self, "_last_pipeline_results", []):
+            sym = r.get("symbol", "")
+            if sym:
+                scan_by_symbol[sym] = r
+
+        # ── 3. Merge: every tradable asset gets a pipeline row ─
+        pipeline_rows: list[dict] = []
+        for asset in tradable_assets:
+            sym = asset["symbol"]
+            scan = scan_by_symbol.get(sym)
+
+            if scan:
+                # Normalize status into pipeline stage
+                raw_status = scan.get("status", "")
+                pipeline_status = self._normalize_pipeline_status(raw_status, scan)
+                diag = scan.get("diagnostics", {})
+
+                # ── MIL diagnostics (promoted to top-level + inside diagnostics) ──
+                mil_diag = self._get_mil_diagnostics(sym)
+
+                # ── Decision explainability ───────────────────────
+                decision_explanation, block_reasons = self._build_decision_explanation(
+                    pipeline_status, raw_status, scan, diag, mil_diag,
+                )
+
+                # ── Extract top-level MIL fields ──────────────────
+                _mil_breakdown = mil_diag.get("mil_breakdown", {})
+
+                pipeline_rows.append({
+                    "asset_id": asset["asset_id"],
+                    "symbol": sym,
+                    "allocation_weight": asset["allocation_weight"],
+                    "price": scan.get("entry_price"),
+                    "regime": scan.get("regime", ""),
+                    "regime_confidence": diag.get("regime_confidence", 0.0),
+                    "models_fired": scan.get("models_fired", []),
+                    "models_no_signal": diag.get("models_no_signal", []),
+                    "score": scan.get("score", 0.0),
+                    "direction": scan.get("side", ""),
+                    "status": pipeline_status,
+                    "reason": self._pipeline_reason(raw_status, scan),
+                    "is_approved": scan.get("is_approved", False),
+                    "entry_price": scan.get("entry_price"),
+                    "stop_loss": scan.get("stop_loss_price", 0.0),
+                    "take_profit": scan.get("take_profit_price", 0.0),
+                    "rr_ratio": scan.get("risk_reward_ratio", 0.0),
+                    "position_size_usdt": scan.get("position_size_usdt", 0.0),
+                    "scanned_at": scan.get("generated_at", ""),
+                    # ── Phase S1: promoted MIL fields (top-level) ──
+                    "technical_score": diag.get("mil_technical_baseline", 0.0),
+                    "final_score": scan.get("score", 0.0),
+                    "mil_active": mil_diag.get("mil_active", False),
+                    "mil_total_delta": mil_diag.get("mil_total_delta", 0.0),
+                    "mil_influence_pct": mil_diag.get("mil_influence_pct", 0.0),
+                    "mil_capped": mil_diag.get("mil_capped", False),
+                    "mil_dominant_source": mil_diag.get("mil_dominant_source", "none"),
+                    "mil_breakdown": _mil_breakdown,
+                    # ── Phase S1: decision explainability ──────────
+                    "decision_explanation": decision_explanation,
+                    "block_reasons": block_reasons,
+                    # ── diagnostics (unchanged + MIL pass-through) ─
+                    "diagnostics": {
+                        "candle_count": diag.get("candle_count", 0),
+                        "candle_age_s": diag.get("candle_age_s", 0),
+                        "candle_ts_str": diag.get("candle_ts_str", ""),
+                        "regime_confidence": diag.get("regime_confidence", 0.0),
+                        "regime_probs": diag.get("regime_probs", {}),
+                        "all_model_names": diag.get("all_model_names", []),
+                        "models_disabled": diag.get("models_disabled", []),
+                        "models_fired": diag.get("models_fired", []),
+                        "models_no_signal": diag.get("models_no_signal", []),
+                        "signal_details": diag.get("signal_details", {}),
+                        "indicator_cols_missing": diag.get("indicator_cols_missing", []),
+                        "pre_filter_reason": raw_status if raw_status not in ("approved", "pending", "") else "",
+                        "rejection_reason": scan.get("rejection_reason", ""),
+                        # ── MIL Phase 4A diagnostic keys ─────────
+                        **mil_diag,
+                    },
+                })
+            else:
+                # Asset is tradable but has not been scanned yet
+                pipeline_rows.append({
+                    "asset_id": asset["asset_id"],
+                    "symbol": sym,
+                    "allocation_weight": asset["allocation_weight"],
+                    "price": None,
+                    "regime": "",
+                    "regime_confidence": 0.0,
+                    "models_fired": [],
+                    "models_no_signal": [],
+                    "score": 0.0,
+                    "direction": "",
+                    "status": "Waiting",
+                    "reason": "Not yet scanned",
+                    "is_approved": False,
+                    "entry_price": None,
+                    "stop_loss": 0.0,
+                    "take_profit": 0.0,
+                    "rr_ratio": 0.0,
+                    "position_size_usdt": 0.0,
+                    "scanned_at": "",
+                    # ── Phase S1: promoted MIL fields (defaults) ──
+                    "technical_score": 0.0,
+                    "final_score": 0.0,
+                    "mil_active": False,
+                    "mil_total_delta": 0.0,
+                    "mil_influence_pct": 0.0,
+                    "mil_capped": False,
+                    "mil_dominant_source": "none",
+                    "mil_breakdown": {},
+                    "decision_explanation": "Not yet scanned",
+                    "block_reasons": [],
+                    "diagnostics": {},
+                })
+
+        # ── 4. Summary stats ──────────────────────────────────
+        n_total = len(pipeline_rows)
+        n_eligible = sum(1 for r in pipeline_rows if r["status"] == "Eligible")
+        n_signals = sum(1 for r in pipeline_rows if r["score"] > 0)
+        n_blocked = sum(1 for r in pipeline_rows if r["status"] == "Risk Blocked")
+
+        return {
+            "status": "ok",
+            "pipeline": pipeline_rows,
+            "summary": {
+                "total": n_total,
+                "eligible": n_eligible,
+                "active_signals": n_signals,
+                "blocked": n_blocked,
+            },
+            "scanner_running": bool(self._scanner and self._scanner._running),
+            "last_scan_at": getattr(self, "_last_pipeline_ts", ""),
+            "source": "db",
+        }
+
+    @staticmethod
+    def _normalize_pipeline_status(raw_status: str, scan: dict) -> str:
+        """Map scanner raw status to pipeline display status."""
+        if scan.get("is_approved"):
+            return "Eligible"
+        s = raw_status.lower().strip()
+        if s in ("approved",):
+            return "Eligible"
+        if s in ("filtered",):
+            return "Pre-Filter"
+        if s in ("no signal",):
+            return "No Signal"
+        if s in ("below threshold",):
+            return "No Signal"
+        if s in ("no data", "stale data"):
+            return "Error"
+        if s in ("indicators missing",):
+            return "Error"
+        if s in ("scan error",):
+            return "Error"
+        if s in ("pending",):
+            # Had a signal but risk gate not yet run (shouldn't happen in batch)
+            return "No Signal"
+        # Any rejection reason from risk gate
+        if scan.get("rejection_reason"):
+            return "Risk Blocked"
+        if not s or s == "":
+            return "Waiting"
+        # Regime-related rejections
+        if "regime" in s.lower():
+            return "Regime Filtered"
+        return "Risk Blocked"
+
+    def _get_mil_diagnostics(self, symbol: str) -> dict:
+        """
+        Collect MIL Phase 4A diagnostic data for a pipeline row.
+
+        Queries the FundingRateAgent cache, CoinglassAgent cache, and
+        ConfluenceScorer diagnostics for MIL-enhanced metadata.
+        Returns empty dict if MIL is disabled or agents are unavailable.
+        Fail-open: never raises.
+
+        Pipeline visibility keys (Section 2):
+          mil_active, mil_influence_pct, mil_capped, mil_dominant_source
+        """
+        result: dict = {}
+        try:
+            from config.settings import settings
+            if not settings.get("mil.global_enabled", False):
+                result["mil_active"] = False
+                return result
+
+            result["mil_active"] = True
+
+            # ── Funding Rate MIL diagnostics ────────────────
+            if settings.get("agents.funding_rate_enhanced", False):
+                try:
+                    from core.agents.funding_rate_agent import funding_rate_agent
+                    if funding_rate_agent is not None:
+                        cached = funding_rate_agent.get_symbol_signal(symbol)
+                        if cached.get("mil_enhanced"):
+                            result["mil_funding_signal"] = cached.get("signal", 0.0)
+                            result["mil_funding_percentile"] = cached.get("mil_percentile_24h", 0.0)
+                            result["mil_funding_divergence"] = cached.get("mil_divergence_detected", False)
+                            result["mil_funding_weighted_rate"] = cached.get("mil_weighted_rate", 0.0)
+                except Exception:
+                    pass
+
+            # ── OI MIL diagnostics ──────────────────────────
+            if settings.get("agents.oi_enhanced", False):
+                try:
+                    from core.agents.mil.oi_enhanced import get_oi_enhancer
+                    enhancer = get_oi_enhancer()
+                    diag = enhancer.get_diagnostics()
+                    if symbol in (diag.get("history_sizes") or {}):
+                        from core.agents.coinglass_agent import coinglass_agent
+                        if coinglass_agent is not None:
+                            oi_data = coinglass_agent.get_oi_data(symbol)
+                            if oi_data and oi_data.get("mil_enhanced"):
+                                result["mil_oi_delta"] = oi_data.get("mil_oi_delta_1h", 0.0)
+                                result["mil_oi_delta_4h"] = oi_data.get("mil_oi_delta_4h", 0.0)
+                                result["mil_liquidation_proximity"] = oi_data.get("mil_liquidation_proximity", 0.0)
+                                result["mil_oi_volume_ratio"] = oi_data.get("mil_oi_volume_ratio", 0.0)
+                except Exception:
+                    pass
+
+            # ── Orchestrator meta-signal ─────────────────────
+            try:
+                from core.orchestrator.orchestrator_engine import get_orchestrator
+                orch = get_orchestrator()
+                sig = orch.get_signal()
+                if sig:
+                    result["mil_orchestrator_meta"] = round(sig.meta_signal, 4)
+                    result["mil_veto_active"] = sig.macro_veto
+            except Exception:
+                pass
+
+            # ── ConfluenceScorer MIL diagnostics — PURE PASS-THROUGH ──
+            # All MIL computation (breakdown, dominant source, invariants)
+            # is done in ConfluenceScorer.score(). This block ONLY reads
+            # stored diagnostics. Zero computation, zero derivation.
+            try:
+                scorer_diag = self._scorer._last_diagnostics if hasattr(self, "_scorer") else {}
+                if scorer_diag.get("mil_technical_baseline"):
+                    result["mil_influence_pct"] = scorer_diag.get("mil_delta_pct", 0.0)
+                    result["mil_total_delta"] = scorer_diag.get("mil_total_delta", 0.0)
+                    result["mil_capped"] = scorer_diag.get("mil_capped", False)
+                    result["mil_breakdown"] = scorer_diag.get("mil_breakdown", {})
+                    result["mil_dominant_source"] = scorer_diag.get("mil_dominant_source", "none")
+                else:
+                    result["mil_influence_pct"] = 0.0
+                    result["mil_total_delta"] = 0.0
+                    result["mil_capped"] = False
+                    result["mil_dominant_source"] = "none"
+                    result["mil_breakdown"] = {}
+            except Exception:
+                result["mil_influence_pct"] = 0.0
+                result["mil_total_delta"] = 0.0
+                result["mil_capped"] = False
+                result["mil_dominant_source"] = "none"
+                result["mil_breakdown"] = {}
+
+        except Exception:
+            pass  # fail-open: return whatever we have
+
+        return result
+
+    def _build_decision_explanation(
+        self,
+        pipeline_status: str,
+        raw_status: str,
+        scan: dict,
+        diag: dict,
+        mil_diag: dict,
+    ) -> tuple[str, list[str]]:
+        """Build a human-readable decision explanation and block reasons.
+
+        Phase S1: every pipeline row gets a clear textual explanation of
+        WHY it reached its current status, plus a list of specific block
+        reasons for anything that prevented trade eligibility.
+
+        Returns:
+            (decision_explanation, block_reasons)
+        """
+        block_reasons: list[str] = []
+        parts: list[str] = []
+
+        try:
+            # ── Data stage ─────────────────────────────────────
+            candle_count = diag.get("candle_count", 0)
+            if candle_count == 0:
+                block_reasons.append("No market data fetched")
+                return "No market data available for analysis", block_reasons
+
+            # ── Indicator stage ────────────────────────────────
+            missing_cols = diag.get("indicator_cols_missing", [])
+            if missing_cols:
+                block_reasons.append(f"Missing indicators: {', '.join(missing_cols)}")
+                return f"Indicator computation failed ({', '.join(missing_cols)} missing)", block_reasons
+
+            # ── Pre-filter stage ───────────────────────────────
+            pre_filter = diag.get("pre_filter_reason", "")
+            if pre_filter and raw_status not in ("approved", "pending", ""):
+                if pipeline_status == "Pre-Filter":
+                    block_reasons.append(f"Pre-filter: {pre_filter}")
+                    return f"Rejected by pre-filter: {pre_filter}", block_reasons
+
+            # ── Regime stage ───────────────────────────────────
+            regime = scan.get("regime", "")
+            regime_conf = diag.get("regime_confidence", 0.0)
+            if regime:
+                parts.append(f"Regime: {regime} ({regime_conf:.0%} confidence)")
+            else:
+                parts.append("Regime: unclassified")
+
+            # ── Signal stage ───────────────────────────────────
+            models_fired = scan.get("models_fired", [])
+            models_no_signal = diag.get("models_no_signal", [])
+            if not models_fired:
+                block_reasons.append(f"No model generated a signal ({len(models_no_signal)} checked)")
+                parts.append(f"No signal from {len(models_no_signal)} models")
+                return " → ".join(parts), block_reasons
+
+            parts.append(f"Signals: {', '.join(models_fired)}")
+
+            # ── Confluence stage ───────────────────────────────
+            score = scan.get("score", 0.0)
+            threshold = diag.get("effective_threshold", 0.0)
+            if score <= 0 and threshold > 0:
+                block_reasons.append(f"Score {score:.3f} below threshold {threshold:.3f}")
+                parts.append(f"Score {score:.3f} < threshold {threshold:.3f}")
+                return " → ".join(parts), block_reasons
+            elif score > 0:
+                parts.append(f"Score: {score:.3f}")
+
+            # ── MIL influence ──────────────────────────────────
+            if mil_diag.get("mil_active"):
+                pct = mil_diag.get("mil_influence_pct", 0.0)
+                capped = mil_diag.get("mil_capped", False)
+                if abs(pct) > 0.001:
+                    mil_str = f"MIL influence: {pct:+.1%}"
+                    if capped:
+                        mil_str += " (capped)"
+                    parts.append(mil_str)
+
+            # ── Risk gate stage ────────────────────────────────
+            rejection = scan.get("rejection_reason", "")
+            if rejection:
+                block_reasons.append(f"Risk gate: {rejection}")
+                parts.append(f"Blocked: {rejection}")
+                return " → ".join(parts), block_reasons
+
+            # ── Approved ───────────────────────────────────────
+            if scan.get("is_approved"):
+                rr = scan.get("risk_reward_ratio", 0.0)
+                size = scan.get("position_size_usdt", 0.0)
+                parts.append(f"Approved (R:R {rr:.1f}, ${size:.0f})")
+
+            return " → ".join(parts), block_reasons
+
+        except Exception:
+            return pipeline_status, block_reasons
+
+    @staticmethod
+    def _pipeline_reason(raw_status: str, scan: dict) -> str:
+        """Build a human-readable reason string for the pipeline stage."""
+        if scan.get("is_approved"):
+            return "Trade eligible"
+        if scan.get("rejection_reason"):
+            return str(scan["rejection_reason"])
+        if raw_status and raw_status not in ("approved", "pending", ""):
+            return raw_status
+        return ""
+
     async def _cmd_get_watchlist(self, params: dict) -> dict:
-        """Return the current scanner watchlist with symbol weights."""
+        """Return the current scanner watchlist with symbol weights.
+
+        Phase 3A: reads from PostgreSQL Asset.is_tradable as single source
+        of truth. Falls back to config.yaml only if PostgreSQL is unavailable
+        (desktop-only mode without web backend).
+        """
+        # ── Primary: PostgreSQL tradable assets ──────────────
+        try:
+            from app.database import get_async_session_factory
+            from app.models.trading import Asset, Exchange
+            from sqlalchemy import select
+
+            factory = get_async_session_factory()
+            async with factory() as session:
+                # Find active exchange
+                ex_result = await session.execute(
+                    select(Exchange).where(Exchange.is_active.is_(True))
+                )
+                active_ex = ex_result.scalar_one_or_none()
+                if active_ex:
+                    result = await session.execute(
+                        select(Asset)
+                        .where(
+                            Asset.exchange_id == active_ex.id,
+                            Asset.is_tradable.is_(True),
+                        )
+                        .order_by(Asset.symbol)
+                    )
+                    assets = result.scalars().all()
+                    if assets:
+                        symbols = [a.symbol for a in assets]
+                        weights = {a.symbol: a.allocation_weight for a in assets}
+                        return {"status": "ok", "symbols": symbols, "weights": weights, "source": "db"}
+                    # DB has zero tradable assets — return empty (not fallback)
+                    return {"status": "ok", "symbols": [], "weights": {}, "source": "db"}
+        except Exception as e:
+            logger.warning("_cmd_get_watchlist: PostgreSQL unavailable, falling back to config: %s", e)
+
+        # ── Fallback: config.yaml (desktop-only compatibility) ─
         symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
         weights = {"SOL/USDT": 1.3, "ETH/USDT": 1.2, "BTC/USDT": 1.0, "BNB/USDT": 0.8, "XRP/USDT": 0.8}
 
@@ -627,7 +1093,7 @@ class TradingEngineService:
             if cfg_weights and isinstance(cfg_weights, dict):
                 weights = cfg_weights
 
-        return {"status": "ok", "symbols": symbols, "weights": weights}
+        return {"status": "ok", "symbols": symbols, "weights": weights, "source": "config"}
 
     async def _cmd_get_agent_status(self, params: dict) -> dict:
         """Return status of all intelligence agents."""

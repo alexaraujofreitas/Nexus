@@ -14,11 +14,12 @@ import {
 import {
   getExchanges, getSupportedExchanges, createExchange, updateExchange,
   deleteExchange, activateExchange, deactivateExchange, testConnection,
-  getExchangeAssets, syncExchangeAssets,
-  type ExchangeConfig, type SupportedExchange,
+  getExchangeAssets, syncExchangeAssets, updateAsset, bulkUpdateAssets,
+  type ExchangeConfig, type SupportedExchange, type ExchangeAsset,
   type ConnectionTestResult,
 } from '../api/exchanges';
-import { cn } from '../lib/utils';
+import { getSnapshots } from '../api/marketData';
+import { cn, formatUSD } from '../lib/utils';
 
 type Tab = 'exchanges' | 'assets';
 type Mode = 'live' | 'sandbox' | 'demo';
@@ -532,13 +533,142 @@ function ExchangeDialog({
   );
 }
 
-// ── Asset Management Tab ──────────────────────────────────
+// ── Asset Management Tab (Phase 3A: full operational control) ─
+
+type TradableFilter = 'all' | 'tradable' | 'not_tradable';
+
+function TradableToggle({
+  asset,
+  exchangeId,
+  onUpdated,
+}: {
+  asset: ExchangeAsset;
+  exchangeId: number;
+  onUpdated: () => void;
+}) {
+  const [pending, setPending] = useState(false);
+
+  const handleToggle = async () => {
+    // Confirm when DISABLING (removing from scan universe)
+    if (asset.is_tradable) {
+      if (!window.confirm(`Remove ${asset.symbol} from the scan universe? It will no longer be scanned or traded.`)) return;
+    }
+    setPending(true);
+    try {
+      await updateAsset(exchangeId, asset.id, { is_tradable: !asset.is_tradable });
+      onUpdated();
+    } catch {
+      // Error: will refresh to show correct state
+      onUpdated();
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleToggle}
+      disabled={pending}
+      className={cn(
+        'relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1',
+        pending ? 'opacity-50 cursor-wait' : 'cursor-pointer',
+        asset.is_tradable ? 'bg-green-500' : 'bg-gray-300',
+      )}
+      title={asset.is_tradable ? 'In scan universe — click to remove' : 'Not scanned — click to add'}
+    >
+      <span
+        className={cn(
+          'inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform shadow-sm',
+          asset.is_tradable ? 'translate-x-4.5' : 'translate-x-0.5',
+        )}
+        style={{ transform: asset.is_tradable ? 'translateX(18px)' : 'translateX(2px)' }}
+      />
+    </button>
+  );
+}
+
+function WeightEditor({
+  asset,
+  exchangeId,
+  onUpdated,
+}: {
+  asset: ExchangeAsset;
+  exchangeId: number;
+  onUpdated: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(asset.allocation_weight));
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    const num = parseFloat(value);
+    if (isNaN(num) || num < 0 || num > 10) return;
+    if (num === asset.allocation_weight) { setEditing(false); return; }
+    setSaving(true);
+    try {
+      await updateAsset(exchangeId, asset.id, { allocation_weight: num });
+      onUpdated();
+      setEditing(false);
+    } catch {
+      onUpdated();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleSave();
+    if (e.key === 'Escape') { setEditing(false); setValue(String(asset.allocation_weight)); }
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          type="number"
+          min={0} max={10} step={0.1}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleSave}
+          autoFocus
+          disabled={saving}
+          className="w-16 px-1.5 py-0.5 border border-blue-400 rounded text-xs text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => { setValue(String(asset.allocation_weight)); setEditing(true); }}
+      className="flex items-center gap-1.5 text-xs group"
+      title="Click to edit allocation weight"
+    >
+      <div className="w-12 bg-gray-100 rounded-full h-1.5">
+        <div
+          className="bg-blue-500 h-1.5 rounded-full"
+          style={{ width: `${Math.min((asset.allocation_weight / 2) * 100, 100)}%` }}
+        />
+      </div>
+      <span className="font-mono text-gray-600 group-hover:text-blue-600 transition-colors">
+        {asset.allocation_weight.toFixed(1)}
+      </span>
+    </button>
+  );
+}
 
 function AssetsTab() {
+  const queryClient = useQueryClient();
   const [quote, setQuote] = useState('USDT');
   const [search, setSearch] = useState('');
+  const [tradableFilter, setTradableFilter] = useState<TradableFilter>('all');
   const [syncStatus, setSyncStatus] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkAction, setBulkAction] = useState<'enable' | 'disable' | 'weight' | ''>('');
+  const [bulkWeight, setBulkWeight] = useState('1.0');
+  const [bulkPending, setBulkPending] = useState(false);
 
   const { data: exchanges = [] } = useQuery({
     queryKey: ['exchanges'],
@@ -548,12 +678,33 @@ function AssetsTab() {
   const activeExchange = exchanges.find((e) => e.is_active);
 
   const { data: assetsData, isLoading, refetch } = useQuery({
-    queryKey: ['exchange-assets', activeExchange?.id, quote, search],
-    queryFn: () => activeExchange ? getExchangeAssets(activeExchange.id, { quote, search: search || undefined }) : Promise.resolve({ assets: [], count: 0 }),
+    queryKey: ['exchange-assets', activeExchange?.id, quote, search, tradableFilter],
+    queryFn: () => activeExchange
+      ? getExchangeAssets(activeExchange.id, {
+          quote,
+          search: search || undefined,
+          is_tradable: tradableFilter === 'all' ? undefined : tradableFilter === 'tradable',
+        })
+      : Promise.resolve({ assets: [] as ExchangeAsset[], count: 0, total: 0 }),
     enabled: !!activeExchange,
   });
 
-  const assets = assetsData?.assets ?? [];
+  // Fetch market snapshots to merge price/change/volume into asset rows
+  const { data: snapshots = [] } = useQuery({
+    queryKey: ['market-snapshots'],
+    queryFn: getSnapshots,
+    refetchInterval: 15000, // 15s refresh matching MDS tier 0
+    enabled: !!activeExchange,
+  });
+
+  // Build snapshot lookup by symbol for O(1) merge
+  const snapshotBySymbol = new Map<string, typeof snapshots[0]>();
+  for (const s of snapshots) {
+    snapshotBySymbol.set(s.symbol, s);
+  }
+
+  const assets: ExchangeAsset[] = assetsData?.assets ?? [];
+  const totalCount = (assetsData as any)?.total ?? assets.length;
 
   const handleSync = async () => {
     if (!activeExchange) return;
@@ -571,6 +722,56 @@ function AssetsTab() {
     }
   };
 
+  const handleRefresh = () => {
+    refetch();
+    queryClient.invalidateQueries({ queryKey: ['market-snapshots'] });
+  };
+
+  // ── Bulk actions ────────────────────────────────────────
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === assets.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(assets.map((a) => a.id)));
+    }
+  };
+
+  const handleBulkApply = async () => {
+    if (!activeExchange || selectedIds.size === 0) return;
+    setBulkPending(true);
+    try {
+      const ids = Array.from(selectedIds);
+      if (bulkAction === 'enable') {
+        await bulkUpdateAssets(activeExchange.id, { asset_ids: ids, is_tradable: true });
+      } else if (bulkAction === 'disable') {
+        if (!window.confirm(`Remove ${ids.length} assets from the scan universe?`)) { setBulkPending(false); return; }
+        await bulkUpdateAssets(activeExchange.id, { asset_ids: ids, is_tradable: false });
+      } else if (bulkAction === 'weight') {
+        const w = parseFloat(bulkWeight);
+        if (isNaN(w) || w < 0 || w > 10) { setBulkPending(false); return; }
+        await bulkUpdateAssets(activeExchange.id, { asset_ids: ids, allocation_weight: w });
+      }
+      setSelectedIds(new Set());
+      setBulkAction('');
+      refetch();
+    } catch (err: any) {
+      setSyncStatus(`Error: ${err?.response?.data?.detail || err?.message || 'Bulk update failed'}`);
+      setTimeout(() => setSyncStatus(''), 5000);
+    } finally {
+      setBulkPending(false);
+    }
+  };
+
+  const tradableCount = assets.filter((a) => a.is_tradable).length;
+
   if (!activeExchange) {
     return (
       <div className="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-400">
@@ -583,8 +784,19 @@ function AssetsTab() {
 
   return (
     <div className="space-y-4">
+      {/* Summary bar */}
+      <div className="flex items-center gap-4 text-sm">
+        <span className="text-gray-500">
+          Total: <span className="font-medium text-gray-900">{totalCount}</span>
+        </span>
+        <span className="text-gray-500">
+          In scan universe: <span className="font-medium text-green-600">{tradableFilter === 'all' ? tradableCount : '—'}</span>
+        </span>
+      </div>
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
+        {/* Quote filter */}
         <div className="flex items-center gap-2">
           <label className="text-sm text-gray-600">Quote:</label>
           <select
@@ -597,6 +809,22 @@ function AssetsTab() {
             ))}
           </select>
         </div>
+
+        {/* F5: Tradable filter */}
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-600">Status:</label>
+          <select
+            value={tradableFilter}
+            onChange={(e) => setTradableFilter(e.target.value as TradableFilter)}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm min-h-[36px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">All Assets</option>
+            <option value="tradable">Tradable Only</option>
+            <option value="not_tradable">Not Tradable</option>
+          </select>
+        </div>
+
+        {/* Search */}
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
@@ -607,14 +835,17 @@ function AssetsTab() {
             className="pl-9 pr-3 py-1.5 border border-gray-300 rounded-lg text-sm w-40 min-h-[36px] focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
+
+        {/* Sync button */}
         <button
           onClick={handleSync}
           disabled={syncing}
           className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors min-h-[36px]"
         >
           {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          Sync Assets from Exchange
+          Sync Assets
         </button>
+
         {syncStatus && (
           <span className={cn('text-xs', syncStatus.startsWith('\u2713') ? 'text-green-600' : syncStatus.startsWith('Error') ? 'text-red-500' : 'text-gray-500')}>
             {syncStatus}
@@ -622,50 +853,164 @@ function AssetsTab() {
         )}
       </div>
 
+      {/* F4: Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+          <span className="text-sm text-blue-800 font-medium">{selectedIds.size} selected</span>
+          <select
+            value={bulkAction}
+            onChange={(e) => setBulkAction(e.target.value as any)}
+            className="px-2 py-1 border border-blue-300 rounded text-sm bg-white min-h-[32px]"
+          >
+            <option value="">Choose action...</option>
+            <option value="enable">Enable Tradable</option>
+            <option value="disable">Disable Tradable</option>
+            <option value="weight">Set Weight</option>
+          </select>
+          {bulkAction === 'weight' && (
+            <input
+              type="number"
+              min={0} max={10} step={0.1}
+              value={bulkWeight}
+              onChange={(e) => setBulkWeight(e.target.value)}
+              className="w-20 px-2 py-1 border border-blue-300 rounded text-sm font-mono"
+            />
+          )}
+          <button
+            onClick={handleBulkApply}
+            disabled={!bulkAction || bulkPending}
+            className={cn(
+              'px-3 py-1 rounded text-sm font-medium transition-colors min-h-[32px]',
+              !bulkAction || bulkPending
+                ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                : 'bg-blue-600 text-white hover:bg-blue-700',
+            )}
+          >
+            {bulkPending ? <Loader2 className="w-3.5 h-3.5 animate-spin inline" /> : 'Apply'}
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-xs text-blue-600 hover:text-blue-800 ml-auto"
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {/* Asset Table */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Symbol</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Base</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Quote</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Price Precision</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Min Amount</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Min Cost</th>
+                {/* F4: Bulk checkbox */}
+                <th className="w-10 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={assets.length > 0 && selectedIds.size === assets.length}
+                    onChange={toggleSelectAll}
+                    className="rounded border-gray-300"
+                  />
+                </th>
+                {/* F1: Tradable toggle column */}
+                <th className="text-center px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Tradable</th>
+                <th className="text-left px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Symbol</th>
+                {/* F3: Market snapshot columns */}
+                <th className="text-right px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Price</th>
+                <th className="text-right px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">1h %</th>
+                <th className="text-right px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">24h %</th>
+                <th className="text-right px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">24h Vol</th>
+                {/* F2: Weight column */}
+                <th className="text-right px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Weight</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
                     <Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Loading assets...
                   </td>
                 </tr>
               ) : assets.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
-                    No assets found. Click "Sync Assets from Exchange" to fetch.
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
+                    No assets found. Click "Sync Assets" to fetch from exchange.
                   </td>
                 </tr>
               ) : (
-                assets.map((a) => (
-                  <tr key={a.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-2.5 font-medium text-gray-900">{a.symbol}</td>
-                    <td className="px-4 py-2.5 text-gray-600">{a.base_currency}</td>
-                    <td className="px-4 py-2.5 text-gray-600">{a.quote_currency}</td>
-                    <td className="px-4 py-2.5 text-right text-gray-600">{a.price_precision}</td>
-                    <td className="px-4 py-2.5 text-right text-gray-600">{a.min_amount ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-right text-gray-600">{a.min_cost ?? '—'}</td>
-                  </tr>
-                ))
+                assets.map((a) => {
+                  const snap = snapshotBySymbol.get(a.symbol);
+                  const price = snap?.snapshot?.price;
+                  const change1h = snap?.snapshot?.change_1h;
+                  const change24h = snap?.snapshot?.change_24h;
+                  const vol24h = snap?.snapshot?.volume_24h;
+
+                  return (
+                    <tr
+                      key={a.id}
+                      className={cn(
+                        'hover:bg-gray-50 transition-colors',
+                        selectedIds.has(a.id) && 'bg-blue-50/50',
+                      )}
+                    >
+                      {/* F4: Row checkbox */}
+                      <td className="w-10 px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(a.id)}
+                          onChange={() => toggleSelect(a.id)}
+                          className="rounded border-gray-300"
+                        />
+                      </td>
+                      {/* F1: Tradable toggle */}
+                      <td className="px-3 py-2 text-center">
+                        <TradableToggle asset={a} exchangeId={activeExchange.id} onUpdated={handleRefresh} />
+                      </td>
+                      {/* Symbol */}
+                      <td className="px-3 py-2">
+                        <span className="font-medium text-gray-900">{a.base_currency}</span>
+                        <span className="text-gray-400 text-xs ml-1">/{a.quote_currency}</span>
+                      </td>
+                      {/* F3: Price */}
+                      <td className="px-3 py-2 text-right font-mono text-gray-700 text-xs">
+                        {price != null ? formatUSD(price) : <span className="text-gray-300">—</span>}
+                      </td>
+                      {/* F3: 1h change */}
+                      <td className="px-3 py-2 text-right font-mono text-xs">
+                        {change1h != null ? (
+                          <span className={change1h >= 0 ? 'text-green-600' : 'text-red-600'}>
+                            {change1h >= 0 ? '+' : ''}{change1h.toFixed(2)}%
+                          </span>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
+                      {/* F3: 24h change */}
+                      <td className="px-3 py-2 text-right font-mono text-xs">
+                        {change24h != null ? (
+                          <span className={change24h >= 0 ? 'text-green-600' : 'text-red-600'}>
+                            {change24h >= 0 ? '+' : ''}{change24h.toFixed(2)}%
+                          </span>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
+                      {/* F3: 24h volume */}
+                      <td className="px-3 py-2 text-right font-mono text-gray-600 text-xs">
+                        {vol24h != null
+                          ? (vol24h >= 1e6 ? `${(vol24h / 1e6).toFixed(1)}M` : vol24h >= 1e3 ? `${(vol24h / 1e3).toFixed(0)}K` : vol24h.toFixed(0))
+                          : <span className="text-gray-300">—</span>}
+                      </td>
+                      {/* F2: Allocation weight */}
+                      <td className="px-3 py-2 text-right">
+                        <WeightEditor asset={a} exchangeId={activeExchange.id} onUpdated={handleRefresh} />
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
-        <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-400">
-          {assets.length} assets
+        <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-400 flex justify-between">
+          <span>{assets.length} assets shown ({totalCount} total)</span>
+          <span>Snapshots: {snapshots.length > 0 ? 'Live' : 'Unavailable'}</span>
         </div>
       </div>
     </div>

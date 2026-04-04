@@ -227,11 +227,24 @@ DEFAULT_CONFIG = {
         "onchain": {"enabled": True, "symbols": ["bitcoin", "ethereum"]},
         "volatility_surface": {"enabled": True},
         "liquidation_flow": {"enabled": True},
+        # ── MIL Phase 4A config gates ─────────────────────────────
+        # All default to False — system behaves EXACTLY as before when off.
+        "funding_rate_enhanced": False,   # Multi-exchange aggregation + 24h percentile + divergence
+        "oi_enhanced": False,             # OI delta (1h/4h/24h) + OI/volume ratio + liquidation proximity
+        # ── MIL Phase 4B config gates ─────────────────────────────
+        "sentiment_enhanced": False,      # SentimentEnhancer: trend, spike, staleness on social signal
+        "news_enhanced": False,           # NewsEnhancer: event classification, impact, decay on news signal
         # API keys stored in vault — placeholders here for discovery
         "fred_api_key": "__vault__",
         "lunarcrush_api_key": "__vault__",
         "coinglass_api_key": "",
         "cryptopanic_api_key": "",
+    },
+    # ── Market Intelligence Layer (MIL) ─────────────────────────────
+    # Master gate for all MIL enhancements. Must be True for ANY
+    # MIL feature to activate. Individual agent gates also required.
+    "mil": {
+        "global_enabled": False,          # Master gate — ALL MIL disabled when False
     },
     "execution": {
         "base_size_usdt": 500.0,

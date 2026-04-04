@@ -83,6 +83,19 @@ class FundingRateAgent(BaseAgent):
         if not symbols:
             return {}
 
+        # ── MIL Phase 4A: Pre-fetch multi-exchange rates ────────
+        # Batch-fetch Binance+OKX rates for all symbols DURING the
+        # fetch phase (QThread context — blocking HTTP is established
+        # pattern). This ensures enhance_symbol_data() in process()
+        # reads ONLY from cache (zero I/O).
+        try:
+            from core.agents.mil.funding_rate_enhanced import get_funding_enhancer
+            _enhancer = get_funding_enhancer()
+            if _enhancer.is_enabled():
+                _enhancer.fetch_all_symbols(symbols)
+        except Exception as exc:
+            logger.debug("FundingRateAgent: MIL pre-fetch skipped: %s", exc)
+
         results: dict[str, dict] = {}
         for symbol in symbols:
             try:
@@ -131,7 +144,7 @@ class FundingRateAgent(BaseAgent):
                 signal, confidence, direction, explanation = self._compute_signal(
                     rate_pct, data["oi_usdt"], prev_oi, avg_rate_24h
                 )
-                self._cache[symbol] = {
+                entry = {
                     **data,
                     "prev_oi_usdt":  prev_oi,
                     "oi_change_pct": self._pct_change(prev_oi, data["oi_usdt"]),
@@ -141,6 +154,21 @@ class FundingRateAgent(BaseAgent):
                     "direction":     direction,
                     "explanation":   explanation,
                 }
+
+                # ── MIL Phase 4A: Enhanced funding metadata ──────
+                # Gated by mil.global_enabled AND agents.funding_rate_enhanced.
+                # Fail-open: if enhancer fails, entry is unchanged.
+                try:
+                    from core.agents.mil.funding_rate_enhanced import get_funding_enhancer
+                    _enhancer = get_funding_enhancer()
+                    if _enhancer.is_enabled():
+                        entry = _enhancer.enhance_symbol_data(
+                            symbol, rate_pct, entry
+                        )
+                except Exception as exc:
+                    logger.debug("FundingRateAgent: MIL enhance skipped: %s", exc)
+
+                self._cache[symbol] = entry
             cache_snapshot = dict(self._cache)
 
         # Aggregate summary signal (average across symbols)
@@ -148,9 +176,13 @@ class FundingRateAgent(BaseAgent):
         avg_signal = sum(signals) / len(signals) if signals else 0.0
         avg_conf   = sum(v["confidence"] for v in cache_snapshot.values()) / max(len(cache_snapshot), 1)
 
+        # MIL diagnostics for aggregate summary
+        mil_active = any(v.get("mil_enhanced") for v in cache_snapshot.values())
+
         logger.info(
-            "FundingRateAgent: %d symbols | avg_signal=%.3f | avg_conf=%.2f",
+            "FundingRateAgent: %d symbols | avg_signal=%.3f | avg_conf=%.2f%s",
             len(raw), avg_signal, avg_conf,
+            " | MIL=ON" if mil_active else "",
         )
 
         return {
@@ -158,6 +190,7 @@ class FundingRateAgent(BaseAgent):
             "confidence": round(avg_conf,   4),
             "symbols":    cache_snapshot,
             "count":      len(cache_snapshot),
+            "mil_active": mil_active,
         }
 
     # ── Per-symbol signal logic ───────────────────────────────

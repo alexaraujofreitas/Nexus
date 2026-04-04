@@ -10,7 +10,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "d435cfd0c4db021e",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "15m": {
       "symbol": "BTC/USDT",
@@ -22,7 +22,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "49c03b787accd9ed",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "30m": {
       "symbol": "BTC/USDT",
@@ -34,7 +34,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "407654cf353f70d6",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "1h": {
       "symbol": "BTC/USDT",
@@ -46,7 +46,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "ca9bf57c05c5696a",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "4h": {
       "symbol": "BTC/USDT",
@@ -58,7 +58,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "f7088e8f19f1f0a5",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     }
   },
   "SOL/USDT": {
@@ -72,7 +72,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "1034bd9477f32f98",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "15m": {
       "symbol": "SOL/USDT",
@@ -84,7 +84,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "d9277ee77d5e7faa",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "30m": {
       "symbol": "SOL/USDT",
@@ -96,7 +96,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "1e058780b15a3ecb",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "1h": {
       "symbol": "SOL/USDT",
@@ -108,7 +108,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "59ce567baed7fd98",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "4h": {
       "symbol": "SOL/USDT",
@@ -120,7 +120,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "f72c472c8eac69d1",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     }
   },
   "ETH/USDT": {
@@ -134,7 +134,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "b80ae7e8f3201d0f",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "15m": {
       "symbol": "ETH/USDT",
@@ -146,7 +146,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "5f30a962c66b9f50",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "30m": {
       "symbol": "ETH/USDT",
@@ -158,7 +158,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "4fd2818df59e2c2a",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "1h": {
       "symbol": "ETH/USDT",
@@ -170,7 +170,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "de1242932de4a2aa",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "4h": {
       "symbol": "ETH/USDT",
@@ -182,7 +182,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "bd40fb48d618a3d5",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     }
   },
   "XRP/USDT": {
@@ -196,7 +196,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "6a2bd9b4b3a27659",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "15m": {
       "symbol": "XRP/USDT",
@@ -208,7 +208,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "b528f1c2784178c9",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "30m": {
       "symbol": "XRP/USDT",
@@ -220,7 +220,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "b36eb0efeb6da26e",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "1h": {
       "symbol": "XRP/USDT",
@@ -232,7 +232,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "c0fb2ad054309b07",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "4h": {
       "symbol": "XRP/USDT",
@@ -244,7 +244,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "7657c24efce22f61",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     }
   },
   "BNB/USDT": {
@@ -258,7 +258,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "f2945573d1b62b04",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "15m": {
       "symbol": "BNB/USDT",
@@ -270,7 +270,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "d7930584274f47e0",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "30m": {
       "symbol": "BNB/USDT",
@@ -282,7 +282,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "b771390737904447",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "1h": {
       "symbol": "BNB/USDT",
@@ -294,7 +294,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "1471d3dd0027d01b",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     },
     "4h": {
       "symbol": "BNB/USDT",
@@ -306,7 +306,7 @@
       "first_date": "2022-03-22",
       "last_date": "2026-03-21",
       "hash": "d33a120613a87bfb",
-      "updated_at": "2026-04-01T05:29:30"
+      "updated_at": "2026-04-04T14:18:11"
     }
   }
 }
