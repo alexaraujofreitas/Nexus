@@ -37,7 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 
 from app.config import get_settings, validate_settings, ConfigurationError  # noqa: E402
-from app.database import dispose_async_engine, init_async_engine  # noqa: E402
+from app.database import dispose_async_engine, get_async_session_factory, init_async_engine  # noqa: E402
 from app.middleware.cloudflare import CloudflareAccessMiddleware  # noqa: E402
 from app.middleware.security_headers import SecurityHeadersMiddleware  # noqa: E402
 from app.middleware.rate_limit import limiter, rate_limit_exceeded_handler  # noqa: E402
@@ -61,6 +61,10 @@ from app.api.logs import router as logs_router  # noqa: E402
 from app.api.analytics import router as analytics_router  # noqa: E402
 from app.api.backtest import router as backtest_router  # noqa: E402
 from app.api.validation import router as validation_router  # noqa: E402
+from app.api.vault import router as vault_router  # noqa: E402
+from app.api.exchanges import router as exchanges_router  # noqa: E402
+from app.api.monitor import router as monitor_router  # noqa: E402
+from app.api.market_data import router as market_data_router  # noqa: E402
 from app.ws.routes import router as ws_router  # noqa: E402
 from app.ws.manager import ws_manager  # noqa: E402
 
@@ -106,11 +110,39 @@ async def lifespan(app: FastAPI):
     # Start WebSocket ↔ Redis bridge
     await ws_manager.start_redis_listener()
 
+    # Start Market Data Service (Phase 2)
+    mds = None
+    redis_client = None
+    try:
+        import redis.asyncio as aioredis
+        from app.services.market_data import MarketDataService
+        redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        session_factory = get_async_session_factory()
+        mds = MarketDataService(
+            db_session_factory=session_factory,
+            redis=redis_client,
+            settings=settings,
+        )
+        await mds.start()
+        logger.info("MarketDataService started")
+    except Exception:
+        logger.error("Failed to start MarketDataService", exc_info=True)
+
     logger.info("NexusTrader API ready")
     yield
 
     # Shutdown
     logger.info("Shutting down NexusTrader API service")
+    if mds is not None:
+        try:
+            await mds.stop()
+        except Exception:
+            logger.error("Error stopping MarketDataService", exc_info=True)
+    if redis_client is not None:
+        try:
+            await redis_client.aclose()
+        except Exception:
+            logger.error("Error closing MDS Redis client", exc_info=True)
     await ws_manager.stop_redis_listener()
     await dispose_async_engine()
 
@@ -220,6 +252,10 @@ app.include_router(logs_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(backtest_router, prefix="/api/v1")
 app.include_router(validation_router, prefix="/api/v1")
+app.include_router(vault_router, prefix="/api/v1")
+app.include_router(exchanges_router, prefix="/api/v1")
+app.include_router(monitor_router, prefix="/api/v1")
+app.include_router(market_data_router, prefix="/api/v1")
 app.include_router(ws_router)
 
 
