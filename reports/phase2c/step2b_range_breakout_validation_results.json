@@ -1,0 +1,205 @@
+{
+  "timestamp": "2026-04-01T00:22:06.029459",
+  "date_range": "2022-03-22 to 2026-03-21",
+  "symbols": [
+    "BTC/USDT",
+    "SOL/USDT",
+    "ETH/USDT"
+  ],
+  "cost_model": {
+    "fee_per_side": 0.0004,
+    "slippage_per_side": 0.0003,
+    "total_per_side": 0.0007
+  },
+  "is_oos_split": "2025-09-22",
+  "rb_events_total": 1226,
+  "rb_events_by_symbol": {
+    "BTC/USDT": 462,
+    "SOL/USDT": 334,
+    "ETH/USDT": 430
+  },
+  "variants": {
+    "with_buffer": {
+      "entry_buffer_atr": 0.1,
+      "cost_per_side": 0.0007,
+      "n_trades": 1083,
+      "profit_factor": 1.4503,
+      "win_rate": 0.6371,
+      "avg_r": 0.1689,
+      "cagr_pct": 51.14,
+      "max_dd_pct": -14.86,
+      "final_equity": 521188.64,
+      "elapsed_s": 0.4,
+      "n_signals": 1346,
+      "n_false_breakout": 263,
+      "false_breakout_rate": 0.1954,
+      "sl_rate": 0.3269,
+      "is": {
+        "n": 953,
+        "wr": 0.6348,
+        "pf": 1.3709,
+        "avg_r": 0.1556,
+        "sl_rate": 0.3295
+      },
+      "oos": {
+        "n": 130,
+        "wr": 0.6538,
+        "pf": 1.7651,
+        "avg_r": 0.2667,
+        "sl_rate": 0.3077
+      },
+      "per_asset": {
+        "BTC/USDT": {
+          "n": 415,
+          "wr": 0.6241,
+          "pf": 1.4498,
+          "avg_r": 0.1504,
+          "sl_rate": 0.3277
+        },
+        "SOL/USDT": {
+          "n": 287,
+          "wr": 0.6585,
+          "pf": 1.3792,
+          "avg_r": 0.2296,
+          "sl_rate": 0.324
+        },
+        "ETH/USDT": {
+          "n": 381,
+          "wr": 0.6352,
+          "pf": 1.5391,
+          "avg_r": 0.1434,
+          "sl_rate": 0.3281
+        }
+      },
+      "long": {
+        "n": 556,
+        "wr": 0.6223,
+        "pf": 1.4934,
+        "avg_r": 0.1457,
+        "sl_rate": 0.3327
+      },
+      "short": {
+        "n": 527,
+        "wr": 0.6528,
+        "pf": 1.4102,
+        "avg_r": 0.1934,
+        "sl_rate": 0.3207
+      },
+      "confidence_buckets": {
+        "low": {
+          "n": 4,
+          "wr": 0.25,
+          "pf": 0.1637,
+          "avg_r": -0.5534,
+          "sl_rate": 0.75
+        },
+        "mid": {
+          "n": 143,
+          "wr": 0.6294,
+          "pf": 1.9611,
+          "avg_r": 0.2298,
+          "sl_rate": 0.3636
+        },
+        "high": {
+          "n": 936,
+          "wr": 0.64,
+          "pf": 1.376,
+          "avg_r": 0.1627,
+          "sl_rate": 0.3194
+        }
+      }
+    },
+    "no_buffer": {
+      "entry_buffer_atr": 0.0,
+      "cost_per_side": 0.0007,
+      "n_trades": 1112,
+      "profit_factor": 1.4556,
+      "win_rate": 0.6376,
+      "avg_r": 0.164,
+      "cagr_pct": 51.92,
+      "max_dd_pct": -16.32,
+      "final_equity": 532126.98,
+      "elapsed_s": 0.4,
+      "n_signals": 1384,
+      "n_false_breakout": 272,
+      "false_breakout_rate": 0.1965,
+      "sl_rate": 0.3156,
+      "is": {
+        "n": 977,
+        "wr": 0.6336,
+        "pf": 1.3916,
+        "avg_r": 0.1531,
+        "sl_rate": 0.3173
+      },
+      "oos": {
+        "n": 135,
+        "wr": 0.6667,
+        "pf": 1.6928,
+        "avg_r": 0.2429,
+        "sl_rate": 0.3037
+      },
+      "per_asset": {
+        "BTC/USDT": {
+          "n": 421,
+          "wr": 0.6223,
+          "pf": 1.4434,
+          "avg_r": 0.1466,
+          "sl_rate": 0.3207
+        },
+        "SOL/USDT": {
+          "n": 294,
+          "wr": 0.6735,
+          "pf": 1.4447,
+          "avg_r": 0.2369,
+          "sl_rate": 0.3061
+        },
+        "ETH/USDT": {
+          "n": 397,
+          "wr": 0.6272,
+          "pf": 1.4789,
+          "avg_r": 0.1285,
+          "sl_rate": 0.3174
+        }
+      },
+      "long": {
+        "n": 580,
+        "wr": 0.6328,
+        "pf": 1.5005,
+        "avg_r": 0.1414,
+        "sl_rate": 0.3155
+      },
+      "short": {
+        "n": 532,
+        "wr": 0.6429,
+        "pf": 1.4142,
+        "avg_r": 0.1887,
+        "sl_rate": 0.3158
+      },
+      "confidence_buckets": {
+        "low": {
+          "n": 4,
+          "wr": 0.25,
+          "pf": 0.1562,
+          "avg_r": -0.5597,
+          "sl_rate": 0.75
+        },
+        "mid": {
+          "n": 143,
+          "wr": 0.6294,
+          "pf": 1.9291,
+          "avg_r": 0.2176,
+          "sl_rate": 0.3636
+        },
+        "high": {
+          "n": 965,
+          "wr": 0.6404,
+          "pf": 1.3877,
+          "avg_r": 0.1591,
+          "sl_rate": 0.3067
+        }
+      }
+    }
+  },
+  "winner": "no_buffer",
+  "winner_rationale": "Selected 'no_buffer' based on PF=1.4556, AvgR=+0.1640, FalseBK=19.7%"
+}

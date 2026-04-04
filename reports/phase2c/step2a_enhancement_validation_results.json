@@ -1,0 +1,170 @@
+{
+  "timestamp": "2026-03-31T23:27:21.663113",
+  "date_range": "2022-03-22 to 2026-03-21",
+  "symbols": [
+    "BTC/USDT",
+    "SOL/USDT",
+    "ETH/USDT"
+  ],
+  "fee_per_side": 0.0004,
+  "is_oos_split": "2025-09-22",
+  "transition_events_total": 894,
+  "transition_events_by_symbol": {
+    "BTC/USDT": 292,
+    "SOL/USDT": 301,
+    "ETH/USDT": 301
+  },
+  "scenarios": {
+    "baseline": {
+      "n_trades": 1731,
+      "profit_factor": 1.2758,
+      "win_rate": 0.5638,
+      "cagr_pct": 48.5,
+      "max_dd_pct": -20.6,
+      "final_equity": 485827.24,
+      "elapsed_s": 30.6,
+      "signals_generated": 2410,
+      "rejected_heat": 667,
+      "rejected_max": 0,
+      "rejected_entry_gap": 12,
+      "pbl": {
+        "n": 501,
+        "wr": 0.4511,
+        "pf": 0.8456,
+        "avg_r": -0.0702
+      },
+      "slc": {
+        "n": 1230,
+        "wr": 0.6098,
+        "pf": 1.4336,
+        "avg_r": 0.2723
+      },
+      "is": {
+        "n": 1478,
+        "wr": 0.5467,
+        "pf": 1.1471,
+        "avg_r": 0.1443
+      },
+      "oos": {
+        "n": 253,
+        "wr": 0.664,
+        "pf": 1.7785,
+        "avg_r": 0.3416
+      },
+      "n_boosted": 0,
+      "n_relaxed": 0,
+      "boosted_kpis": {},
+      "relaxed_kpis": {}
+    },
+    "mode_a_only": {
+      "n_trades": 1731,
+      "profit_factor": 1.2758,
+      "win_rate": 0.5638,
+      "cagr_pct": 48.5,
+      "max_dd_pct": -20.6,
+      "final_equity": 485827.24,
+      "elapsed_s": 30.0,
+      "signals_generated": 2410,
+      "rejected_heat": 667,
+      "rejected_max": 0,
+      "rejected_entry_gap": 12,
+      "pbl": {
+        "n": 501,
+        "wr": 0.4511,
+        "pf": 0.8456,
+        "avg_r": -0.0702
+      },
+      "slc": {
+        "n": 1230,
+        "wr": 0.6098,
+        "pf": 1.4336,
+        "avg_r": 0.2723
+      },
+      "is": {
+        "n": 1478,
+        "wr": 0.5467,
+        "pf": 1.1471,
+        "avg_r": 0.1443
+      },
+      "oos": {
+        "n": 253,
+        "wr": 0.664,
+        "pf": 1.7785,
+        "avg_r": 0.3416
+      },
+      "n_boosted": 11,
+      "n_relaxed": 0,
+      "boosted_kpis": {
+        "n": 11,
+        "wr": 0.1818,
+        "pf": 0.5992,
+        "avg_r": -0.6162
+      },
+      "relaxed_kpis": {}
+    },
+    "mode_a_b_level1": {
+      "n_trades": 1731,
+      "profit_factor": 1.2758,
+      "win_rate": 0.5638,
+      "cagr_pct": 48.5,
+      "max_dd_pct": -20.6,
+      "final_equity": 485827.24,
+      "elapsed_s": 31.1,
+      "signals_generated": 2410,
+      "rejected_heat": 667,
+      "rejected_max": 0,
+      "rejected_entry_gap": 12,
+      "pbl": {
+        "n": 501,
+        "wr": 0.4511,
+        "pf": 0.8456,
+        "avg_r": -0.0702
+      },
+      "slc": {
+        "n": 1230,
+        "wr": 0.6098,
+        "pf": 1.4336,
+        "avg_r": 0.2723
+      },
+      "is": {
+        "n": 1478,
+        "wr": 0.5467,
+        "pf": 1.1471,
+        "avg_r": 0.1443
+      },
+      "oos": {
+        "n": 253,
+        "wr": 0.664,
+        "pf": 1.7785,
+        "avg_r": 0.3416
+      },
+      "n_boosted": 11,
+      "n_relaxed": 0,
+      "boosted_kpis": {
+        "n": 11,
+        "wr": 0.1818,
+        "pf": 0.5992,
+        "avg_r": -0.6162
+      },
+      "relaxed_kpis": {}
+    }
+  },
+  "verdicts": {
+    "mode_a_only": {
+      "checks": {
+        "pf_ge_baseline": true,
+        "maxdd_le_baseline": true,
+        "slc_n_ge_baseline": true
+      },
+      "pass": true
+    },
+    "mode_a_b_level1": {
+      "checks": {
+        "pf_ge_baseline": true,
+        "maxdd_le_baseline": true,
+        "slc_n_ge_baseline": true
+      },
+      "pass": true
+    }
+  }
+}

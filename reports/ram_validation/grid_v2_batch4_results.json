@@ -1,0 +1,201 @@
+[
+  {
+    "label": "combo_aggressive",
+    "overrides": {
+      "phase_2.range_accumulation.entry_proximity_atr": 1.0,
+      "phase_2.range_accumulation.rsi_oversold": 42.0,
+      "phase_2.range_accumulation.rsi_overbought": 58.0,
+      "phase_2.range_accumulation.wick_strength": 0.5,
+      "phase_2.range_accumulation.min_touches": 2
+    },
+    "stats": {
+      "n": 507,
+      "wr": 0.4655,
+      "pf": 0.9841,
+      "cagr": -0.56,
+      "max_dd": 0.1521,
+      "avg_r": -0.0583,
+      "yearly": {
+        "2022": {
+          "n": 94,
+          "wr": 0.4362,
+          "pf": 0.7907
+        },
+        "2023": {
+          "n": 111,
+          "wr": 0.4595,
+          "pf": 0.9753
+        },
+        "2024": {
+          "n": 140,
+          "wr": 0.4429,
+          "pf": 0.9147
+        },
+        "2025": {
+          "n": 140,
+          "wr": 0.4929,
+          "pf": 1.211
+        },
+        "2026": {
+          "n": 22,
+          "wr": 0.5909,
+          "pf": 1.4326
+        }
+      },
+      "assets": {
+        "BTC/USDT": {
+          "n": 144,
+          "wr": 0.4722,
+          "pf": 0.8987
+        },
+        "ETH/USDT": {
+          "n": 161,
+          "wr": 0.4969,
+          "pf": 1.1255
+        },
+        "SOL/USDT": {
+          "n": 202,
+          "wr": 0.4356,
+          "pf": 0.9462
+        }
+      }
+    },
+    "elapsed": 62.5
+  },
+  {
+    "label": "combo_tight",
+    "overrides": {
+      "phase_2.range_accumulation.rsi_oversold": 30.0,
+      "phase_2.range_accumulation.rsi_overbought": 70.0,
+      "phase_2.range_accumulation.adx_max": 20.0,
+      "phase_2.range_accumulation.sl_atr_mult": 3.0
+    },
+    "stats": {
+      "n": 0,
+      "wr": 0,
+      "pf": 0,
+      "cagr": 0,
+      "max_dd": 0,
+      "avg_r": 0,
+      "yearly": {},
+      "assets": {}
+    },
+    "elapsed": 58.9
+  },
+  {
+    "label": "sl3_prox0.8",
+    "overrides": {
+      "phase_2.range_accumulation.sl_atr_mult": 3.0,
+      "phase_2.range_accumulation.entry_proximity_atr": 0.8
+    },
+    "stats": {
+      "n": 44,
+      "wr": 0.4318,
+      "pf": 1.0359,
+      "cagr": 0.16,
+      "max_dd": 0.0665,
+      "avg_r": 0.1585,
+      "yearly": {
+        "2022": {
+          "n": 10,
+          "wr": 0.4,
+          "pf": 0.7512
+        },
+        "2023": {
+          "n": 8,
+          "wr": 0.125,
+          "pf": 0.1441
+        },
+        "2024": {
+          "n": 11,
+          "wr": 0.4545,
+          "pf": 1.2625
+        },
+        "2025": {
+          "n": 13,
+          "wr": 0.5385,
+          "pf": 1.6764
+        },
+        "2026": {
+          "n": 2,
+          "wr": 1.0,
+          "pf": 999.0
+        }
+      },
+      "assets": {
+        "BTC/USDT": {
+          "n": 10,
+          "wr": 0.7,
+          "pf": 9.284
+        },
+        "ETH/USDT": {
+          "n": 10,
+          "wr": 0.6,
+          "pf": 3.5444
+        },
+        "SOL/USDT": {
+          "n": 24,
+          "wr": 0.25,
+          "pf": 0.4652
+        }
+      }
+    },
+    "elapsed": 66.4
+  },
+  {
+    "label": "lb20_relax",
+    "overrides": {
+      "phase_2.range_accumulation.lookback": 20,
+      "phase_2.range_accumulation.entry_proximity_atr": 0.8,
+      "phase_2.range_accumulation.wick_strength": 0.7
+    },
+    "stats": {
+      "n": 28,
+      "wr": 0.3929,
+      "pf": 1.0633,
+      "cagr": 0.12,
+      "max_dd": 0.0196,
+      "avg_r": -0.1482,
+      "yearly": {
+        "2022": {
+          "n": 6,
+          "wr": 0.3333,
+          "pf": 0.9619
+        },
+        "2023": {
+          "n": 6,
+          "wr": 0.5,
+          "pf": 1.6868
+        },
+        "2024": {
+          "n": 6,
+          "wr": 0.5,
+          "pf": 1.3471
+        },
+        "2025": {
+          "n": 10,
+          "wr": 0.3,
+          "pf": 0.6866
+        }
+      },
+      "assets": {
+        "BTC/USDT": {
+          "n": 7,
+          "wr": 0.2857,
+          "pf": 0.6563
+        },
+        "ETH/USDT": {
+          "n": 9,
+          "wr": 0.5556,
+          "pf": 1.7306
+        },
+        "SOL/USDT": {
+          "n": 12,
+          "wr": 0.3333,
+          "pf": 0.9654
+        }
+      }
+    },
+    "elapsed": 64.6
+  }
+]

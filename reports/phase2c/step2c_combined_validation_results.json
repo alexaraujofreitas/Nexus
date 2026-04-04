@@ -1,0 +1,279 @@
+{
+  "timestamp": "2026-04-01T00:43:47.566682",
+  "date_range": "2022-03-22 to 2026-03-21",
+  "symbols": [
+    "BTC/USDT",
+    "SOL/USDT",
+    "ETH/USDT"
+  ],
+  "cost_model": {
+    "fee_per_side": 0.0004,
+    "slippage_per_side": 0.0003,
+    "total_per_side": 0.0007
+  },
+  "is_oos_split": "2025-09-22",
+  "events": {
+    "pullback_continuation_total": 894,
+    "range_breakout_total": 1226
+  },
+  "scenarios": {
+    "baseline": {
+      "n_trades": 1600,
+      "profit_factor": 1.1782,
+      "win_rate": 0.5613,
+      "avg_r": 0.1237,
+      "cagr_pct": 29.33,
+      "max_dd_pct": -22.9,
+      "final_equity": 279563.41,
+      "elapsed_s": 18.6,
+      "pbl": {
+        "n": 497,
+        "wr": 0.4527,
+        "pf": 0.8056,
+        "avg_r": -0.1105
+      },
+      "slc": {
+        "n": 1103,
+        "wr": 0.6102,
+        "pf": 1.3321,
+        "avg_r": 0.2292
+      },
+      "rb": {
+        "n": 0,
+        "wr": 0.0,
+        "pf": 999.0,
+        "avg_r": 0.0
+      },
+      "is": {
+        "n": 1374,
+        "wr": 0.5444,
+        "pf": 1.0875,
+        "avg_r": 0.098
+      },
+      "oos": {
+        "n": 226,
+        "wr": 0.6637,
+        "pf": 1.6827,
+        "avg_r": 0.2797
+      },
+      "per_asset": {
+        "BTC/USDT": {
+          "n": 591,
+          "wr": 0.5702,
+          "pf": 1.1498,
+          "avg_r": 0.0982,
+          "pbl_n": 176,
+          "slc_n": 415,
+          "rb_n": 0
+        },
+        "SOL/USDT": {
+          "n": 582,
+          "wr": 0.5636,
+          "pf": 1.2357,
+          "avg_r": 0.1696,
+          "pbl_n": 168,
+          "slc_n": 414,
+          "rb_n": 0
+        },
+        "ETH/USDT": {
+          "n": 427,
+          "wr": 0.5457,
+          "pf": 1.1008,
+          "avg_r": 0.0964,
+          "pbl_n": 153,
+          "slc_n": 274,
+          "rb_n": 0
+        }
+      },
+      "n_boosted": 0,
+      "n_relaxed": 0,
+      "n_anti_amplification": 0,
+      "n_rb_signals": 0,
+      "n_rb_false_breakout": 0,
+      "n_rb_displaced_by_pbl_slc": 0,
+      "n_pbl_slc_displaced_by_rb": 0,
+      "enhancement_enabled": false,
+      "rb_enabled": false,
+      "rb_entry_buffer": 0.0
+    },
+    "no_buffer": {
+      "n_trades": 2153,
+      "profit_factor": 1.2374,
+      "win_rate": 0.5982,
+      "avg_r": 0.1195,
+      "cagr_pct": 57.06,
+      "max_dd_pct": -22.04,
+      "final_equity": 607813.61,
+      "elapsed_s": 15.6,
+      "pbl": {
+        "n": 371,
+        "wr": 0.4744,
+        "pf": 0.8627,
+        "avg_r": -0.0609
+      },
+      "slc": {
+        "n": 946,
+        "wr": 0.6173,
+        "pf": 1.3943,
+        "avg_r": 0.219
+      },
+      "rb": {
+        "n": 836,
+        "wr": 0.6316,
+        "pf": 1.2047,
+        "avg_r": 0.087
+      },
+      "is": {
+        "n": 1855,
+        "wr": 0.5898,
+        "pf": 1.1455,
+        "avg_r": 0.1057
+      },
+      "oos": {
+        "n": 298,
+        "wr": 0.651,
+        "pf": 1.5796,
+        "avg_r": 0.2055
+      },
+      "per_asset": {
+        "BTC/USDT": {
+          "n": 842,
+          "wr": 0.5998,
+          "pf": 1.2419,
+          "avg_r": 0.1067,
+          "pbl_n": 128,
+          "slc_n": 364,
+          "rb_n": 350
+        },
+        "SOL/USDT": {
+          "n": 711,
+          "wr": 0.6062,
+          "pf": 1.2883,
+          "avg_r": 0.165,
+          "pbl_n": 131,
+          "slc_n": 366,
+          "rb_n": 214
+        },
+        "ETH/USDT": {
+          "n": 600,
+          "wr": 0.5867,
+          "pf": 1.1522,
+          "avg_r": 0.0836,
+          "pbl_n": 112,
+          "slc_n": 216,
+          "rb_n": 272
+        }
+      },
+      "n_boosted": 20,
+      "n_relaxed": 0,
+      "n_anti_amplification": 2,
+      "n_rb_signals": 1997,
+      "n_rb_false_breakout": 214,
+      "n_rb_displaced_by_pbl_slc": 0,
+      "n_pbl_slc_displaced_by_rb": 2,
+      "enhancement_enabled": true,
+      "rb_enabled": true,
+      "rb_entry_buffer": 0.0
+    },
+    "with_buffer": {
+      "n_trades": 2124,
+      "profit_factor": 1.2428,
+      "win_rate": 0.597,
+      "avg_r": 0.118,
+      "cagr_pct": 56.44,
+      "max_dd_pct": -22.01,
+      "final_equity": 598166.4,
+      "elapsed_s": 15.5,
+      "pbl": {
+        "n": 371,
+        "wr": 0.4744,
+        "pf": 0.8594,
+        "avg_r": -0.0609
+      },
+      "slc": {
+        "n": 938,
+        "wr": 0.6173,
+        "pf": 1.4032,
+        "avg_r": 0.2147
+      },
+      "rb": {
+        "n": 815,
+        "wr": 0.6294,
+        "pf": 1.2106,
+        "avg_r": 0.0881
+      },
+      "is": {
+        "n": 1831,
+        "wr": 0.5893,
+        "pf": 1.1457,
+        "avg_r": 0.1037
+      },
+      "oos": {
+        "n": 293,
+        "wr": 0.6451,
+        "pf": 1.6001,
+        "avg_r": 0.2074
+      },
+      "per_asset": {
+        "BTC/USDT": {
+          "n": 836,
+          "wr": 0.5981,
+          "pf": 1.2427,
+          "avg_r": 0.1035,
+          "pbl_n": 128,
+          "slc_n": 364,
+          "rb_n": 344
+        },
+        "SOL/USDT": {
+          "n": 699,
+          "wr": 0.6052,
+          "pf": 1.3021,
+          "avg_r": 0.1674,
+          "pbl_n": 131,
+          "slc_n": 361,
+          "rb_n": 207
+        },
+        "ETH/USDT": {
+          "n": 589,
+          "wr": 0.5857,
+          "pf": 1.1491,
+          "avg_r": 0.08,
+          "pbl_n": 112,
+          "slc_n": 213,
+          "rb_n": 264
+        }
+      },
+      "n_boosted": 20,
+      "n_relaxed": 0,
+      "n_anti_amplification": 2,
+      "n_rb_signals": 1973,
+      "n_rb_false_breakout": 207,
+      "n_rb_displaced_by_pbl_slc": 0,
+      "n_pbl_slc_displaced_by_rb": 2,
+      "enhancement_enabled": true,
+      "rb_enabled": true,
+      "rb_entry_buffer": 0.1
+    }
+  },
+  "verdicts": {
+    "no_buffer": {
+      "checks": {
+        "pf_ge_baseline": true,
+        "maxdd_le_baseline": true,
+        "slc_n_ge_baseline": false,
+        "pbl_n_stable": false
+      },
+      "pass": false
+    },
+    "with_buffer": {
+      "checks": {
+        "pf_ge_baseline": true,
+        "maxdd_le_baseline": true,
+        "slc_n_ge_baseline": false,
+        "pbl_n_stable": false
+      },
+      "pass": false
+    }
+  },
+  "recommendation": "reject_range_breakout"
+}

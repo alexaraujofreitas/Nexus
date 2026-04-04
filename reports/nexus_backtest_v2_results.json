@@ -1,0 +1,2126 @@
+{
+  "generated": "2026-03-27T20:20:06.816466+00:00",
+  "period_30m": "2022-03-22 to 2026-03-21",
+  "bars_30m": 70079,
+  "initial_capital": 100000.0,
+  "htf_gate": true,
+  "capital_models": [
+    "A_Current",
+    "B_Moderate",
+    "C_Aggressive",
+    "D_Conviction",
+    "E_Prime",
+    "F_Leveraged",
+    "G_MaxLeverage"
+  ],
+  "concurrent_slots": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "results": {
+    "A_Current__c1": {
+      "model_id": "A_Current",
+      "max_concurrent": 1,
+      "label": "Model A \u2014 0.5% / 10%",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2387,
+        "gross_profit": 2933.3,
+        "gross_loss": 2868.32,
+        "net_pnl_full": 64.98,
+        "net_pnl_partial": 3487.89,
+        "net_pnl_total": 3552.86,
+        "initial_capital": 100000.0,
+        "final_equity": 103552.86,
+        "total_return_pct": 3.55,
+        "max_drawdown_pct": 0.88,
+        "cagr_pct": 0.88,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 0.57,
+        "max_util_pct": 10.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -737.85
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 802.83
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -570.79,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 761.18,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -323.06,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 197.65,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "A_Current__c2": {
+      "model_id": "A_Current",
+      "max_concurrent": 2,
+      "label": "Model A \u2014 0.5% / 10%",
+      "metrics": {
+        "total_trades_full": 60,
+        "total_trades_partial": 45,
+        "win_rate_pct": 53.33,
+        "profit_factor": 2.4151,
+        "gross_profit": 5681.91,
+        "gross_loss": 5039.54,
+        "net_pnl_full": 642.37,
+        "net_pnl_partial": 6488.99,
+        "net_pnl_total": 7131.36,
+        "initial_capital": 100000.0,
+        "final_equity": 107131.36,
+        "total_return_pct": 7.13,
+        "max_drawdown_pct": 1.48,
+        "cagr_pct": 1.74,
+        "years": 4.0,
+        "max_consec_losses": 8,
+        "avg_util_pct": 0.94,
+        "max_util_pct": 20.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 13,
+            "wr_pct": 23.1,
+            "pnl": -1331.51
+          },
+          "bull_trend": {
+            "count": 47,
+            "wr_pct": 61.7,
+            "pnl": 1973.88
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -1176.17,
+            "trades": 19,
+            "wr_pct": 42.1
+          },
+          "2023": {
+            "pnl": 2241.75,
+            "trades": 24,
+            "wr_pct": 62.5
+          },
+          "2024": {
+            "pnl": -740.28,
+            "trades": 10,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 317.07,
+            "trades": 7,
+            "wr_pct": 42.9
+          }
+        }
+      }
+    },
+    "A_Current__c3": {
+      "model_id": "A_Current",
+      "max_concurrent": 3,
+      "label": "Model A \u2014 0.5% / 10%",
+      "metrics": {
+        "total_trades_full": 79,
+        "total_trades_partial": 61,
+        "win_rate_pct": 55.7,
+        "profit_factor": 2.5742,
+        "gross_profit": 8064.18,
+        "gross_loss": 6642.7,
+        "net_pnl_full": 1421.47,
+        "net_pnl_partial": 9035.51,
+        "net_pnl_total": 10456.98,
+        "initial_capital": 100000.0,
+        "final_equity": 110456.98,
+        "total_return_pct": 10.46,
+        "max_drawdown_pct": 1.99,
+        "cagr_pct": 2.52,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 1.39,
+        "max_util_pct": 30.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -1924.62
+          },
+          "bull_trend": {
+            "count": 65,
+            "wr_pct": 63.1,
+            "pnl": 3346.09
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -1750.19,
+            "trades": 25,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 3636.18,
+            "trades": 31,
+            "wr_pct": 67.7
+          },
+          "2024": {
+            "pnl": -912.53,
+            "trades": 14,
+            "wr_pct": 64.3
+          },
+          "2025": {
+            "pnl": 448.02,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "A_Current__c4": {
+      "model_id": "A_Current",
+      "max_concurrent": 4,
+      "label": "Model A \u2014 0.5% / 10%",
+      "metrics": {
+        "total_trades_full": 91,
+        "total_trades_partial": 72,
+        "win_rate_pct": 58.24,
+        "profit_factor": 2.9109,
+        "gross_profit": 9890.44,
+        "gross_loss": 7149.3,
+        "net_pnl_full": 2741.14,
+        "net_pnl_partial": 10920.53,
+        "net_pnl_total": 13661.67,
+        "initial_capital": 100000.0,
+        "final_equity": 113661.67,
+        "total_return_pct": 13.66,
+        "max_drawdown_pct": 1.99,
+        "cagr_pct": 3.26,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 1.75,
+        "max_util_pct": 40.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -1967.66
+          },
+          "bull_trend": {
+            "count": 77,
+            "wr_pct": 64.9,
+            "pnl": 4708.79
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -1747.21,
+            "trades": 29,
+            "wr_pct": 44.8
+          },
+          "2023": {
+            "pnl": 4673.62,
+            "trades": 37,
+            "wr_pct": 67.6
+          },
+          "2024": {
+            "pnl": -646.29,
+            "trades": 16,
+            "wr_pct": 68.8
+          },
+          "2025": {
+            "pnl": 461.02,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "A_Current__c5": {
+      "model_id": "A_Current",
+      "max_concurrent": 5,
+      "label": "Model A \u2014 0.5% / 10%",
+      "metrics": {
+        "total_trades_full": 99,
+        "total_trades_partial": 79,
+        "win_rate_pct": 57.58,
+        "profit_factor": 2.9914,
+        "gross_profit": 10734.94,
+        "gross_loss": 7610.68,
+        "net_pnl_full": 3124.27,
+        "net_pnl_partial": 12031.54,
+        "net_pnl_total": 15155.81,
+        "initial_capital": 100000.0,
+        "final_equity": 115155.81,
+        "total_return_pct": 15.16,
+        "max_drawdown_pct": 1.99,
+        "cagr_pct": 3.59,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 2.0,
+        "max_util_pct": 50.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -1986.68
+          },
+          "bull_trend": {
+            "count": 85,
+            "wr_pct": 63.5,
+            "pnl": 5110.95
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -1992.51,
+            "trades": 32,
+            "wr_pct": 43.8
+          },
+          "2023": {
+            "pnl": 5167.69,
+            "trades": 41,
+            "wr_pct": 65.9
+          },
+          "2024": {
+            "pnl": -518.0,
+            "trades": 17,
+            "wr_pct": 70.6
+          },
+          "2025": {
+            "pnl": 467.08,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "B_Moderate__c1": {
+      "model_id": "B_Moderate",
+      "max_concurrent": 1,
+      "label": "Model B \u2014 1.0% / 25%",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.3266,
+        "gross_profit": 7204.56,
+        "gross_loss": 6782.18,
+        "net_pnl_full": 422.38,
+        "net_pnl_partial": 8575.14,
+        "net_pnl_total": 8997.52,
+        "initial_capital": 100000.0,
+        "final_equity": 108997.52,
+        "total_return_pct": 9.0,
+        "max_drawdown_pct": 1.93,
+        "cagr_pct": 2.18,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 1.31,
+        "max_util_pct": 25.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -1770.15
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 2192.53
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -1044.65,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 1673.02,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -724.06,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 518.07,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "B_Moderate__c2": {
+      "model_id": "B_Moderate",
+      "max_concurrent": 2,
+      "label": "Model B \u2014 1.0% / 25%",
+      "metrics": {
+        "total_trades_full": 60,
+        "total_trades_partial": 45,
+        "win_rate_pct": 53.33,
+        "profit_factor": 2.5475,
+        "gross_profit": 14302.58,
+        "gross_loss": 12001.1,
+        "net_pnl_full": 2301.48,
+        "net_pnl_partial": 16270.71,
+        "net_pnl_total": 18572.19,
+        "initial_capital": 100000.0,
+        "final_equity": 118572.19,
+        "total_return_pct": 18.57,
+        "max_drawdown_pct": 3.35,
+        "cagr_pct": 4.35,
+        "years": 4.0,
+        "max_consec_losses": 8,
+        "avg_util_pct": 2.17,
+        "max_util_pct": 50.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 13,
+            "wr_pct": 23.1,
+            "pnl": -3178.18
+          },
+          "bull_trend": {
+            "count": 47,
+            "wr_pct": 61.7,
+            "pnl": 5479.65
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -2257.95,
+            "trades": 19,
+            "wr_pct": 42.1
+          },
+          "2023": {
+            "pnl": 5352.11,
+            "trades": 24,
+            "wr_pct": 62.5
+          },
+          "2024": {
+            "pnl": -1664.3,
+            "trades": 10,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 871.62,
+            "trades": 7,
+            "wr_pct": 42.9
+          }
+        }
+      }
+    },
+    "B_Moderate__c3": {
+      "model_id": "B_Moderate",
+      "max_concurrent": 3,
+      "label": "Model B \u2014 1.0% / 25%",
+      "metrics": {
+        "total_trades_full": 79,
+        "total_trades_partial": 61,
+        "win_rate_pct": 55.7,
+        "profit_factor": 2.7608,
+        "gross_profit": 20711.23,
+        "gross_loss": 15856.5,
+        "net_pnl_full": 4854.73,
+        "net_pnl_partial": 23065.39,
+        "net_pnl_total": 27920.12,
+        "initial_capital": 100000.0,
+        "final_equity": 127920.12,
+        "total_return_pct": 27.92,
+        "max_drawdown_pct": 4.35,
+        "cagr_pct": 6.35,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 3.19,
+        "max_util_pct": 75.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -4655.2
+          },
+          "bull_trend": {
+            "count": 65,
+            "wr_pct": 63.1,
+            "pnl": 9509.93
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -3432.14,
+            "trades": 25,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 8936.12,
+            "trades": 31,
+            "wr_pct": 67.7
+          },
+          "2024": {
+            "pnl": -1934.27,
+            "trades": 14,
+            "wr_pct": 64.3
+          },
+          "2025": {
+            "pnl": 1285.02,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "B_Moderate__c4": {
+      "model_id": "B_Moderate",
+      "max_concurrent": 4,
+      "label": "Model B \u2014 1.0% / 25%",
+      "metrics": {
+        "total_trades_full": 91,
+        "total_trades_partial": 72,
+        "win_rate_pct": 58.24,
+        "profit_factor": 2.9903,
+        "gross_profit": 24325.67,
+        "gross_loss": 17106.22,
+        "net_pnl_full": 7219.45,
+        "net_pnl_partial": 26827.0,
+        "net_pnl_total": 34046.45,
+        "initial_capital": 100000.0,
+        "final_equity": 134046.45,
+        "total_return_pct": 34.05,
+        "max_drawdown_pct": 4.35,
+        "cagr_pct": 7.61,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 3.89,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -4818.24
+          },
+          "bull_trend": {
+            "count": 77,
+            "wr_pct": 64.9,
+            "pnl": 12037.69
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -3747.63,
+            "trades": 29,
+            "wr_pct": 44.8
+          },
+          "2023": {
+            "pnl": 11149.66,
+            "trades": 37,
+            "wr_pct": 67.6
+          },
+          "2024": {
+            "pnl": -1529.14,
+            "trades": 16,
+            "wr_pct": 68.8
+          },
+          "2025": {
+            "pnl": 1346.56,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "B_Moderate__c5": {
+      "model_id": "B_Moderate",
+      "max_concurrent": 5,
+      "label": "Model B \u2014 1.0% / 25%",
+      "metrics": {
+        "total_trades_full": 93,
+        "total_trades_partial": 74,
+        "win_rate_pct": 58.06,
+        "profit_factor": 3.0042,
+        "gross_profit": 24409.03,
+        "gross_loss": 17121.72,
+        "net_pnl_full": 7287.31,
+        "net_pnl_partial": 27027.82,
+        "net_pnl_total": 34315.14,
+        "initial_capital": 100000.0,
+        "final_equity": 134315.14,
+        "total_return_pct": 34.32,
+        "max_drawdown_pct": 4.35,
+        "cagr_pct": 7.66,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 3.97,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -4825.8
+          },
+          "bull_trend": {
+            "count": 79,
+            "wr_pct": 64.6,
+            "pnl": 12113.12
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -3747.63,
+            "trades": 29,
+            "wr_pct": 44.8
+          },
+          "2023": {
+            "pnl": 11217.89,
+            "trades": 39,
+            "wr_pct": 66.7
+          },
+          "2024": {
+            "pnl": -1532.2,
+            "trades": 16,
+            "wr_pct": 68.8
+          },
+          "2025": {
+            "pnl": 1349.26,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "C_Aggressive__c1": {
+      "model_id": "C_Aggressive",
+      "max_concurrent": 1,
+      "label": "Model C \u2014 2.0% / 45%",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2521,
+        "gross_profit": 13593.89,
+        "gross_loss": 13195.29,
+        "net_pnl_full": 398.61,
+        "net_pnl_partial": 16122.87,
+        "net_pnl_total": 16521.47,
+        "initial_capital": 100000.0,
+        "final_equity": 116521.47,
+        "total_return_pct": 16.52,
+        "max_drawdown_pct": 3.67,
+        "cagr_pct": 3.9,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 2.47,
+        "max_util_pct": 45.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -3541.45
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 3940.05
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -2354.51,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 3407.12,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -1645.67,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 991.67,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "C_Aggressive__c2": {
+      "model_id": "C_Aggressive",
+      "max_concurrent": 2,
+      "label": "Model C \u2014 2.0% / 45%",
+      "metrics": {
+        "total_trades_full": 60,
+        "total_trades_partial": 45,
+        "win_rate_pct": 53.33,
+        "profit_factor": 2.4382,
+        "gross_profit": 27835.22,
+        "gross_loss": 24344.31,
+        "net_pnl_full": 3490.92,
+        "net_pnl_partial": 31521.74,
+        "net_pnl_total": 35012.66,
+        "initial_capital": 100000.0,
+        "final_equity": 135012.66,
+        "total_return_pct": 35.01,
+        "max_drawdown_pct": 6.38,
+        "cagr_pct": 7.8,
+        "years": 4.0,
+        "max_consec_losses": 8,
+        "avg_util_pct": 4.08,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 13,
+            "wr_pct": 23.1,
+            "pnl": -6829.21
+          },
+          "bull_trend": {
+            "count": 47,
+            "wr_pct": 61.7,
+            "pnl": 10320.13
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5108.77,
+            "trades": 19,
+            "wr_pct": 42.1
+          },
+          "2023": {
+            "pnl": 10870.51,
+            "trades": 24,
+            "wr_pct": 62.5
+          },
+          "2024": {
+            "pnl": -4041.92,
+            "trades": 10,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 1771.1,
+            "trades": 7,
+            "wr_pct": 42.9
+          }
+        }
+      }
+    },
+    "C_Aggressive__c3": {
+      "model_id": "C_Aggressive",
+      "max_concurrent": 3,
+      "label": "Model C \u2014 2.0% / 45%",
+      "metrics": {
+        "total_trades_full": 66,
+        "total_trades_partial": 48,
+        "win_rate_pct": 51.52,
+        "profit_factor": 2.4367,
+        "gross_profit": 29435.71,
+        "gross_loss": 25607.91,
+        "net_pnl_full": 3827.8,
+        "net_pnl_partial": 32963.93,
+        "net_pnl_total": 36791.72,
+        "initial_capital": 100000.0,
+        "final_equity": 136791.72,
+        "total_return_pct": 36.79,
+        "max_drawdown_pct": 6.6,
+        "cagr_pct": 8.15,
+        "years": 4.0,
+        "max_consec_losses": 9,
+        "avg_util_pct": 4.51,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -7192.14
+          },
+          "bull_trend": {
+            "count": 52,
+            "wr_pct": 59.6,
+            "pnl": 11019.94
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5954.18,
+            "trades": 21,
+            "wr_pct": 38.1
+          },
+          "2023": {
+            "pnl": 12402.31,
+            "trades": 27,
+            "wr_pct": 63.0
+          },
+          "2024": {
+            "pnl": -4414.77,
+            "trades": 11,
+            "wr_pct": 54.5
+          },
+          "2025": {
+            "pnl": 1794.44,
+            "trades": 7,
+            "wr_pct": 42.9
+          }
+        }
+      }
+    },
+    "C_Aggressive__c4": {
+      "model_id": "C_Aggressive",
+      "max_concurrent": 4,
+      "label": "Model C \u2014 2.0% / 45%",
+      "metrics": {
+        "total_trades_full": 66,
+        "total_trades_partial": 48,
+        "win_rate_pct": 51.52,
+        "profit_factor": 2.4367,
+        "gross_profit": 29435.71,
+        "gross_loss": 25607.91,
+        "net_pnl_full": 3827.8,
+        "net_pnl_partial": 32963.93,
+        "net_pnl_total": 36791.72,
+        "initial_capital": 100000.0,
+        "final_equity": 136791.72,
+        "total_return_pct": 36.79,
+        "max_drawdown_pct": 6.6,
+        "cagr_pct": 8.15,
+        "years": 4.0,
+        "max_consec_losses": 9,
+        "avg_util_pct": 4.51,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -7192.14
+          },
+          "bull_trend": {
+            "count": 52,
+            "wr_pct": 59.6,
+            "pnl": 11019.94
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5954.18,
+            "trades": 21,
+            "wr_pct": 38.1
+          },
+          "2023": {
+            "pnl": 12402.31,
+            "trades": 27,
+            "wr_pct": 63.0
+          },
+          "2024": {
+            "pnl": -4414.77,
+            "trades": 11,
+            "wr_pct": 54.5
+          },
+          "2025": {
+            "pnl": 1794.44,
+            "trades": 7,
+            "wr_pct": 42.9
+          }
+        }
+      }
+    },
+    "C_Aggressive__c5": {
+      "model_id": "C_Aggressive",
+      "max_concurrent": 5,
+      "label": "Model C \u2014 2.0% / 45%",
+      "metrics": {
+        "total_trades_full": 66,
+        "total_trades_partial": 48,
+        "win_rate_pct": 51.52,
+        "profit_factor": 2.4367,
+        "gross_profit": 29435.71,
+        "gross_loss": 25607.91,
+        "net_pnl_full": 3827.8,
+        "net_pnl_partial": 32963.93,
+        "net_pnl_total": 36791.72,
+        "initial_capital": 100000.0,
+        "final_equity": 136791.72,
+        "total_return_pct": 36.79,
+        "max_drawdown_pct": 6.6,
+        "cagr_pct": 8.15,
+        "years": 4.0,
+        "max_consec_losses": 9,
+        "avg_util_pct": 4.51,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -7192.14
+          },
+          "bull_trend": {
+            "count": 52,
+            "wr_pct": 59.6,
+            "pnl": 11019.94
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5954.18,
+            "trades": 21,
+            "wr_pct": 38.1
+          },
+          "2023": {
+            "pnl": 12402.31,
+            "trades": 27,
+            "wr_pct": 63.0
+          },
+          "2024": {
+            "pnl": -4414.77,
+            "trades": 11,
+            "wr_pct": 54.5
+          },
+          "2025": {
+            "pnl": 1794.44,
+            "trades": 7,
+            "wr_pct": 42.9
+          }
+        }
+      }
+    },
+    "D_Conviction__c1": {
+      "model_id": "D_Conviction",
+      "max_concurrent": 1,
+      "label": "Model D \u2014 conviction var / 50%",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.0603,
+        "gross_profit": 8040.36,
+        "gross_loss": 8853.92,
+        "net_pnl_full": -813.56,
+        "net_pnl_partial": 10201.47,
+        "net_pnl_total": 9387.92,
+        "initial_capital": 100000.0,
+        "final_equity": 109387.92,
+        "total_return_pct": 9.39,
+        "max_drawdown_pct": 2.43,
+        "cagr_pct": 2.27,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 1.44,
+        "max_util_pct": 50.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -2990.6
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 2177.05
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -1401.09,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 622.99,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -908.3,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 872.84,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "D_Conviction__c2": {
+      "model_id": "D_Conviction",
+      "max_concurrent": 2,
+      "label": "Model D \u2014 conviction var / 50%",
+      "metrics": {
+        "total_trades_full": 60,
+        "total_trades_partial": 45,
+        "win_rate_pct": 53.33,
+        "profit_factor": 2.2709,
+        "gross_profit": 15618.01,
+        "gross_loss": 14991.85,
+        "net_pnl_full": 626.16,
+        "net_pnl_partial": 18426.51,
+        "net_pnl_total": 19052.67,
+        "initial_capital": 100000.0,
+        "final_equity": 119052.67,
+        "total_return_pct": 19.05,
+        "max_drawdown_pct": 4.45,
+        "cagr_pct": 4.46,
+        "years": 4.0,
+        "max_consec_losses": 8,
+        "avg_util_pct": 2.37,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 13,
+            "wr_pct": 23.1,
+            "pnl": -5124.31
+          },
+          "bull_trend": {
+            "count": 47,
+            "wr_pct": 61.7,
+            "pnl": 5750.47
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -2874.88,
+            "trades": 19,
+            "wr_pct": 42.1
+          },
+          "2023": {
+            "pnl": 4156.13,
+            "trades": 24,
+            "wr_pct": 62.5
+          },
+          "2024": {
+            "pnl": -2067.0,
+            "trades": 10,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 1411.9,
+            "trades": 7,
+            "wr_pct": 42.9
+          }
+        }
+      }
+    },
+    "D_Conviction__c3": {
+      "model_id": "D_Conviction",
+      "max_concurrent": 3,
+      "label": "Model D \u2014 conviction var / 50%",
+      "metrics": {
+        "total_trades_full": 78,
+        "total_trades_partial": 60,
+        "win_rate_pct": 56.41,
+        "profit_factor": 2.4036,
+        "gross_profit": 21231.67,
+        "gross_loss": 18973.27,
+        "net_pnl_full": 2258.4,
+        "net_pnl_partial": 24372.28,
+        "net_pnl_total": 26630.68,
+        "initial_capital": 100000.0,
+        "final_equity": 126630.68,
+        "total_return_pct": 26.63,
+        "max_drawdown_pct": 5.8,
+        "cagr_pct": 6.08,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 3.23,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -7103.09
+          },
+          "bull_trend": {
+            "count": 64,
+            "wr_pct": 64.1,
+            "pnl": 9361.49
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -3813.34,
+            "trades": 24,
+            "wr_pct": 41.7
+          },
+          "2023": {
+            "pnl": 7428.7,
+            "trades": 31,
+            "wr_pct": 67.7
+          },
+          "2024": {
+            "pnl": -3074.05,
+            "trades": 14,
+            "wr_pct": 64.3
+          },
+          "2025": {
+            "pnl": 1717.08,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "D_Conviction__c4": {
+      "model_id": "D_Conviction",
+      "max_concurrent": 4,
+      "label": "Model D \u2014 conviction var / 50%",
+      "metrics": {
+        "total_trades_full": 87,
+        "total_trades_partial": 68,
+        "win_rate_pct": 57.47,
+        "profit_factor": 2.5384,
+        "gross_profit": 23950.29,
+        "gross_loss": 20134.33,
+        "net_pnl_full": 3815.96,
+        "net_pnl_partial": 27158.5,
+        "net_pnl_total": 30974.46,
+        "initial_capital": 100000.0,
+        "final_equity": 130974.46,
+        "total_return_pct": 30.97,
+        "max_drawdown_pct": 5.8,
+        "cagr_pct": 6.98,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 3.76,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -7266.61
+          },
+          "bull_trend": {
+            "count": 73,
+            "wr_pct": 64.4,
+            "pnl": 11082.56
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -4039.99,
+            "trades": 27,
+            "wr_pct": 44.4
+          },
+          "2023": {
+            "pnl": 9259.45,
+            "trades": 37,
+            "wr_pct": 67.6
+          },
+          "2024": {
+            "pnl": -3179.49,
+            "trades": 14,
+            "wr_pct": 64.3
+          },
+          "2025": {
+            "pnl": 1775.98,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "D_Conviction__c5": {
+      "model_id": "D_Conviction",
+      "max_concurrent": 5,
+      "label": "Model D \u2014 conviction var / 50%",
+      "metrics": {
+        "total_trades_full": 90,
+        "total_trades_partial": 70,
+        "win_rate_pct": 56.67,
+        "profit_factor": 2.5376,
+        "gross_profit": 24520.94,
+        "gross_loss": 20712.76,
+        "net_pnl_full": 3808.18,
+        "net_pnl_partial": 28039.29,
+        "net_pnl_total": 31847.47,
+        "initial_capital": 100000.0,
+        "final_equity": 131847.47,
+        "total_return_pct": 31.85,
+        "max_drawdown_pct": 5.8,
+        "cagr_pct": 7.16,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 4.08,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -7285.7
+          },
+          "bull_trend": {
+            "count": 76,
+            "wr_pct": 63.2,
+            "pnl": 11093.89
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -4593.11,
+            "trades": 28,
+            "wr_pct": 42.9
+          },
+          "2023": {
+            "pnl": 9814.16,
+            "trades": 39,
+            "wr_pct": 66.7
+          },
+          "2024": {
+            "pnl": -3200.69,
+            "trades": 14,
+            "wr_pct": 64.3
+          },
+          "2025": {
+            "pnl": 1787.82,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "E_Prime__c1": {
+      "model_id": "E_Prime",
+      "max_concurrent": 1,
+      "label": "Model E\u2032 \u2014 staged 50/30/20 (max 3 concurrent)",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2832,
+        "gross_profit": 16145.14,
+        "gross_loss": 15320.13,
+        "net_pnl_full": 825.01,
+        "net_pnl_partial": 18833.07,
+        "net_pnl_total": 19658.08,
+        "initial_capital": 100000.0,
+        "final_equity": 119658.08,
+        "total_return_pct": 19.66,
+        "max_drawdown_pct": 4.5,
+        "cagr_pct": 4.59,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 2.98,
+        "max_util_pct": 50.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -3999.59
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 4824.6
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -3151.59,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 4744.97,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -1898.41,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 1130.04,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "E_Prime__c2": {
+      "model_id": "E_Prime",
+      "max_concurrent": 2,
+      "label": "Model E\u2032 \u2014 staged 50/30/20 (max 3 concurrent)",
+      "metrics": {
+        "total_trades_full": 60,
+        "total_trades_partial": 45,
+        "win_rate_pct": 53.33,
+        "profit_factor": 2.4035,
+        "gross_profit": 26150.32,
+        "gross_loss": 23182.68,
+        "net_pnl_full": 2967.64,
+        "net_pnl_partial": 29568.84,
+        "net_pnl_total": 32536.48,
+        "initial_capital": 100000.0,
+        "final_equity": 132536.48,
+        "total_return_pct": 32.54,
+        "max_drawdown_pct": 5.82,
+        "cagr_pct": 7.3,
+        "years": 4.0,
+        "max_consec_losses": 8,
+        "avg_util_pct": 4.17,
+        "max_util_pct": 80.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 13,
+            "wr_pct": 23.1,
+            "pnl": -6365.33
+          },
+          "bull_trend": {
+            "count": 47,
+            "wr_pct": 61.7,
+            "pnl": 9332.97
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5228.97,
+            "trades": 19,
+            "wr_pct": 42.1
+          },
+          "2023": {
+            "pnl": 10212.33,
+            "trades": 24,
+            "wr_pct": 62.5
+          },
+          "2024": {
+            "pnl": -3674.55,
+            "trades": 10,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 1658.83,
+            "trades": 7,
+            "wr_pct": 42.9
+          }
+        }
+      }
+    },
+    "E_Prime__c3": {
+      "model_id": "E_Prime",
+      "max_concurrent": 3,
+      "label": "Model E\u2032 \u2014 staged 50/30/20 (max 3 concurrent)",
+      "metrics": {
+        "total_trades_full": 79,
+        "total_trades_partial": 61,
+        "win_rate_pct": 55.7,
+        "profit_factor": 2.4842,
+        "gross_profit": 32179.3,
+        "gross_loss": 27404.98,
+        "net_pnl_full": 4774.32,
+        "net_pnl_partial": 35900.76,
+        "net_pnl_total": 40675.07,
+        "initial_capital": 100000.0,
+        "final_equity": 140675.07,
+        "total_return_pct": 40.68,
+        "max_drawdown_pct": 6.87,
+        "cagr_pct": 8.91,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 5.12,
+        "max_util_pct": 100.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -8166.61
+          },
+          "bull_trend": {
+            "count": 65,
+            "wr_pct": 63.1,
+            "pnl": 12940.93
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -6570.89,
+            "trades": 25,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 13699.44,
+            "trades": 31,
+            "wr_pct": 67.7
+          },
+          "2024": {
+            "pnl": -4413.75,
+            "trades": 14,
+            "wr_pct": 64.3
+          },
+          "2025": {
+            "pnl": 2059.52,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "E_Prime__c4": {
+      "model_id": "E_Prime",
+      "max_concurrent": 4,
+      "label": "Model E\u2032 \u2014 staged 50/30/20 (max 3 concurrent)",
+      "metrics": {
+        "total_trades_full": 79,
+        "total_trades_partial": 61,
+        "win_rate_pct": 55.7,
+        "profit_factor": 2.4842,
+        "gross_profit": 32179.3,
+        "gross_loss": 27404.98,
+        "net_pnl_full": 4774.32,
+        "net_pnl_partial": 35900.76,
+        "net_pnl_total": 40675.07,
+        "initial_capital": 100000.0,
+        "final_equity": 140675.07,
+        "total_return_pct": 40.68,
+        "max_drawdown_pct": 6.87,
+        "cagr_pct": 8.91,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 5.12,
+        "max_util_pct": 100.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -8166.61
+          },
+          "bull_trend": {
+            "count": 65,
+            "wr_pct": 63.1,
+            "pnl": 12940.93
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -6570.89,
+            "trades": 25,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 13699.44,
+            "trades": 31,
+            "wr_pct": 67.7
+          },
+          "2024": {
+            "pnl": -4413.75,
+            "trades": 14,
+            "wr_pct": 64.3
+          },
+          "2025": {
+            "pnl": 2059.52,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "E_Prime__c5": {
+      "model_id": "E_Prime",
+      "max_concurrent": 5,
+      "label": "Model E\u2032 \u2014 staged 50/30/20 (max 3 concurrent)",
+      "metrics": {
+        "total_trades_full": 79,
+        "total_trades_partial": 61,
+        "win_rate_pct": 55.7,
+        "profit_factor": 2.4842,
+        "gross_profit": 32179.3,
+        "gross_loss": 27404.98,
+        "net_pnl_full": 4774.32,
+        "net_pnl_partial": 35900.76,
+        "net_pnl_total": 40675.07,
+        "initial_capital": 100000.0,
+        "final_equity": 140675.07,
+        "total_return_pct": 40.68,
+        "max_drawdown_pct": 6.87,
+        "cagr_pct": 8.91,
+        "years": 4.0,
+        "max_consec_losses": 10,
+        "avg_util_pct": 5.12,
+        "max_util_pct": 100.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 14,
+            "wr_pct": 21.4,
+            "pnl": -8166.61
+          },
+          "bull_trend": {
+            "count": 65,
+            "wr_pct": 63.1,
+            "pnl": 12940.93
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -6570.89,
+            "trades": 25,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 13699.44,
+            "trades": 31,
+            "wr_pct": 67.7
+          },
+          "2024": {
+            "pnl": -4413.75,
+            "trades": 14,
+            "wr_pct": 64.3
+          },
+          "2025": {
+            "pnl": 2059.52,
+            "trades": 9,
+            "wr_pct": 44.4
+          }
+        }
+      }
+    },
+    "F_Leveraged__c1": {
+      "model_id": "F_Leveraged",
+      "max_concurrent": 1,
+      "label": "Model F \u2014 15% / 120%  [1.2\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "F_Leveraged__c2": {
+      "model_id": "F_Leveraged",
+      "max_concurrent": 2,
+      "label": "Model F \u2014 15% / 120%  [1.2\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "F_Leveraged__c3": {
+      "model_id": "F_Leveraged",
+      "max_concurrent": 3,
+      "label": "Model F \u2014 15% / 120%  [1.2\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "F_Leveraged__c4": {
+      "model_id": "F_Leveraged",
+      "max_concurrent": 4,
+      "label": "Model F \u2014 15% / 120%  [1.2\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "F_Leveraged__c5": {
+      "model_id": "F_Leveraged",
+      "max_concurrent": 5,
+      "label": "Model F \u2014 15% / 120%  [1.2\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "G_MaxLeverage__c1": {
+      "model_id": "G_MaxLeverage",
+      "max_concurrent": 1,
+      "label": "Model G \u2014 20% / 150%  [1.5\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "G_MaxLeverage__c2": {
+      "model_id": "G_MaxLeverage",
+      "max_concurrent": 2,
+      "label": "Model G \u2014 20% / 150%  [1.5\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "G_MaxLeverage__c3": {
+      "model_id": "G_MaxLeverage",
+      "max_concurrent": 3,
+      "label": "Model G \u2014 20% / 150%  [1.5\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "G_MaxLeverage__c4": {
+      "model_id": "G_MaxLeverage",
+      "max_concurrent": 4,
+      "label": "Model G \u2014 20% / 150%  [1.5\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    },
+    "G_MaxLeverage__c5": {
+      "model_id": "G_MaxLeverage",
+      "max_concurrent": 5,
+      "label": "Model G \u2014 20% / 150%  [1.5\u00d7 lev \u2014 NOT phase1]",
+      "metrics": {
+        "total_trades_full": 34,
+        "total_trades_partial": 25,
+        "win_rate_pct": 50.0,
+        "profit_factor": 2.2795,
+        "gross_profit": 30816.48,
+        "gross_loss": 29168.94,
+        "net_pnl_full": 1647.54,
+        "net_pnl_partial": 35673.94,
+        "net_pnl_total": 37321.48,
+        "initial_capital": 100000.0,
+        "final_equity": 137321.48,
+        "total_return_pct": 37.32,
+        "max_drawdown_pct": 8.04,
+        "cagr_pct": 8.26,
+        "years": 4.0,
+        "max_consec_losses": 5,
+        "avg_util_pct": 5.36,
+        "max_util_pct": 90.0,
+        "crash_defense": {},
+        "regime_breakdown": {
+          "volatility_expansion": {
+            "count": 9,
+            "wr_pct": 22.2,
+            "pnl": -7804.97
+          },
+          "bull_trend": {
+            "count": 25,
+            "wr_pct": 60.0,
+            "pnl": 9452.51
+          }
+        },
+        "yearly": {
+          "2022": {
+            "pnl": -5946.49,
+            "trades": 10,
+            "wr_pct": 40.0
+          },
+          "2023": {
+            "pnl": 9271.19,
+            "trades": 15,
+            "wr_pct": 53.3
+          },
+          "2024": {
+            "pnl": -3987.28,
+            "trades": 5,
+            "wr_pct": 60.0
+          },
+          "2025": {
+            "pnl": 2310.12,
+            "trades": 4,
+            "wr_pct": 50.0
+          }
+        }
+      }
+    }
+  },
+  "best_scenario": "E_Prime__c3"
+}

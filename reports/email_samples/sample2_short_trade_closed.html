@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;
+     background:#080C16;color:#C8D0E0;}
+.wrap{max-width:620px;margin:0 auto;padding:20px 16px;}
+.card{background:#0D1320;border:1px solid #1A2332;border-radius:8px;
+      margin-bottom:14px;overflow:hidden;}
+.card-header{padding:12px 16px;border-bottom:1px solid #1A2332;}
+.card-body{padding:14px 16px;}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;
+       font-size:11px;font-weight:700;letter-spacing:0.5px;}
+.row{display:flex;justify-content:space-between;margin-bottom:6px;
+     font-size:13px;}
+.lbl{color:#8899AA;}
+.val{color:#E8EBF0;font-weight:600;}
+.green{color:#00CC77;}.red{color:#FF3355;}.amber{color:#FFB300;}
+.blue{color:#1E90FF;}.muted{color:#8899AA;}
+.score-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.score-bar-wrap{flex:1;height:6px;background:#141E2E;border-radius:3px;}
+.score-bar{height:6px;border-radius:3px;}
+.footer{text-align:center;font-size:11px;color:#4A6A8A;
+        padding:10px 0 0;border-top:1px solid #1A2332;}
+</style></head>
+<body><div class="wrap">
+
+<div class="card">
+  <div class="card-header" style="background:#0A1830;">
+    <span style="font-size:16px;font-weight:700;color:#E8EBF0;">
+      ❌ Trade Closed
+    </span>
+    <span style="float:right;color:#FF3355;font-weight:700;">SOLUSDT SHORT</span>
+  </div>
+  <div class="card-body">
+    <div class="row"><span class="lbl">Entry / Exit</span>
+      <span class="val">185.4000 → 191.2000</span></div>
+    <div class="row"><span class="lbl">P&amp;L</span>
+      <span class="val" style="color:#FF3355;font-size:15px;">-13.020% ($312.80 USDT)</span></div>
+    <div class="row"><span class="lbl">Size</span><span class="val">2,400 USDT</span></div>
+    <div class="row"><span class="lbl">Strategy</span><span class="val">SwingLowContinuation</span></div>
+    <div class="row"><span class="lbl">Exit Reason</span><span class="val">stop_loss</span></div>
+    <div class="row"><span class="lbl">Duration</span><span class="val">3h 42m</span></div>
+  </div>
+</div>
+
+
+        <div class="card">
+          <div class="card-header">
+            <span style="font-weight:700;font-size:13px;">🤖 AI Trade Quality Scorecard</span>
+            <span class="badge" style="background:#3A0A14;color:#FF3355;border:1px solid #FF3355;;float:right;">
+              D BAD &nbsp; 41/100
+            </span>
+          </div>
+          <div class="card-body">
+            <div style="text-align:center;margin-bottom:14px;">
+              <div style="font-size:32px;font-weight:700;color:#FF3355;">41</div>
+              <div style="font-size:11px;color:#8899AA;">Overall Score</div>
+            </div>
+            <div class="score-row"><span class="lbl" style="min-width:80px;font-size:12px;">Setup Quality</span><div class="score-bar-wrap"><div class="score-bar" style="width:55%;background:#FFB300;"></div></div><span style="font-size:12px;font-weight:700;color:#FFB300;min-width:40px;text-align:right;">55</span></div>
+            <div class="score-row"><span class="lbl" style="min-width:80px;font-size:12px;">Risk Management</span><div class="score-bar-wrap"><div class="score-bar" style="width:30%;background:#FF3355;"></div></div><span style="font-size:12px;font-weight:700;color:#FF3355;min-width:40px;text-align:right;">30</span></div>
+            <div class="score-row"><span class="lbl" style="min-width:80px;font-size:12px;">Execution Quality</span><div class="score-bar-wrap"><div class="score-bar" style="width:45%;background:#FF3355;"></div></div><span style="font-size:12px;font-weight:700;color:#FF3355;min-width:40px;text-align:right;">45</span></div>
+            <div class="score-row"><span class="lbl" style="min-width:80px;font-size:12px;">Decision Quality</span><div class="score-bar-wrap"><div class="score-bar" style="width:38%;background:#FF3355;"></div></div><span style="font-size:12px;font-weight:700;color:#FF3355;min-width:40px;text-align:right;">38</span></div>
+            <div class="row" style="margin-top:8px;">
+              <span class="lbl">R:R Ratio</span>
+              <span class="val">-0.8:1</span>
+            </div>
+            <div class='row' style='margin-top:8px;'><span class='lbl'>Root Causes</span><span class='val amber' style='max-width:320px;text-align:right;'>Regime shift from bear_trend to ranging intra-trade</span></div>
+            <div style='margin-top:10px;padding:10px;background:#0A1020;border-left:3px solid #1E90FF;border-radius:4px;font-size:12px;line-height:1.5;color:#C8D0E0;'><span style='color:#8899AA;'>💡 Recommendation: </span>Reduce position size in low-conviction ranging regimes.</div>
+          </div>
+        </div>
+
+<div class="footer">NexusTrader • 2026-03-28 15:31:52 UTC</div>
+</div></body></html>

@@ -1,0 +1,63 @@
+{
+  "period": {
+    "last_n_hours": null,
+    "n_signals": 0,
+    "n_outcomes": 0,
+    "generated_at": "2026-04-01T02:20:23.577739+00:00"
+  },
+  "combined": {
+    "n": 0,
+    "wr": 0,
+    "pf": 999.0,
+    "avg_r": 0,
+    "total_pnl": 0
+  },
+  "signal_distribution": {},
+  "model_contribution": {
+    "pullback_long": {
+      "n": 0,
+      "wr": 0,
+      "pf": 0,
+      "avg_r": 0,
+      "total_pnl": 0,
+      "sl_rate": 0
+    },
+    "swing_low_continuation": {
+      "n": 0,
+      "wr": 0,
+      "pf": 0,
+      "avg_r": 0,
+      "total_pnl": 0,
+      "sl_rate": 0
+    },
+    "range_breakout": {
+      "n": 0,
+      "wr": 0,
+      "pf": 0,
+      "avg_r": 0,
+      "total_pnl": 0,
+      "sl_rate": 0
+    }
+  },
+  "controls": {
+    "rb_cap_applied": 0,
+    "rb_pos_blocked": 0,
+    "rb_executed": 0,
+    "rb_total_signals": 0,
+    "rb_avg_projected_rr": 0
+  },
+  "enhancement": {
+    "n_boosted": 0,
+    "n_relaxed": 0,
+    "anti_amplification": 0
+  },
+  "conflicts": {
+    "pbl_rb_same_bar": 0,
+    "slc_rb_same_bar": 0
+  },
+  "rolling_pf": {
+    "rpf_20": null,
+    "rpf_50": null
+  },
+  "per_asset": {}
+}

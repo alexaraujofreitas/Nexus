@@ -1,0 +1,387 @@
+{
+  "backtest_config": {
+    "source": "config.yaml (exact production params)",
+    "confluence_threshold": 0.45,
+    "adx_min": 31.0,
+    "risk_pct": 0.5,
+    "max_capital_pct": 0.04,
+    "partial_pct": 0.33,
+    "partial_r_trigger": 1.0,
+    "mtf_enabled": true,
+    "initial_capital": 100000.0,
+    "symbols": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "XRP",
+      "BNB"
+    ],
+    "timeframe": "30m",
+    "period_start": "2022-03-22 14:30:00+00:00",
+    "period_end": "2026-03-21 14:30:00+00:00",
+    "years": 4.0
+  },
+  "metrics": {
+    "final_equity": 92740.55,
+    "total_pnl": -7259.45,
+    "total_return_pct": -7.26,
+    "cagr_pct": -1.87,
+    "profit_factor": 0.5794,
+    "max_drawdown_pct": 13.17,
+    "win_rate_pct": 31.61,
+    "total_full_trades": 658,
+    "total_partial_trades": 354,
+    "total_trades_all": 1012,
+    "avg_r": 1.254,
+    "avg_win_usd": 210.16,
+    "avg_loss_usd": 167.65,
+    "gross_profit": 43713.1,
+    "gross_loss": 75441.99,
+    "monthly": {
+      "2022-03": {
+        "trades": 3,
+        "pnl": 480.0348,
+        "wins": 3
+      },
+      "2022-04": {
+        "trades": 21,
+        "pnl": -977.7934,
+        "wins": 6
+      },
+      "2022-05": {
+        "trades": 16,
+        "pnl": -755.8079999999999,
+        "wins": 4
+      },
+      "2022-06": {
+        "trades": 9,
+        "pnl": -994.4225,
+        "wins": 2
+      },
+      "2022-07": {
+        "trades": 10,
+        "pnl": -79.29539999999992,
+        "wins": 3
+      },
+      "2022-08": {
+        "trades": 10,
+        "pnl": -942.3579999999998,
+        "wins": 1
+      },
+      "2022-09": {
+        "trades": 11,
+        "pnl": -1247.5679,
+        "wins": 3
+      },
+      "2022-10": {
+        "trades": 9,
+        "pnl": 316.7185,
+        "wins": 4
+      },
+      "2022-11": {
+        "trades": 18,
+        "pnl": 687.0037999999996,
+        "wins": 8
+      },
+      "2022-12": {
+        "trades": 6,
+        "pnl": -1145.6888999999999,
+        "wins": 0
+      },
+      "2023-01": {
+        "trades": 21,
+        "pnl": 858.0451,
+        "wins": 8
+      },
+      "2023-02": {
+        "trades": 9,
+        "pnl": -759.8466999999999,
+        "wins": 1
+      },
+      "2023-03": {
+        "trades": 19,
+        "pnl": -1286.7751,
+        "wins": 6
+      },
+      "2023-04": {
+        "trades": 16,
+        "pnl": -1526.8604999999998,
+        "wins": 2
+      },
+      "2023-05": {
+        "trades": 8,
+        "pnl": -643.1770999999999,
+        "wins": 2
+      },
+      "2023-06": {
+        "trades": 20,
+        "pnl": -1463.7849,
+        "wins": 7
+      },
+      "2023-07": {
+        "trades": 9,
+        "pnl": -887.9159999999999,
+        "wins": 3
+      },
+      "2023-08": {
+        "trades": 18,
+        "pnl": -1337.7692000000002,
+        "wins": 6
+      },
+      "2023-09": {
+        "trades": 15,
+        "pnl": -418.1152000000001,
+        "wins": 5
+      },
+      "2023-10": {
+        "trades": 26,
+        "pnl": 471.3388999999999,
+        "wins": 10
+      },
+      "2023-11": {
+        "trades": 9,
+        "pnl": -216.98710000000005,
+        "wins": 3
+      },
+      "2023-12": {
+        "trades": 16,
+        "pnl": -851.0046,
+        "wins": 5
+      },
+      "2024-01": {
+        "trades": 3,
+        "pnl": -388.8858,
+        "wins": 0
+      },
+      "2024-02": {
+        "trades": 10,
+        "pnl": -102.25449999999995,
+        "wins": 5
+      },
+      "2024-03": {
+        "trades": 8,
+        "pnl": -1495.8365,
+        "wins": 1
+      },
+      "2024-04": {
+        "trades": 14,
+        "pnl": -1918.1160000000002,
+        "wins": 2
+      },
+      "2024-05": {
+        "trades": 4,
+        "pnl": 725.9308,
+        "wins": 3
+      },
+      "2024-06": {
+        "trades": 33,
+        "pnl": -1438.5524999999993,
+        "wins": 7
+      },
+      "2024-07": {
+        "trades": 35,
+        "pnl": -367.74670000000003,
+        "wins": 17
+      },
+      "2024-08": {
+        "trades": 12,
+        "pnl": -2160.7963,
+        "wins": 2
+      },
+      "2024-09": {
+        "trades": 5,
+        "pnl": -622.7792999999999,
+        "wins": 0
+      },
+      "2024-10": {
+        "trades": 17,
+        "pnl": -697.4158,
+        "wins": 3
+      },
+      "2024-11": {
+        "trades": 17,
+        "pnl": 775.5858000000001,
+        "wins": 8
+      },
+      "2024-12": {
+        "trades": 6,
+        "pnl": 743.8899,
+        "wins": 3
+      },
+      "2025-01": {
+        "trades": 13,
+        "pnl": -959.6384,
+        "wins": 4
+      },
+      "2025-02": {
+        "trades": 18,
+        "pnl": -3253.7708999999995,
+        "wins": 4
+      },
+      "2025-03": {
+        "trades": 12,
+        "pnl": -2854.1183999999994,
+        "wins": 3
+      },
+      "2025-04": {
+        "trades": 13,
+        "pnl": -399.41589999999997,
+        "wins": 5
+      },
+      "2025-05": {
+        "trades": 13,
+        "pnl": 28.000799999999998,
+        "wins": 6
+      },
+      "2025-06": {
+        "trades": 7,
+        "pnl": -581.042,
+        "wins": 1
+      },
+      "2025-07": {
+        "trades": 15,
+        "pnl": -118.28699999999999,
+        "wins": 6
+      },
+      "2025-08": {
+        "trades": 14,
+        "pnl": -419.9158000000001,
+        "wins": 6
+      },
+      "2025-09": {
+        "trades": 17,
+        "pnl": -153.3371,
+        "wins": 5
+      },
+      "2025-10": {
+        "trades": 14,
+        "pnl": -1161.1176,
+        "wins": 4
+      },
+      "2025-11": {
+        "trades": 17,
+        "pnl": -1462.1199,
+        "wins": 4
+      },
+      "2025-12": {
+        "trades": 6,
+        "pnl": 276.29700000000014,
+        "wins": 3
+      },
+      "2026-01": {
+        "trades": 16,
+        "pnl": -718.3427999999999,
+        "wins": 6
+      },
+      "2026-02": {
+        "trades": 13,
+        "pnl": -204.03240000000028,
+        "wins": 5
+      },
+      "2026-03": {
+        "trades": 7,
+        "pnl": -79.04050000000001,
+        "wins": 3
+      }
+    },
+    "by_symbol": {
+      "ETH": {
+        "trades": 162,
+        "pnl": -3903.8380999999986,
+        "wins": 60
+      },
+      "BTC": {
+        "trades": 151,
+        "pnl": -3782.9298999999974,
+        "wins": 48
+      },
+      "SOL": {
+        "trades": 122,
+        "pnl": -6250.668199999997,
+        "wins": 35
+      },
+      "XRP": {
+        "trades": 126,
+        "pnl": -13543.885100000001,
+        "wins": 34
+      },
+      "BNB": {
+        "trades": 97,
+        "pnl": -4247.565900000001,
+        "wins": 31
+      }
+    }
+  },
+  "sample_trades": [
+    {
+      "symbol": "ETH",
+      "direction": "long",
+      "entry_ts": "2022-03-27 22:00:00+00:00",
+      "exit_ts": "2022-03-28 13:30:00+00:00",
+      "entry_px": 3278.81859,
+      "exit_px": 3373.2133083209387,
+      "pnl": 190.1232,
+      "pnl_pct": 1.901,
+      "exit_reason": "take_profit",
+      "regime": "volatility_expansion",
+      "score": 0.6689428808711307,
+      "duration_bars": 31
+    },
+    {
+      "symbol": "BTC",
+      "direction": "long",
+      "entry_ts": "2022-03-27 21:30:00+00:00",
+      "exit_ts": "2022-03-28 15:00:00+00:00",
+      "entry_px": 46466.291535,
+      "exit_px": 47823.331177925196,
+      "pnl": 192.914,
+      "pnl_pct": 1.929,
+      "exit_reason": "take_profit",
+      "regime": "volatility_expansion",
+      "score": 0.536458327345457,
+      "duration_bars": 35
+    },
+    {
+      "symbol": "BTC",
+      "direction": "short",
+      "entry_ts": "2022-04-01 05:30:00+00:00",
+      "exit_ts": "2022-04-01 08:00:00+00:00",
+      "entry_px": 44704.316660000004,
+      "exit_px": 45251.06442352454,
+      "pnl": -127.1727,
+      "pnl_pct": -1.264,
+      "exit_reason": "stop_loss",
+      "regime": "bear_trend",
+      "score": 0.5292656318089041,
+      "duration_bars": 5
+    },
+    {
+      "symbol": "ETH",
+      "direction": "short",
+      "entry_ts": "2022-04-06 15:00:00+00:00",
+      "exit_ts": "2022-04-06 18:00:00+00:00",
+      "entry_px": 3255.75131,
+      "exit_px": 3257.379185655,
+      "pnl": -6.0626,
+      "pnl_pct": -0.06,
+      "exit_reason": "stop_loss",
+      "regime": "bear_trend",
+      "score": 0.4898669808375037,
+      "duration_bars": 6
+    },
+    {
+      "symbol": "SOL",
+      "direction": "short",
+      "entry_ts": "2024-04-13 00:00:00+00:00",
+      "exit_ts": "2024-04-13 04:00:00+00:00",
+      "entry_px": 153.08342000000002,
+      "exit_px": 153.15996171,
+      "pnl": -5.8313,
+      "pnl_pct": -0.06,
+      "exit_reason": "stop_loss",
+      "regime": "bear_trend",
+      "score": 0.55,
+      "duration_bars": 8
+    }
+  ]
+}

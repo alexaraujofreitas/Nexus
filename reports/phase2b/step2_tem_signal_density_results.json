@@ -1,0 +1,525 @@
+{
+  "step": "Phase 2b Step 2: TEM Signal Density + Quality Pre-Test",
+  "method": "Real HMM regime probabilities (vectorized predict_proba)",
+  "execution_realism": {
+    "entry": "next-bar open",
+    "fee_per_side": 0.0004,
+    "slippage_per_side": 0.0003,
+    "total_cost_per_side": 0.0007
+  },
+  "default_params": {
+    "transition_confidence_min": 0.6,
+    "vol_mult_min": 1.5,
+    "sl_atr_mult": 2.0,
+    "tp_atr_mult": 4.0
+  },
+  "density": {
+    "total_raw_signals": 20,
+    "total_filtered": 3,
+    "by_type": {
+      "transition_expansion": 20
+    },
+    "by_symbol": {
+      "BTC/USDT": 4,
+      "ETH/USDT": 16
+    },
+    "by_direction": {
+      "short": 12,
+      "long": 8
+    },
+    "by_year": {
+      "2022": 4,
+      "2023": 8,
+      "2024": 4,
+      "2025": 4
+    }
+  },
+  "relaxation": {
+    "applied": null,
+    "final_total": 20,
+    "final_filtered": 3
+  },
+  "quality": {
+    "filtered_count": 3,
+    "simulated_count": 3,
+    "pct_1r": 0.0,
+    "pct_2r": 0.0,
+    "false_breakout_rate": 0.0,
+    "avg_r": -1.0463442064870494,
+    "median_r": -1.045575404173986,
+    "win_rate": 0.0,
+    "outcomes_summary": {
+      "total": 3,
+      "reached_1r": 0,
+      "reached_2r": 0,
+      "false_breakouts": 0,
+      "tp_hits": 0,
+      "sl_hits": 3
+    }
+  },
+  "verdicts": {
+    "density": "FAIL",
+    "density_detail": "20 signals < 100. TEM is non-viable at 30m.",
+    "quality": "POOR",
+    "overall": "FAIL"
+  },
+  "elapsed_s": 126.8,
+  "signal_samples": [
+    {
+      "symbol": "BTC/USDT",
+      "bar_idx": 11678,
+      "timestamp": "2022-11-20 21:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.8,
+      "direction": "short",
+      "close": 16284.23,
+      "atr": 72.84544078195533,
+      "sl": 16429.92088156391,
+      "tp": 15992.848236872178,
+      "vol_trend_pct": 23.236597134367877,
+      "vol_ok": false,
+      "rsi": 23.676142028527565,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.657,
+        "volatility_expansion": 0.343
+      }
+    },
+    {
+      "symbol": "BTC/USDT",
+      "bar_idx": 11679,
+      "timestamp": "2022-11-20 22:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.8,
+      "direction": "short",
+      "close": 16331.61,
+      "atr": 80.35648072610138,
+      "sl": 16492.322961452202,
+      "tp": 16010.184077095595,
+      "vol_trend_pct": 20.63399594290345,
+      "vol_ok": false,
+      "rsi": 30.04269330744289,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.443,
+        "volatility_expansion": 0.55
+      }
+    },
+    {
+      "symbol": "BTC/USDT",
+      "bar_idx": 11680,
+      "timestamp": "2022-11-20 22:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.8,
+      "direction": "short",
+      "close": 16296.94,
+      "atr": 82.4395892456656,
+      "sl": 16461.819178491332,
+      "tp": 15967.181643017339,
+      "vol_trend_pct": 19.134872164033712,
+      "vol_ok": false,
+      "rsi": 28.189683991262314,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "bull_trend": 0.258,
+        "ranging": 0.027,
+        "volatility_expansion": 0.715
+      }
+    },
+    {
+      "symbol": "BTC/USDT",
+      "bar_idx": 11681,
+      "timestamp": "2022-11-20 23:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.8,
+      "direction": "short",
+      "close": 16250.58,
+      "atr": 83.84461858526096,
+      "sl": 16418.269237170523,
+      "tp": 15915.201525658957,
+      "vol_trend_pct": 19.84312036300406,
+      "vol_ok": false,
+      "rsi": 25.890112358030137,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "bull_trend": 0.085,
+        "volatility_expansion": 0.915
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 15733,
+      "timestamp": "2023-02-13 09:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.8,
+      "direction": "short",
+      "close": 1479.85,
+      "atr": 9.590053079102082,
+      "sl": 1499.030106158204,
+      "tp": 1441.4897876835917,
+      "vol_trend_pct": 48.78821055027716,
+      "vol_ok": false,
+      "rsi": 23.23078931902171,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.805,
+        "volatility_expansion": 0.195
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 15734,
+      "timestamp": "2023-02-13 09:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.8,
+      "direction": "short",
+      "close": 1482.36,
+      "atr": 10.317906430594789,
+      "sl": 1502.9958128611895,
+      "tp": 1441.0883742776207,
+      "vol_trend_pct": 57.044177800245244,
+      "vol_ok": true,
+      "rsi": 25.967354555883702,
+      "rsi_ok": true,
+      "all_filters_pass": true,
+      "regime_probs_snapshot": {
+        "ranging": 0.738,
+        "volatility_expansion": 0.262
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 15735,
+      "timestamp": "2023-02-13 10:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.8,
+      "direction": "short",
+      "close": 1474.8,
+      "atr": 11.150198828409449,
+      "sl": 1497.1003976568188,
+      "tp": 1430.1992046863622,
+      "vol_trend_pct": 61.86457363484481,
+      "vol_ok": true,
+      "rsi": 23.27606153902218,
+      "rsi_ok": true,
+      "all_filters_pass": true,
+      "regime_probs_snapshot": {
+        "ranging": 0.471,
+        "volatility_expansion": 0.529
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 15736,
+      "timestamp": "2023-02-13 10:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.8,
+      "direction": "short",
+      "close": 1482.54,
+      "atr": 11.0358989120945,
+      "sl": 1504.611797824189,
+      "tp": 1438.3964043516219,
+      "vol_trend_pct": 60.504241939929315,
+      "vol_ok": true,
+      "rsi": 31.144292025340604,
+      "rsi_ok": true,
+      "all_filters_pass": true,
+      "regime_probs_snapshot": {
+        "ranging": 0.059,
+        "volatility_expansion": 0.935
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 16141,
+      "timestamp": "2023-02-21 21:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.777,
+      "direction": "short",
+      "close": 1639.17,
+      "atr": 11.905504158208704,
+      "sl": 1662.9810083164175,
+      "tp": 1591.5479833671652,
+      "vol_trend_pct": 16.2980022390683,
+      "vol_ok": false,
+      "rsi": 29.017997425364882,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.754,
+        "volatility_expansion": 0.246
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 16142,
+      "timestamp": "2023-02-21 21:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.777,
+      "direction": "short",
+      "close": 1642.22,
+      "atr": 11.836539575479497,
+      "sl": 1665.893079150959,
+      "tp": 1594.873841698082,
+      "vol_trend_pct": 14.392870844397109,
+      "vol_ok": false,
+      "rsi": 31.50397248475936,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.983,
+        "volatility_expansion": 0.017
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 16143,
+      "timestamp": "2023-02-21 22:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.777,
+      "direction": "short",
+      "close": 1648.55,
+      "atr": 11.739643891516677,
+      "sl": 1672.0292877830334,
+      "tp": 1601.5914244339333,
+      "vol_trend_pct": 13.678308139406603,
+      "vol_ok": false,
+      "rsi": 36.476439447207305,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.997
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 16144,
+      "timestamp": "2023-02-21 22:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.777,
+      "direction": "short",
+      "close": 1653.14,
+      "atr": 11.47466932783693,
+      "sl": 1676.089338655674,
+      "tp": 1607.2413226886524,
+      "vol_trend_pct": 15.524996403708302,
+      "vol_ok": false,
+      "rsi": 39.88434658539419,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.998
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 33838,
+      "timestamp": "2024-02-25 14:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.681,
+      "direction": "long",
+      "close": 3067.6,
+      "atr": 14.535176179649373,
+      "sl": 3038.529647640701,
+      "tp": 3125.7407047185975,
+      "vol_trend_pct": 28.23611488838513,
+      "vol_ok": false,
+      "rsi": 70.78391745985681,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.91,
+        "volatility_expansion": 0.09
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 33839,
+      "timestamp": "2024-02-25 15:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.681,
+      "direction": "long",
+      "close": 3060.22,
+      "atr": 14.396235023960143,
+      "sl": 3031.4275299520796,
+      "tp": 3117.8049400958403,
+      "vol_trend_pct": 23.781390421480243,
+      "vol_ok": false,
+      "rsi": 65.73139433788126,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "bull_trend": 0.935,
+        "bear_trend": 0.052,
+        "ranging": 0.011
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 33840,
+      "timestamp": "2024-02-25 15:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.681,
+      "direction": "long",
+      "close": 3043.62,
+      "atr": 15.178646807962982,
+      "sl": 3013.262706384074,
+      "tp": 3104.334587231852,
+      "vol_trend_pct": 25.673317299373345,
+      "vol_ok": false,
+      "rsi": 56.04148412757337,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "bull_trend": 0.96,
+        "bear_trend": 0.029
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 33841,
+      "timestamp": "2024-02-25 16:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.681,
+      "direction": "long",
+      "close": 3041.33,
+      "atr": 15.665886321679912,
+      "sl": 3009.99822735664,
+      "tp": 3103.9935452867194,
+      "vol_trend_pct": 19.369902923328695,
+      "vol_ok": false,
+      "rsi": 54.8404374236688,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "bull_trend": 0.993
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 56461,
+      "timestamp": "2025-06-10 22:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.747,
+      "direction": "long",
+      "close": 2814.49,
+      "atr": 27.442916498012647,
+      "sl": 2759.6041670039745,
+      "tp": 2924.2616659920504,
+      "vol_trend_pct": 15.972887124385071,
+      "vol_ok": false,
+      "rsi": 72.22641159539964,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.782,
+        "volatility_expansion": 0.218
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 56462,
+      "timestamp": "2025-06-10 22:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.747,
+      "direction": "long",
+      "close": 2803.62,
+      "atr": 27.91342246244033,
+      "sl": 2747.793155075119,
+      "tp": 2915.273689849761,
+      "vol_trend_pct": 15.22702940464853,
+      "vol_ok": false,
+      "rsi": 67.57193221835588,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.99
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 56463,
+      "timestamp": "2025-06-10 23:00:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.747,
+      "direction": "long",
+      "close": 2798.89,
+      "atr": 27.18674942940886,
+      "sl": 2744.5165011411823,
+      "tp": 2907.6369977176355,
+      "vol_trend_pct": 13.502808048587212,
+      "vol_ok": false,
+      "rsi": 65.59115058142652,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.999
+      }
+    },
+    {
+      "symbol": "ETH/USDT",
+      "bar_idx": 56464,
+      "timestamp": "2025-06-10 23:30:00+00:00",
+      "type": "transition_expansion",
+      "source_regime": "ranging",
+      "target_regime": "volatility_expansion",
+      "confidence": 0.747,
+      "direction": "long",
+      "close": 2816.4,
+      "atr": 26.58698161302251,
+      "sl": 2763.226036773955,
+      "tp": 2922.7479264520903,
+      "vol_trend_pct": 2.5118796868176307,
+      "vol_ok": false,
+      "rsi": 69.19154345600069,
+      "rsi_ok": true,
+      "all_filters_pass": false,
+      "regime_probs_snapshot": {
+        "ranging": 0.999
+      }
+    }
+  ]
+}
