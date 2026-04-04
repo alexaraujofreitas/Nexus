@@ -4,7 +4,7 @@ import { ShieldAlert, AlertTriangle, Power } from 'lucide-react';
 import { getRiskStatus, getCrashDefenseDetail, triggerKillSwitch } from '../api/risk';
 import { getPositions } from '../api/trading';
 import { useWSStore } from '../stores/wsStore';
-import { cn, formatPct } from '../lib/utils';
+import { cn } from '../lib/utils';
 
 // ── Crash tier colors ───────────────────────────────────────
 const TIER_COLORS: Record<string, string> = {

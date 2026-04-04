@@ -13,7 +13,11 @@ import Risk from './pages/Risk';
 import Settings from './pages/Settings';
 import Logs from './pages/Logs';
 import Analytics from './pages/Analytics';
+import MarketRegime from './pages/MarketRegime';
+import DemoMonitor from './pages/DemoMonitor';
 import Validation from './pages/Validation';
+import ExchangeManagement from './pages/ExchangeManagement';
+import Notifications from './pages/Notifications';
 import NotFound from './pages/NotFound';
 
 // Lazy-loaded heavy pages (charts library + backtest polling)
@@ -48,7 +52,9 @@ export default function App() {
             <Route path="/setup" element={<Setup />} />
             <Route element={<AppShell />}>
               <Route path="/" element={<Dashboard />} />
+              <Route path="monitor" element={<DemoMonitor />} />
               <Route path="scanner" element={<Scanner />} />
+              <Route path="regime" element={<MarketRegime />} />
               <Route path="charts" element={<Suspense fallback={<LazyFallback />}><Charts /></Suspense>} />
               <Route path="trading" element={<Trading />} />
               <Route path="intelligence" element={<Intelligence />} />
@@ -58,6 +64,8 @@ export default function App() {
               <Route path="logs" element={<Logs />} />
               <Route path="backtest" element={<Suspense fallback={<LazyFallback />}><Backtest /></Suspense>} />
               <Route path="validation" element={<Validation />} />
+              <Route path="exchanges" element={<ExchangeManagement />} />
+              <Route path="notifications" element={<Notifications />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

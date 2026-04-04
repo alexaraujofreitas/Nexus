@@ -13,9 +13,20 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    // Single bundle — minimizes concurrent requests through Cloudflare Tunnel
+    cssCodeSplit: false,
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+        inlineDynamicImports: true,
+      },
+    },
+  },
   server: {
+    host: true,
     port: 5173,
-    allowedHosts: ['frontend', 'localhost'],
+    allowedHosts: ['frontend', 'nexustrader', 'localhost', 'www.kivikdg.com', 'kivikdg.com'],
     proxy: {
       '/api': {
         target: apiTarget,

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getPerformanceByRegime, getRegimeTransitions } from '../../api/analytics';
-import type { RegimePerformance, RegimeTransition } from '../../api/analytics';
+import type { RegimeTransition } from '../../api/analytics';
 import { cn } from '../../lib/utils';
 
 const REGIME_COLORS: Record<string, string> = {
@@ -54,12 +54,6 @@ export default function RegimeAnalysis() {
     transitions.forEach((t) => { map[`${t.from}->${t.to}`] = t; });
     return map;
   }, [transitions]);
-
-  // Largest pct_of_total for current regime indicator
-  const currentRegime = useMemo(() => {
-    if (!regimes.length) return null;
-    return [...regimes].sort((a, b) => b.pct_of_total - a.pct_of_total)[0];
-  }, [regimes]);
 
   const maxPF = useMemo(() => {
     return Math.max(...regimes.map((r) => r.pf), 1);

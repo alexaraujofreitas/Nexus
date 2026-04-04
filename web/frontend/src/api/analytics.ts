@@ -135,6 +135,32 @@ export interface RegimeTransitionsResponse {
   transitions: RegimeTransition[];
 }
 
+// ── Regime Monitor Types ────────────────────────────────────
+
+export interface CurrentRegime {
+  regime: string;
+  confidence: number;
+  classifier: string;
+  hmm_fitted: boolean;
+  probabilities: Record<string, number>;
+  description: string;
+  strategies: string[];
+  risk_adjustment: string;
+  source: string;
+}
+
+export interface RegimeHistoryEntry {
+  timestamp: string;
+  regime: string;
+  confidence: number;
+  classifier: string;
+}
+
+export interface RegimeHistoryResponse {
+  history: RegimeHistoryEntry[];
+  source: string;
+}
+
 // ── Phase 4 API Functions ───────────────────────────────────
 
 export async function getEquityCurve(): Promise<EquityCurveResponse> {
@@ -193,5 +219,17 @@ export async function getPerformanceByRegime(): Promise<RegimePerformanceRespons
 
 export async function getRegimeTransitions(): Promise<RegimeTransitionsResponse> {
   const resp = await api.get<RegimeTransitionsResponse>('/analytics/regime-transitions');
+  return resp.data;
+}
+
+// ── Regime Monitor API Functions ────────────────────────────
+
+export async function getCurrentRegime(): Promise<CurrentRegime> {
+  const resp = await api.get<CurrentRegime>('/analytics/current-regime');
+  return resp.data;
+}
+
+export async function getRegimeHistory(): Promise<RegimeHistoryResponse> {
+  const resp = await api.get<RegimeHistoryResponse>('/analytics/regime-history');
   return resp.data;
 }

@@ -130,9 +130,9 @@ export default function Scanner() {
     if (wsData) {
       queryClient.setQueryData(['scanner-results'], wsData);
       // Flash new results
-      const ids = new Set((wsData.results || []).map((r: OrderCandidate) => r.symbol));
+      const ids = new Set<string>((wsData.results || []).map((r: OrderCandidate) => r.symbol));
       setFlashIds(ids);
-      setTimeout(() => setFlashIds(new Set()), 1500);
+      setTimeout(() => setFlashIds(new Set<string>()), 1500);
     }
   }, [lastMessage, queryClient]);
 

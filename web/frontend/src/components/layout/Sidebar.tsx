@@ -3,7 +3,9 @@ import { cn } from '../../lib/utils';
 
 const navItems = [
   { label: 'Dashboard', path: '/' },
+  { label: 'Demo Monitor', path: '/monitor' },
   { label: 'Scanner', path: '/scanner' },
+  { label: 'Market Regime', path: '/regime' },
   { label: 'Charts', path: '/charts' },
   { label: 'Trading', path: '/trading' },
   { label: 'Intelligence', path: '/intelligence' },
@@ -12,6 +14,8 @@ const navItems = [
   { label: 'Backtest', path: '/backtest' },
   { label: 'Validation', path: '/validation' },
   { label: 'Logs', path: '/logs' },
+  { label: 'Exchanges', path: '/exchanges' },
+  { label: 'Notifications', path: '/notifications' },
   { label: 'Settings', path: '/settings' },
 ];
 

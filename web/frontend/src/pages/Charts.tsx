@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BarChart3 } from 'lucide-react';
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
@@ -13,21 +13,6 @@ import { cn } from '../lib/utils';
 const TIMEFRAMES = ['15m', '30m', '1h', '4h'] as const;
 
 // ── Indicator helpers ───────────────────────────────────────
-
-function calcEMA(data: OHLCVBar[], period: number): LineData[] {
-  const result: LineData[] = [];
-  const k = 2 / (period + 1);
-  let ema = data[0]?.close ?? 0;
-  for (let i = 0; i < data.length; i++) {
-    if (i === 0) {
-      ema = data[i].close;
-    } else {
-      ema = data[i].close * k + ema * (1 - k);
-    }
-    result.push({ time: data[i].time as Time, value: ema });
-  }
-  return result;
-}
 
 function calcRSI(data: OHLCVBar[], period: number = 14): LineData[] {
   const result: LineData[] = [];
@@ -239,7 +224,7 @@ export default function Charts() {
           text: r.direction === 'buy' || r.direction === 'long' ? 'BUY' : 'SELL',
         }));
       if (markers.length > 0) {
-        candleSeriesRef.current.setMarkers(markers);
+        (candleSeriesRef.current as any).setMarkers(markers);
       }
     }
 

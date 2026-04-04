@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileText, Filter, Trash2 } from 'lucide-react';
 import { getRecentLogs } from '../api/logs';
