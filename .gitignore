@@ -85,12 +85,21 @@ artifacts/
 # These files store per-machine runtime state (adaptive weights, performance
 # tracking, calibration data). Each machine generates its own from live trading.
 data/trade_monitor.json
+data/model_perf_tracker.json
 data/filter_stats.json
 data/live_vs_backtest.json
 data/calibrator_monitor.json
 data/scale_manager.json
+data/strategy_audit.jsonl
 data/backtest_results/
 data/archive/
+data/nexustrader.db
+data/paper_trades.db
+
+# ── Cowork / Agent tooling ────────────────────────────────
+.agent/
+.claude/
+.venv-agent/
 
 # ── Generated reports (machine-specific outputs) ───────────
 reports/backtest_2yr/
