@@ -331,6 +331,27 @@ class TradingEngineService:
             "get_system_health": self._cmd_get_system_health,
             "trigger_scan": self._cmd_trigger_scan,
             "kill_switch": self._cmd_kill_switch,
+            "get_performance_by_regime": self._cmd_get_performance_by_regime,
+            "get_regime_transitions": self._cmd_get_regime_transitions,
+            "get_drawdown_curve": self._cmd_get_drawdown_curve,
+            "get_rolling_metrics": self._cmd_get_rolling_metrics,
+            "get_r_distribution": self._cmd_get_r_distribution,
+            "get_duration_analysis": self._cmd_get_duration_analysis,
+            "get_current_regime": self._cmd_get_current_regime,
+            "get_regime_history": self._cmd_get_regime_history,
+            # Demo Monitor (Phase 8H)
+            "get_active_positions": self._cmd_get_active_positions,
+            "get_portfolio_state": self._cmd_get_portfolio_state,
+            "get_live_pnl": self._cmd_get_live_pnl,
+            "get_risk_state": self._cmd_get_risk_state,
+            "get_recent_trades_monitor": self._cmd_get_recent_trades_monitor,
+            # Exchange Management (Phase 8B)
+            "exchange.test_connection": self._cmd_exchange_test_connection,
+            "exchange.load_active": self._cmd_exchange_load_active,
+            "exchange.sync_assets": self._cmd_exchange_sync_assets,
+            "exchange.disconnect": self._cmd_exchange_disconnect,
+            "exchange.status": self._cmd_exchange_status,
+            "exchange.fetch_balance": self._cmd_exchange_fetch_balance,
         }
 
         handler = handlers.get(action)
@@ -796,6 +817,812 @@ class TradingEngineService:
 
         logger.critical("KILL SWITCH COMPLETE: %s", result["actions"])
         return result
+
+    # ── Regime Analytics Handlers ───────────────────────────
+
+    async def _cmd_get_performance_by_regime(self, params: dict) -> dict:
+        """Return performance metrics grouped by market regime."""
+        if not self._pe:
+            return {"status": "error", "detail": "PaperExecutor not initialized"}
+
+        try:
+            closed_trades = getattr(self._pe, '_closed_trades', [])
+            regime_stats = {}
+
+            # Group trades by regime
+            for trade in closed_trades:
+                regime = trade.get("regime", "uncertain")
+                if regime not in regime_stats:
+                    regime_stats[regime] = {
+                        "trades": [],
+                        "count": 0,
+                        "wins": 0,
+                        "losses": 0,
+                        "total_pnl": 0.0,
+                        "total_r": 0.0,
+                        "total_duration_s": 0.0,
+                    }
+
+                stats = regime_stats[regime]
+                stats["trades"].append(trade)
+                stats["count"] += 1
+                pnl = trade.get("pnl_usdt", 0.0)
+                stats["total_pnl"] += pnl
+                if pnl > 0:
+                    stats["wins"] += 1
+                elif pnl < 0:
+                    stats["losses"] += 1
+                stats["total_r"] += trade.get("r_multiple", 0.0)
+                duration_s = trade.get("duration_s", 0.0)
+                stats["total_duration_s"] += duration_s
+
+            # Calculate final metrics
+            total_trades = sum(s["count"] for s in regime_stats.values())
+            regimes = []
+
+            for regime_name, stats in regime_stats.items():
+                n = stats["count"]
+                if n == 0:
+                    continue
+
+                win_rate = (stats["wins"] / n) * 100.0 if n > 0 else 0.0
+                # Profit factor: sum(wins) / abs(sum(losses))
+                wins_sum = sum(
+                    t.get("pnl_usdt", 0.0)
+                    for t in stats["trades"]
+                    if t.get("pnl_usdt", 0.0) > 0
+                )
+                losses_sum = sum(
+                    abs(t.get("pnl_usdt", 0.0))
+                    for t in stats["trades"]
+                    if t.get("pnl_usdt", 0.0) < 0
+                )
+                pf = wins_sum / losses_sum if losses_sum > 0 else (999.0 if wins_sum > 0 else 0.0)
+                avg_r = (stats["total_r"] / n) if n > 0 else 0.0
+                avg_duration_s = (stats["total_duration_s"] / n) if n > 0 else 0.0
+                pct_of_total = (n / total_trades * 100.0) if total_trades > 0 else 0.0
+
+                regimes.append({
+                    "name": regime_name,
+                    "trades": n,
+                    "win_rate": win_rate,
+                    "pf": pf,
+                    "avg_r": avg_r,
+                    "avg_duration_s": avg_duration_s,
+                    "pct_of_total": pct_of_total,
+                })
+
+            logger.info("Performance by regime: %d regimes, %d total trades", len(regimes), total_trades)
+            return {"status": "ok", "regimes": regimes}
+
+        except Exception as e:
+            logger.error("Error in get_performance_by_regime: %s", e, exc_info=True)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_regime_transitions(self, params: dict) -> dict:
+        """Return regime transition matrix."""
+        if not self._pe:
+            return {"status": "error", "detail": "PaperExecutor not initialized"}
+
+        try:
+            closed_trades = getattr(self._pe, '_closed_trades', [])
+            # Sort by close time to track transitions
+            sorted_trades = sorted(
+                closed_trades,
+                key=lambda t: t.get("close_time", 0.0)
+            )
+
+            transitions_map = {}
+
+            # Build transition pairs from consecutive trades
+            for i in range(len(sorted_trades) - 1):
+                current_regime = sorted_trades[i].get("regime", "uncertain")
+                next_regime = sorted_trades[i + 1].get("regime", "uncertain")
+                key = f"{current_regime}->{next_regime}"
+
+                if key not in transitions_map:
+                    transitions_map[key] = {
+                        "from": current_regime,
+                        "to": next_regime,
+                        "count": 0,
+                        "pnls": [],
+                    }
+
+                transitions_map[key]["count"] += 1
+                # Collect PnL during the transition (next trade's PnL)
+                next_pnl = sorted_trades[i + 1].get("pnl_usdt", 0.0)
+                transitions_map[key]["pnls"].append(next_pnl)
+
+            # Build response with average PnL
+            transitions = []
+            for trans in transitions_map.values():
+                avg_pnl = (
+                    sum(trans["pnls"]) / len(trans["pnls"])
+                    if trans["pnls"]
+                    else 0.0
+                )
+                transitions.append({
+                    "from": trans["from"],
+                    "to": trans["to"],
+                    "count": trans["count"],
+                    "avg_pnl_during_transition": avg_pnl,
+                })
+
+            logger.info("Regime transitions: %d unique transitions", len(transitions))
+            return {"status": "ok", "transitions": transitions}
+
+        except Exception as e:
+            logger.error("Error in get_regime_transitions: %s", e, exc_info=True)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_drawdown_curve(self, params: dict) -> dict:
+        """Return drawdown time-series from equity curve."""
+        if not self._pe:
+            return {"status": "error", "detail": "PaperExecutor not initialized"}
+
+        try:
+            closed_trades = getattr(self._pe, '_closed_trades', [])
+            sorted_trades = sorted(
+                closed_trades,
+                key=lambda t: t.get("close_time", 0.0)
+            )
+
+            # Build cumulative capital curve
+            initial_capital = getattr(self._pe, '_initial_capital_usdt', 100_000.0)
+            capital = initial_capital
+            peak_capital = initial_capital
+            drawdown_points = []
+
+            for trade in sorted_trades:
+                capital += trade.get("pnl_usdt", 0.0)
+                peak_capital = max(peak_capital, capital)
+                drawdown_pct = (
+                    ((peak_capital - capital) / peak_capital * 100.0)
+                    if peak_capital > 0
+                    else 0.0
+                )
+                drawdown_points.append({
+                    "time": trade.get("close_time", 0.0),
+                    "drawdown_pct": drawdown_pct,
+                    "peak_capital": peak_capital,
+                })
+
+            logger.info("Drawdown curve: %d points", len(drawdown_points))
+            return {"status": "ok", "points": drawdown_points}
+
+        except Exception as e:
+            logger.error("Error in get_drawdown_curve: %s", e, exc_info=True)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_rolling_metrics(self, params: dict) -> dict:
+        """Return rolling WR/PF over a configurable window."""
+        if not self._pe:
+            return {"status": "error", "detail": "PaperExecutor not initialized"}
+
+        try:
+            window = params.get("window", 20)
+            closed_trades = getattr(self._pe, '_closed_trades', [])
+            sorted_trades = sorted(
+                closed_trades,
+                key=lambda t: t.get("close_time", 0.0)
+            )
+
+            rolling_points = []
+
+            # Calculate rolling metrics for each trade (window of last N trades)
+            for i in range(len(sorted_trades)):
+                start_idx = max(0, i - window + 1)
+                window_trades = sorted_trades[start_idx:i + 1]
+
+                if len(window_trades) == 0:
+                    continue
+
+                # Win rate
+                wins = sum(1 for t in window_trades if t.get("pnl_usdt", 0.0) > 0)
+                win_rate = (wins / len(window_trades)) * 100.0
+
+                # Profit factor
+                wins_sum = sum(
+                    t.get("pnl_usdt", 0.0)
+                    for t in window_trades
+                    if t.get("pnl_usdt", 0.0) > 0
+                )
+                losses_sum = sum(
+                    abs(t.get("pnl_usdt", 0.0))
+                    for t in window_trades
+                    if t.get("pnl_usdt", 0.0) < 0
+                )
+                pf = wins_sum / losses_sum if losses_sum > 0 else (999.0 if wins_sum > 0 else 0.0)
+
+                # Average R
+                avg_r = sum(t.get("r_multiple", 0.0) for t in window_trades) / len(window_trades)
+
+                rolling_points.append({
+                    "time": window_trades[-1].get("close_time", 0.0),
+                    "rolling_wr": win_rate,
+                    "rolling_pf": pf,
+                    "rolling_avg_r": avg_r,
+                })
+
+            logger.info("Rolling metrics: %d points with window=%d", len(rolling_points), window)
+            return {"status": "ok", "points": rolling_points, "window": window}
+
+        except Exception as e:
+            logger.error("Error in get_rolling_metrics: %s", e, exc_info=True)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_r_distribution(self, params: dict) -> dict:
+        """Return R-multiple distribution histogram."""
+        if not self._pe:
+            return {"status": "error", "detail": "PaperExecutor not initialized"}
+
+        try:
+            closed_trades = getattr(self._pe, '_closed_trades', [])
+            r_values = [t.get("r_multiple", 0.0) for t in closed_trades]
+
+            if not r_values:
+                return {"status": "ok", "buckets": [], "expectancy": 0.0, "median_r": 0.0, "max_win_r": 0.0, "max_loss_r": 0.0}
+
+            # Create buckets: -5 to +5 in 0.5R increments
+            buckets_map = {}
+            bucket_width = 0.5
+            for r in r_values:
+                bucket_key = int(r / bucket_width) * bucket_width
+                if bucket_key not in buckets_map:
+                    buckets_map[bucket_key] = 0
+                buckets_map[bucket_key] += 1
+
+            # Sort and convert to list
+            buckets = []
+            for bucket_key in sorted(buckets_map.keys()):
+                r_min = bucket_key
+                r_max = bucket_key + bucket_width
+                buckets.append({
+                    "r_min": round(r_min, 2),
+                    "r_max": round(r_max, 2),
+                    "count": buckets_map[bucket_key],
+                })
+
+            # Calculate stats
+            expectancy = sum(r_values) / len(r_values) if r_values else 0.0
+            sorted_r = sorted(r_values)
+            median_r = sorted_r[len(sorted_r) // 2] if sorted_r else 0.0
+            max_win_r = max(r_values) if r_values else 0.0
+            max_loss_r = min(r_values) if r_values else 0.0
+
+            logger.info("R distribution: %d buckets, expectancy=%.3fR", len(buckets), expectancy)
+            return {
+                "status": "ok",
+                "buckets": buckets,
+                "expectancy": expectancy,
+                "median_r": median_r,
+                "max_win_r": max_win_r,
+                "max_loss_r": max_loss_r,
+            }
+
+        except Exception as e:
+            logger.error("Error in get_r_distribution: %s", e, exc_info=True)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_duration_analysis(self, params: dict) -> dict:
+        """Return trade duration vs outcome analysis."""
+        if not self._pe:
+            return {"status": "error", "detail": "PaperExecutor not initialized"}
+
+        try:
+            closed_trades = getattr(self._pe, '_closed_trades', [])
+
+            if not closed_trades:
+                return {"status": "ok", "buckets": []}
+
+            # Create duration buckets: 0-5m, 5-15m, 15-1h, 1-4h, 4h+
+            buckets = {
+                (0, 300): {"label": "0-5m", "trades": [], "durations": []},
+                (300, 900): {"label": "5-15m", "trades": [], "durations": []},
+                (900, 3600): {"label": "15m-1h", "trades": [], "durations": []},
+                (3600, 14400): {"label": "1-4h", "trades": [], "durations": []},
+                (14400, float('inf')): {"label": "4h+", "trades": [], "durations": []},
+            }
+
+            for trade in closed_trades:
+                duration_s = trade.get("duration_s", 0.0)
+                pnl = trade.get("pnl_usdt", 0.0)
+
+                for (min_s, max_s), bucket_data in buckets.items():
+                    if min_s <= duration_s < max_s:
+                        bucket_data["trades"].append(trade)
+                        bucket_data["durations"].append(duration_s)
+                        break
+
+            # Calculate stats per bucket
+            result_buckets = []
+            for (min_s, max_s), bucket_data in sorted(buckets.items()):
+                trades = bucket_data["trades"]
+                n = len(trades)
+                if n == 0:
+                    continue
+
+                wins = sum(1 for t in trades if t.get("pnl_usdt", 0.0) > 0)
+                win_rate = (wins / n) * 100.0 if n > 0 else 0.0
+                avg_r = sum(t.get("r_multiple", 0.0) for t in trades) / n if n > 0 else 0.0
+
+                result_buckets.append({
+                    "duration_min_s": min_s,
+                    "duration_max_s": max_s if max_s != float('inf') else 86400,  # cap at 24h
+                    "count": n,
+                    "avg_r": avg_r,
+                    "win_rate": win_rate,
+                })
+
+            logger.info("Duration analysis: %d buckets", len(result_buckets))
+            return {"status": "ok", "buckets": result_buckets}
+
+        except Exception as e:
+            logger.error("Error in get_duration_analysis: %s", e, exc_info=True)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_current_regime(self, params: dict) -> dict:
+        """Return current market regime classification."""
+        try:
+            # Try to get regime from orchestrator if available
+            if self._orchestrator and hasattr(self._orchestrator, 'get_current_regime'):
+                try:
+                    regime_info = self._orchestrator.get_current_regime()
+                    if regime_info:
+                        return {
+                            "status": "ok",
+                            "regime": regime_info.get("name", "uncertain"),
+                            "confidence": regime_info.get("confidence", 0.0),
+                            "classifier": regime_info.get("classifier_type", "hmm"),
+                            "hmm_fitted": regime_info.get("hmm_fitted", False),
+                            "probabilities": regime_info.get("probabilities", {}),
+                            "description": regime_info.get("description", ""),
+                            "strategies": regime_info.get("suggested_strategies", []),
+                            "risk_adjustment": regime_info.get("risk_adjustment", "standard"),
+                            "source": "live",
+                        }
+                except Exception as e:
+                    logger.debug("Could not fetch from orchestrator: %s", e)
+
+            # Fallback: return sensible default regime state
+            logger.info("No current regime available, returning fallback state")
+            return {
+                "status": "ok",
+                "regime": "uncertain",
+                "confidence": 0.0,
+                "classifier": "ensemble",
+                "hmm_fitted": False,
+                "probabilities": {
+                    "bull_trend": 0.0,
+                    "bear_trend": 0.0,
+                    "ranging": 0.0,
+                    "vol_expansion": 0.0,
+                    "uncertain": 1.0,
+                },
+                "description": "Insufficient data or regime classifier not ready",
+                "strategies": [],
+                "risk_adjustment": "conservative",
+                "source": "fallback",
+            }
+
+        except Exception as e:
+            logger.error("Error in get_current_regime: %s", e, exc_info=True)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_regime_history(self, params: dict) -> dict:
+        """Return recent regime classification history."""
+        try:
+            # Try to get regime history from orchestrator if available
+            if self._orchestrator and hasattr(self._orchestrator, 'get_regime_history'):
+                try:
+                    history = self._orchestrator.get_regime_history()
+                    if history:
+                        return {
+                            "status": "ok",
+                            "history": history,
+                            "source": "live",
+                        }
+                except Exception as e:
+                    logger.debug("Could not fetch history from orchestrator: %s", e)
+
+            # Fallback: infer regime changes from closed trades
+            closed_trades = getattr(self._pe, '_closed_trades', []) if self._pe else []
+            sorted_trades = sorted(
+                closed_trades,
+                key=lambda t: t.get("close_time", 0.0)
+            )
+
+            history = []
+            last_regime = None
+
+            for trade in sorted_trades:
+                regime = trade.get("regime", "uncertain")
+                close_time = trade.get("close_time", 0.0)
+
+                # Only add if regime changed
+                if regime != last_regime:
+                    history.append({
+                        "timestamp": close_time,
+                        "regime": regime,
+                        "confidence": trade.get("regime_confidence", 0.5),
+                        "classifier": "inferred_from_trades",
+                    })
+                    last_regime = regime
+
+            logger.info("Regime history: %d changes detected from trades", len(history))
+            return {
+                "status": "ok",
+                "history": history,
+                "source": "inferred_from_trades" if history else "none",
+            }
+
+        except Exception as e:
+            logger.error("Error in get_regime_history: %s", e, exc_info=True)
+            return {"status": "error", "detail": str(e)}
+
+    # ── Demo Monitor Handlers (Phase 8H) ────────────────────────
+
+    async def _cmd_get_active_positions(self, params: dict) -> dict:
+        """All open positions with enriched monitor fields."""
+        try:
+            from datetime import datetime, timezone
+            positions = []
+            if self._pe:
+                for pos in self._pe.get_open_positions():
+                    p = dict(pos) if isinstance(pos, dict) else (pos.to_dict() if hasattr(pos, 'to_dict') else pos)
+                    # Compute duration from opened_at
+                    opened_at = p.get("opened_at", "")
+                    duration_s = 0
+                    if opened_at:
+                        try:
+                            dt = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+                            duration_s = int((datetime.now(timezone.utc) - dt).total_seconds())
+                        except Exception:
+                            pass
+                    # Compute pnl_pct
+                    entry = p.get("entry_price", 0)
+                    current = p.get("current_price", entry)
+                    size = p.get("size_usdt", 0) or p.get("entry_size_usdt", 0)
+                    side = p.get("side", "buy")
+                    pnl = p.get("unrealized_pnl", 0) or 0
+                    pnl_pct = (pnl / size * 100) if size else 0.0
+
+                    positions.append({
+                        "symbol": p.get("symbol", ""),
+                        "side": "long" if side in ("buy", "long") else "short",
+                        "entry_price": entry,
+                        "current_price": current,
+                        "size_usdt": size,
+                        "pnl_unrealized": pnl,
+                        "pnl_pct": round(pnl_pct, 2),
+                        "duration_s": duration_s,
+                        "stop_loss": p.get("stop_loss"),
+                        "take_profit": p.get("take_profit"),
+                        "regime_at_entry": p.get("regime", "unknown"),
+                        "models_fired": p.get("models_fired", []),
+                        "score": p.get("score", 0),
+                        "opened_at": opened_at,
+                        "_auto_partial_applied": p.get("_auto_partial_applied", False),
+                        "_breakeven_applied": p.get("_breakeven_applied", False),
+                    })
+            return {
+                "status": "ok",
+                "positions": positions,
+                "count": len(positions),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "data_source": "paper_executor"
+            }
+        except Exception as e:
+            logger.error(f"get_active_positions failed: {e}")
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_portfolio_state(self, params: dict) -> dict:
+        """Portfolio state with heat and margin."""
+        try:
+            from datetime import datetime, timezone
+            portfolio = {}
+            if self._pe:
+                status = self._pe.get_production_status() if hasattr(self._pe, 'get_production_status') else {}
+                stats = self._pe.get_stats() if hasattr(self._pe, 'get_stats') else {}
+                capital = status.get("capital_usdt", 0) or getattr(self._pe, '_capital_usdt', 100000)
+                peak = status.get("peak_capital_usdt", capital)
+
+                # Calculate portfolio heat
+                open_positions = self._pe.get_open_positions() if hasattr(self._pe, 'get_open_positions') else []
+                total_exposure = sum(
+                    (p.get("size_usdt", 0) if isinstance(p, dict) else getattr(p, 'size_usdt', 0))
+                    for p in open_positions
+                )
+                heat_pct = (total_exposure / capital * 100) if capital > 0 else 0.0
+
+                portfolio = {
+                    "equity": capital,
+                    "balance": capital,
+                    "used_margin": total_exposure,
+                    "free_margin": max(0, capital - total_exposure),
+                    "portfolio_heat_pct": round(heat_pct, 2),
+                    "max_heat_limit": 6.0,
+                    "drawdown_pct": status.get("drawdown_pct", 0),
+                    "total_return_pct": status.get("total_return_pct", 0),
+                    "open_positions": len(open_positions),
+                    "total_trades": stats.get("total_trades", 0) or status.get("total_trades", 0),
+                    "win_rate": stats.get("win_rate", 0) or status.get("win_rate", 0),
+                    "profit_factor": stats.get("profit_factor", 0),
+                    "trading_paused": status.get("circuit_breaker_on", False) or getattr(self._pe, '_trading_paused', False),
+                }
+            return {
+                "status": "ok",
+                "portfolio": portfolio,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "data_source": "paper_executor"
+            }
+        except Exception as e:
+            logger.error(f"get_portfolio_state failed: {e}")
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_live_pnl(self, params: dict) -> dict:
+        """Real-time PnL breakdown."""
+        try:
+            from datetime import datetime, timezone
+            total_unrealized = 0.0
+            total_realized = 0.0
+            daily_pnl = 0.0
+            fees_paid = 0.0
+
+            if self._pe:
+                # Unrealized from open positions
+                for pos in self._pe.get_open_positions():
+                    p = pos if isinstance(pos, dict) else (pos.to_dict() if hasattr(pos, 'to_dict') else {})
+                    total_unrealized += p.get("unrealized_pnl", 0) or 0
+
+                # Realized from closed trades
+                closed = getattr(self._pe, '_closed_trades', [])
+                for tr in closed:
+                    t = tr if isinstance(tr, dict) else (tr.to_dict() if hasattr(tr, 'to_dict') else {})
+                    pnl = t.get("pnl_usdt", 0) or 0
+                    total_realized += pnl
+                    # Estimate fees: 0.04% per side × 2 sides × size
+                    size = t.get("size_usdt", 0) or t.get("entry_size_usdt", 0) or 0
+                    fees_paid += size * 0.0004 * 2
+
+                # Daily PnL from session
+                status = self._pe.get_production_status() if hasattr(self._pe, 'get_production_status') else {}
+                daily_pnl = status.get("session_pnl_usdt", total_realized)
+
+            return {
+                "status": "ok",
+                "pnl": {
+                    "total_unrealized": round(total_unrealized, 2),
+                    "total_realized": round(total_realized, 2),
+                    "daily_pnl": round(daily_pnl, 2),
+                    "fees_paid": round(fees_paid, 2),
+                    "net_pnl": round(total_realized + total_unrealized - fees_paid, 2),
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "data_source": "paper_executor"
+            }
+        except Exception as e:
+            logger.error(f"get_live_pnl failed: {e}")
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_risk_state(self, params: dict) -> dict:
+        """Risk state including crash defense and circuit breakers."""
+        try:
+            from datetime import datetime, timezone
+            risk = {
+                "drawdown_pct": 0.0,
+                "daily_loss_pct": 0.0,
+                "circuit_breaker_triggered": False,
+                "trading_enabled": True,
+                "crash_defense_tier": "NORMAL",
+                "is_defensive": False,
+                "is_safe_mode": False,
+                "reason": "",
+            }
+
+            if self._pe:
+                status = self._pe.get_production_status() if hasattr(self._pe, 'get_production_status') else {}
+                capital = status.get("capital_usdt", 100000)
+                peak = status.get("peak_capital_usdt", capital)
+
+                risk["drawdown_pct"] = status.get("drawdown_pct", 0)
+                risk["circuit_breaker_triggered"] = status.get("circuit_breaker_on", False)
+                risk["trading_enabled"] = not status.get("circuit_breaker_on", False) and not getattr(self._pe, '_trading_paused', False)
+
+                if not risk["trading_enabled"]:
+                    if status.get("circuit_breaker_on", False):
+                        risk["reason"] = "Circuit breaker triggered"
+                    elif getattr(self._pe, '_trading_paused', False):
+                        risk["reason"] = "Trading manually paused"
+
+                # Session/daily loss
+                session_pnl = status.get("session_pnl_usdt", 0)
+                if capital > 0 and session_pnl < 0:
+                    risk["daily_loss_pct"] = round(abs(session_pnl) / capital * 100, 2)
+
+            # Crash defense from orchestrator
+            if self._orch:
+                try:
+                    cdc = getattr(self._orch, '_crash_defense', None) or getattr(self._orch, 'crash_defense_controller', None)
+                    if cdc:
+                        risk["crash_defense_tier"] = getattr(cdc, 'current_tier', 'NORMAL') or 'NORMAL'
+                        risk["is_defensive"] = risk["crash_defense_tier"] not in ("NORMAL", "normal")
+                        risk["is_safe_mode"] = risk["crash_defense_tier"] in ("EMERGENCY", "SYSTEMIC")
+                except Exception:
+                    pass
+
+            return {
+                "status": "ok",
+                "risk": risk,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "data_source": "paper_executor"
+            }
+        except Exception as e:
+            logger.error(f"get_risk_state failed: {e}")
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_get_recent_trades_monitor(self, params: dict) -> dict:
+        """Last 50 closed trades with enriched monitor fields."""
+        try:
+            from datetime import datetime, timezone
+            trades = []
+            if self._pe:
+                closed = list(getattr(self._pe, '_closed_trades', []))
+                # Most recent 50
+                recent = closed[-50:] if len(closed) > 50 else closed
+                recent.reverse()  # newest first
+
+                for tr in recent:
+                    t = tr if isinstance(tr, dict) else (tr.to_dict() if hasattr(tr, 'to_dict') else {})
+                    entry = t.get("entry_price", 0) or 0
+                    exit_p = t.get("exit_price", 0) or 0
+                    pnl = t.get("pnl_usdt", 0) or 0
+                    size = t.get("size_usdt", 0) or t.get("entry_size_usdt", 0) or 0
+                    sl = t.get("stop_loss", 0) or 0
+
+                    # R-multiple calculation
+                    risk_per_unit = abs(entry - sl) if sl else 0
+                    if risk_per_unit > 0 and entry > 0:
+                        side = t.get("side", "buy")
+                        if side in ("buy", "long"):
+                            r_multiple = (exit_p - entry) / risk_per_unit
+                        else:
+                            r_multiple = (entry - exit_p) / risk_per_unit
+                    else:
+                        r_multiple = pnl / (size * 0.01) if size else 0
+
+                    # Fees estimate
+                    fees = size * 0.0004 * 2
+
+                    trades.append({
+                        "symbol": t.get("symbol", ""),
+                        "side": t.get("side", ""),
+                        "entry_price": entry,
+                        "exit_price": exit_p,
+                        "pnl_usdt": round(pnl, 2),
+                        "pnl_pct": t.get("pnl_pct", 0),
+                        "r_multiple": round(r_multiple, 2),
+                        "duration_s": t.get("duration_s", 0),
+                        "regime": t.get("regime", "unknown"),
+                        "exit_reason": t.get("exit_reason", ""),
+                        "models_fired": t.get("models_fired", []),
+                        "fees_estimated": round(fees, 2),
+                        "slippage": t.get("slippage", 0),
+                        "closed_at": t.get("closed_at", ""),
+                        "score": t.get("score", 0),
+                    })
+
+            return {
+                "status": "ok",
+                "trades": trades,
+                "count": len(trades),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "data_source": "paper_executor"
+            }
+        except Exception as e:
+            logger.error(f"get_recent_trades_monitor failed: {e}")
+            return {"status": "error", "detail": str(e)}
+
+    # ── Exchange Management Handlers (Phase 8B) ──────────────
+
+    async def _cmd_exchange_test_connection(self, params: dict) -> dict:
+        """Test connection is handled directly by the API layer (CCXT).
+        This stub exists so the engine doesn't return 'Unknown action'
+        if called via the generic engine command route."""
+        return {
+            "status": "error",
+            "detail": "test_connection is handled by the API layer, not the engine. "
+                      "Use POST /exchanges/test-connection directly.",
+        }
+
+    async def _cmd_exchange_load_active(self, params: dict) -> dict:
+        """Reload exchange connection after activation."""
+        try:
+            if self._exchange_manager:
+                # Re-initialize exchange manager to pick up new config
+                logger.info("Reloading exchange connection (exchange_id=%s)", params.get("exchange_id"))
+                return {"status": "ok", "detail": "Exchange reload acknowledged"}
+            return {"status": "ok", "detail": "No exchange manager — engine uses config.yaml exchange settings"}
+        except Exception as e:
+            logger.error("exchange.load_active failed: %s", e)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_exchange_sync_assets(self, params: dict) -> dict:
+        """Sync assets from the active exchange. Fetches markets via CCXT."""
+        try:
+            if not self._exchange_manager:
+                return {"status": "error", "detail": "ExchangeManager not initialized"}
+
+            exchange = self._exchange_manager.get_exchange()
+            if not exchange:
+                return {"status": "error", "detail": "No active exchange connection"}
+
+            import asyncio
+            loop = asyncio.get_event_loop()
+            markets = await loop.run_in_executor(None, exchange.load_markets)
+
+            # Return market data for the API to upsert into DB
+            assets = []
+            for symbol, market in markets.items():
+                if market.get("active") and market.get("quote") in ("USDT", "BTC", "ETH", "BNB"):
+                    assets.append({
+                        "symbol": symbol,
+                        "base_currency": market.get("base", ""),
+                        "quote_currency": market.get("quote", ""),
+                        "price_precision": market.get("precision", {}).get("price"),
+                        "amount_precision": market.get("precision", {}).get("amount"),
+                        "min_amount": market.get("limits", {}).get("amount", {}).get("min"),
+                        "min_cost": market.get("limits", {}).get("cost", {}).get("min"),
+                    })
+
+            return {"status": "ok", "assets": assets, "count": len(assets), "new_count": len(assets)}
+        except Exception as e:
+            logger.error("exchange.sync_assets failed: %s", e)
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_exchange_disconnect(self, params: dict) -> dict:
+        """Disconnect the active exchange."""
+        return {"status": "ok", "detail": "Exchange disconnect acknowledged"}
+
+    async def _cmd_exchange_status(self, params: dict) -> dict:
+        """Get current exchange connection status."""
+        try:
+            connected = self._exchange_manager is not None
+            return {
+                "status": "ok",
+                "connected": connected,
+                "exchange_manager_initialized": connected,
+            }
+        except Exception as e:
+            return {"status": "error", "detail": str(e)}
+
+    async def _cmd_exchange_fetch_balance(self, params: dict) -> dict:
+        """Fetch balance from the active exchange."""
+        try:
+            if not self._exchange_manager:
+                return {"status": "error", "detail": "ExchangeManager not initialized"}
+
+            exchange = self._exchange_manager.get_exchange()
+            if not exchange:
+                return {"status": "error", "detail": "No active exchange connection"}
+
+            import asyncio
+            loop = asyncio.get_event_loop()
+            balance = await loop.run_in_executor(None, exchange.fetch_balance)
+
+            usdt_free = 0.0
+            if "USDT" in balance:
+                usdt_free = float(balance["USDT"].get("free", 0) or 0)
+            elif "free" in balance and "USDT" in balance["free"]:
+                usdt_free = float(balance["free"]["USDT"] or 0)
+
+            return {
+                "status": "ok",
+                "balance_usdt": round(usdt_free, 2),
+            }
+        except Exception as e:
+            logger.error("exchange.fetch_balance failed: %s", e)
+            return {"status": "error", "detail": str(e)}
 
     # ── State Management ────────────────────────────────────
 

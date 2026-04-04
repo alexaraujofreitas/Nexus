@@ -1,0 +1,177 @@
+# ============================================================
+# NEXUS TRADER — Production Stack (Unified)
+#
+# Services:
+#   postgres      → PostgreSQL 16 database
+#   redis         → Redis 7 pub/sub + caching
+#   api           → FastAPI backend (port 8000)
+#   engine        → Headless trading engine
+#   nexustrader   → nginx + built React (port 5173)
+#   tunnel        → Cloudflare Tunnel (cloudflared)
+#
+# Routing:
+#   Browser → Cloudflare Edge → cloudflared → nexustrader:5173 (nginx)
+#   nginx proxy:  /api/*  → nexus-api:8000  (REST)
+#   nginx proxy:  /ws/*   → nexus-api:8000  (WebSocket upgrade)
+#
+# Usage:
+#   cd C:\Users\alexa\NexusTrader\web
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# After code changes:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Logs:
+#   docker compose -f docker-compose.prod.yml logs -f
+# ============================================================
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nexus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
+      POSTGRES_DB: ${POSTGRES_DB:-nexustrader}
+    volumes:
+      - nexus_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus} -d ${POSTGRES_DB:-nexustrader}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexus-net
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: nexus-redis
+    restart: unless-stopped
+    volumes:
+      - nexus_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexus-net
+
+  # ── API Service (FastAPI) ─────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nexus-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexustrader}
+      NEXUS_REDIS_URL: redis://redis:6379/0
+      NEXUS_JWT_SECRET: ${NEXUS_JWT_SECRET:-CHANGE-ME-IN-PRODUCTION-32chars!}
+      NEXUS_DEBUG: ${NEXUS_DEBUG:-false}
+      NEXUS_CORS_ORIGINS: ${NEXUS_CORS_ORIGINS:-https://www.kivikdg.com,https://kivikdg.com,http://nexustrader:5173}
+      NEXUS_ENCRYPTION_KEY: ${NEXUS_ENCRYPTION_KEY:-}
+      NEXUS_SERVICE_NAME: api
+    volumes:
+      - ..:/app/nexustrader:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nexus-net
+
+  # ── Trading Engine Service ────────────────────────────────
+  engine:
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+    container_name: nexus-engine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexustrader}
+      NEXUS_REDIS_URL: redis://redis:6379/0
+      NEXUS_CONFIG_PATH: /app/nexustrader/config.yaml
+      NEXUS_ROOT_DIR: /app/nexustrader
+      NEXUS_SERVICE_NAME: engine
+    volumes:
+      - ..:/app/nexustrader
+    networks:
+      - nexus-net
+
+  # ── Frontend (nginx + built React) ─────────────────────────
+  #
+  # Service name: nexustrader
+  # Container name: nexustrader
+  # Port: 5173 (nginx)
+  #
+  # Multi-stage build: Vite builds static bundle → nginx serves it.
+  # nginx proxies /api/* → nexus-api:8000 and /ws/* with WebSocket upgrade.
+  #
+  # Cloudflare Tunnel routes www.kivikdg.com → http://nexustrader:5173
+  nexustrader:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: nexustrader
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "5173:5173"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - nexus-net
+
+  # ── Cloudflare Tunnel ────────────────────────────────────
+  #
+  # Routes: www.kivikdg.com → http://nexustrader:5173
+  #
+  # --no-autoupdate: prevents cloudflared from auto-updating inside
+  # the container (which would cause restarts and downtime).
+  #
+  # Token is passed directly in the command (not as env var) to
+  # match cloudflared's expected invocation pattern.
+  #
+  # depends_on: service_started (not service_healthy) because
+  # cloudflared has its own retry logic and the frontend may
+  # still be starting when the tunnel connects.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: nexus-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      nexustrader:
+        condition: service_started
+    networks:
+      - nexus-net
+
+volumes:
+  nexus_pgdata:
+    driver: local
+  nexus_redis:
+    driver: local
+
+networks:
+  nexus-net:
+    driver: bridge
