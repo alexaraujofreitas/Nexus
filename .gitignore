@@ -109,6 +109,34 @@ reports/reviews/
 # ── Temporary working files ────────────────────────────────
 logs/EXTRACTED_*.txt
 backtest_data/
+backtest_results.json
+study*_results.json
+validation_report.json
+migration_report.json
+orders_positions.html
+cache/
+models/
+regime_output/
+archived_cps_experiment/
+data/cda_observations.jsonl
+data/destructive_audit.jsonl
+data/live_open_positions.json
+data/model_perf_tracker_pre_wave3_archive.json
+data/outcome_tracker_pre_wave3_archive.json
+data/phase2c_shadow_log.jsonl
+data/scan_error_diag.txt
+data/trade_lifecycle.jsonl
+data/trade_log.jsonl
+data/validation/
+web/backend/TEST_RESULTS_*.txt
+web/backend/data/
+web/backend/pytest-cache-files-*
+research/experiments/
+research/harness/
+
+# ── Misc clipboard / scratch files ────────────────────────
+CUsersalexa*
+claude mcp add*
 
 # ── Linux FUSE mount artifacts (Cowork VM) ────────────────
 # These .fuse_hidden* files appear in the Windows folder due to the
