@@ -70,8 +70,16 @@ class Asset(Base):
     is_active:        Mapped[bool]            = mapped_column(Boolean, default=True)
     last_updated:     Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # ── Phase 1: Asset Management columns ──────────────────────
+    is_tradable:        Mapped[bool]              = mapped_column(Boolean, default=False, server_default="false")
+    allocation_weight:  Mapped[float]             = mapped_column(Float, default=1.0, server_default="1.0")
+    market_snapshot:    Mapped[Optional[dict]]    = mapped_column(JSONB, nullable=True)  # Phase 2-owned: MDS populates
+    snapshot_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # Phase 2-owned
+
     __table_args__ = (
         UniqueConstraint("exchange_id", "symbol", name="uq_asset_exchange_symbol"),
+        Index("ix_assets_tradable", "exchange_id", "is_tradable",
+              postgresql_where=is_tradable.is_(True)),
     )
 
     exchange:  Mapped["Exchange"]       = relationship("Exchange",  back_populates="assets")

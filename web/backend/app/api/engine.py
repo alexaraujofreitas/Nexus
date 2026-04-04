@@ -102,6 +102,23 @@ async def send_command(cmd: EngineCommand):
         "get_duration_analysis", "get_performance_by_regime",
         "get_regime_transitions", "cancel_backtest",
         "get_settings", "update_settings",
+        # Phase 8 additions — Vault
+        "vault.encrypt", "vault.decrypt", "vault.rotate", "vault.status",
+        # Phase 8 additions — Notifications
+        "notification.test", "notification.channels",
+        "notification.preferences.get", "notification.preferences.set",
+        "notification.test_all", "notification.history",
+        "notification.get_history", "notification.get_stats",
+        "notification.set_preferences", "notification.set_health_check_interval",
+        # Phase 8 additions — Exchange Management
+        "exchange.load_active", "exchange.test_connection",
+        "exchange.sync_assets", "exchange.disconnect",
+        "exchange.status", "exchange.fetch_balance",
+        # Regime endpoints
+        "get_current_regime", "get_regime_history",
+        # Phase 8H Demo Monitor
+        "get_active_positions", "get_portfolio_state",
+        "get_live_pnl", "get_risk_state", "get_recent_trades_monitor",
     }
     if cmd.action not in allowed_actions:
         raise HTTPException(status_code=400, detail=f"Unknown action: {cmd.action}")

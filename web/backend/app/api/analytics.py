@@ -103,3 +103,15 @@ async def performance_by_regime():
 async def regime_transitions():
     """Regime transition matrix: from → to counts and avg PnL."""
     return await _send_engine_command("get_regime_transitions", {})
+
+
+@router.get("/current-regime")
+async def get_current_regime():
+    """Get the current market regime classification."""
+    return await _send_engine_command("get_current_regime", {})
+
+
+@router.get("/regime-history")
+async def get_regime_history():
+    """Get recent regime classification history."""
+    return await _send_engine_command("get_regime_history", {})

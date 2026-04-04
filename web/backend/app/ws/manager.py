@@ -43,6 +43,8 @@ CHANNELS = {
     "dashboard",        # Dashboard heartbeat + trade/position changes
     "crash_defense",    # Crash defense tier changes
     "risk",             # Risk status on position open/close
+    # Phase 8H additions
+    "monitor",          # Demo monitor real-time updates
 }
 
 # Limits
