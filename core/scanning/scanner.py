@@ -737,13 +737,6 @@ class ScanWorker(QThread):
 
             metrics.compute_phase_ms = (time.time() - _t0) * 1000
 
-            # Compute slowest/average symbol metrics
-            if metrics.per_symbol_ms:
-                _slowest = max(metrics.per_symbol_ms, key=metrics.per_symbol_ms.get)
-                metrics.slowest_symbol = _slowest
-                metrics.slowest_symbol_ms = metrics.per_symbol_ms[_slowest]
-                metrics.avg_symbol_ms = sum(metrics.per_symbol_ms.values()) / len(metrics.per_symbol_ms)
-
             # ══════════════════════════════════════════════════════════
             # PHASE 3: Risk gate + Atomic result emission
             # ══════════════════════════════════════════════════════════
@@ -783,6 +776,22 @@ class ScanWorker(QThread):
                     _row["generated_at"] = _scan_ts
 
             metrics.risk_gate_ms = (time.time() - _t0) * 1000
+
+            # ── Emit metrics BEFORE scan_complete (post-scan code may not execute) ──
+            metrics.risk_gate_ms = metrics.risk_gate_ms  # already set above
+            # Post-scan housekeeping timing will be zero since it hasn't run yet.
+            metrics.total_cycle_ms = (time.time() - metrics.cycle_start) * 1000
+            # Compute slowest/average symbol metrics
+            if metrics.per_symbol_ms:
+                _slowest = max(metrics.per_symbol_ms, key=metrics.per_symbol_ms.get)
+                metrics.slowest_symbol = _slowest
+                metrics.slowest_symbol_ms = metrics.per_symbol_ms[_slowest]
+                metrics.avg_symbol_ms = sum(metrics.per_symbol_ms.values()) / len(metrics.per_symbol_ms)
+            metrics.log_summary()
+            try:
+                self.scan_metrics_updated.emit(metrics.to_dict())
+            except Exception:
+                pass
 
             # Atomic emission — all results published together
             self.scan_complete.emit([c.to_dict() for c in approved])
@@ -830,15 +839,6 @@ class ScanWorker(QThread):
                     },
                     source="scanner",
                 )
-
-            # ── Log performance report ────────────────────────
-            metrics.total_cycle_ms = (time.time() - metrics.cycle_start) * 1000
-            metrics.log_summary()
-            # Emit metrics dict for UI consumption
-            try:
-                self.scan_metrics_updated.emit(metrics.to_dict())
-            except Exception:
-                pass
 
         except Exception as exc:
             logger.error("ScanWorker fatal error: %s", exc, exc_info=True)
