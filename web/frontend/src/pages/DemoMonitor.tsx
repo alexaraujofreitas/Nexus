@@ -136,33 +136,33 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
                 'border-b border-gray-100 hover:bg-gray-50',
                 pos.pnl_unrealized >= 0 ? 'bg-green-50/30' : 'bg-red-50/30',
               )}>
-                <td className="py-3 pr-3 font-medium text-gray-900">{pos.symbol}</td>
+                <td className="py-3 pr-4 font-medium text-gray-900">{pos.symbol}</td>
                 <td className={cn(
-                  'py-3 font-medium',
+                  'py-3 pr-4 font-medium',
                   pos.side === 'long' ? 'text-green-600' : 'text-red-600',
                 )}>
                   {pos.side.toUpperCase()}
                 </td>
-                <td className="py-3 text-right text-gray-700 font-mono text-xs">
+                <td className="py-3 pr-4 text-right text-gray-700 font-mono text-xs">
                   {formatUSD(pos.entry_price)}
                 </td>
-                <td className="py-3 text-right text-gray-700 font-mono text-xs">
+                <td className="py-3 pr-4 text-right text-gray-700 font-mono text-xs">
                   {formatUSD(pos.current_price)}
                 </td>
                 <td className={cn(
-                  'py-3 text-right font-mono font-medium text-xs',
+                  'py-3 pr-4 text-right font-mono font-medium text-xs',
                   pos.pnl_unrealized >= 0 ? 'text-green-600' : 'text-red-600',
                 )}>
                   {formatUSD(pos.pnl_unrealized)}
                 </td>
                 <td className={cn(
-                  'py-3 text-right font-mono font-medium text-xs',
+                  'py-3 pr-4 text-right font-mono font-medium text-xs',
                   pos.pnl_unrealized >= 0 ? 'text-green-600' : 'text-red-600',
                 )}>
                   {formatPct(pos.pnl_pct)}
                 </td>
-                <td className="py-3 text-gray-600 text-xs">{formatDuration(pos.duration_s)}</td>
-                <td className="py-3 text-gray-600 text-xs">{pos.regime_at_entry}</td>
+                <td className="py-3 pr-4 text-gray-600 text-xs">{formatDuration(pos.duration_s)}</td>
+                <td className="py-3 pr-4 text-gray-600 text-xs">{pos.regime_at_entry}</td>
                 <td className="py-3 text-gray-600 text-xs">
                   {pos.stop_loss !== null ? formatUSD(pos.stop_loss) : '—'}
                   {' / '}
@@ -367,6 +367,7 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
               <th className="pb-3 pr-3 font-medium text-right">Entry</th>
               <th className="pb-3 pr-3 font-medium text-right">Exit</th>
               <th className="pb-3 pr-3 font-medium text-right">PnL $</th>
+              <th className="pb-3 pr-3 font-medium text-right">PnL %</th>
               <th className="pb-3 pr-3 font-medium text-right">R-Multiple</th>
               <th className="pb-3 pr-3 font-medium">Duration</th>
               <th className="pb-3 pr-3 font-medium">Regime</th>
@@ -394,19 +395,25 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
                   {formatUSD(trade.exit_price)}
                 </td>
                 <td className={cn(
-                  'py-2 text-right font-mono font-medium text-xs',
+                  'py-2 pr-4 text-right font-mono font-medium text-xs',
                   trade.pnl_usdt >= 0 ? 'text-green-600' : 'text-red-600',
                 )}>
                   {formatUSD(trade.pnl_usdt)}
                 </td>
                 <td className={cn(
-                  'py-2 text-right font-mono font-medium text-xs',
+                  'py-2 pr-4 text-right font-mono font-medium text-xs',
+                  (trade.pnl_pct ?? 0) >= 0 ? 'text-green-600' : 'text-red-600',
+                )}>
+                  {formatPct(trade.pnl_pct ?? 0)}
+                </td>
+                <td className={cn(
+                  'py-2 pr-4 text-right font-mono font-medium text-xs',
                   trade.r_multiple >= 0 ? 'text-green-600' : 'text-red-600',
                 )}>
                   {trade.r_multiple.toFixed(2)}R
                 </td>
-                <td className="py-2 text-gray-600 text-xs">{formatDuration(trade.duration_s)}</td>
-                <td className="py-2 text-gray-600 text-xs">{trade.regime}</td>
+                <td className="py-2 pr-4 text-gray-600 text-xs">{formatDuration(trade.duration_s)}</td>
+                <td className="py-2 pr-4 text-gray-600 text-xs">{trade.regime}</td>
                 <td className="py-2 text-gray-600 text-xs">{trade.exit_reason}</td>
               </tr>
             ))}
