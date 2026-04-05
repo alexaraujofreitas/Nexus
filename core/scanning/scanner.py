@@ -349,17 +349,24 @@ class ScanWorker(QThread):
             _higher_tf = _tf_map.get(self._timeframe)
 
             # Build fetch manifest: (symbol, timeframe, limit, cache_key)
+            # De-duplicate: if PBL/SLC ctx_4h and MTF both need 4h, merge into
+            # one fetch with the larger bar count to avoid wasting API calls.
             _fetch_manifest: list[tuple[str, str, int, str]] = []
             for sym in qualifying:
                 # Primary OHLCV
                 _fetch_manifest.append((sym, self._timeframe, _ohlcv_limit, f"{sym}|primary"))
                 # Context TFs for PBL/SLC
+                _ctx_4h_added = False
                 if _pbl_slc_enabled:
                     _fetch_manifest.append((sym, "4h", 60, f"{sym}|ctx_4h"))
+                    _ctx_4h_added = True
                     _fetch_manifest.append((sym, "1h", _slc_bars, f"{sym}|ctx_1h"))
-                # MTF confirmation
+                # MTF confirmation — skip if already fetching same TF via ctx
                 if _mtf_enabled and _higher_tf:
-                    _fetch_manifest.append((sym, _higher_tf, 50, f"{sym}|mtf"))
+                    if _higher_tf == "4h" and _ctx_4h_added:
+                        pass  # ctx_4h already fetches 4h with 60 bars (≥50 needed)
+                    else:
+                        _fetch_manifest.append((sym, _higher_tf, 50, f"{sym}|mtf"))
 
             metrics.context_fetches_total = len(_fetch_manifest) - len(qualifying)
 
@@ -385,8 +392,11 @@ class ScanWorker(QThread):
                 finally:
                     _inner.shutdown(wait=False, cancel_futures=True)
 
-            # Execute all fetches concurrently — cap at 10 workers to respect rate limits
-            _max_fetch_workers = min(len(_fetch_manifest), 10)
+            # Execute all fetches concurrently — cap at 20 workers.
+            # With 20 symbols × 3 TFs = 60 tasks, 10 workers hit the 20s
+            # batch timeout on the tail end. Bybit rate limit is 120 req/5s
+            # for market-data endpoints, so 20 concurrent is safe.
+            _max_fetch_workers = min(len(_fetch_manifest), 20)
             metrics.fetch_concurrency = _max_fetch_workers
             _ohlcv_cache: dict[str, list] = {}  # cache_key → raw OHLCV
 
@@ -396,7 +406,7 @@ class ScanWorker(QThread):
                     _pool.submit(_fetch_one_batched, sym, tf, lim, key): key
                     for sym, tf, lim, key in _fetch_manifest
                 }
-                for _fut in concurrent.futures.as_completed(_futures, timeout=20):
+                for _fut in concurrent.futures.as_completed(_futures, timeout=45):
                     try:
                         cache_key, tf, raw = _fut.result()
                         _ohlcv_cache[cache_key] = raw
@@ -410,7 +420,7 @@ class ScanWorker(QThread):
                         logger.warning("Scanner: prefetch result error for %s: %s", _key, _exc)
                         _ohlcv_cache[_key] = []
             except concurrent.futures.TimeoutError:
-                logger.warning("Scanner: OHLCV batch prefetch timed out after 20s")
+                logger.warning("Scanner: OHLCV batch prefetch timed out after 45s")
                 metrics.timeouts += 1
             except Exception as _exc:
                 logger.warning("Scanner: OHLCV batch prefetch failed: %s", _exc)
@@ -428,6 +438,40 @@ class ScanWorker(QThread):
                 metrics.ohlcv_prefetch_ms, _max_fetch_workers,
                 f", failed: {_fail_primary}" if _fail_primary else "",
             )
+
+            # ── Retry failed primary fetches sequentially ─────────────
+            # If any primary OHLCV fetches timed out in the batch phase,
+            # retry them one-at-a-time. This handles rate-limit / queue
+            # congestion without the compute-phase fallback overhead.
+            if _fail_primary:
+                logger.info("Scanner: retrying %d failed primary fetches: %s", len(_fail_primary), _fail_primary)
+                for _retry_sym in _fail_primary:
+                    try:
+                        _retry_key = f"{_retry_sym}|primary"
+                        _rt0 = time.time()
+                        _rp = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                        try:
+                            _rf = _rp.submit(self._exchange.fetch_ohlcv, _retry_sym, self._timeframe, limit=_ohlcv_limit)
+                            _rraw = _rf.result(timeout=15.0)
+                        except concurrent.futures.TimeoutError:
+                            logger.warning("Scanner: retry fetch TIMED OUT for %s after 15s", _retry_sym)
+                            continue
+                        finally:
+                            _rp.shutdown(wait=False, cancel_futures=True)
+                        if _rraw and len(_rraw) >= 2:
+                            _rraw, _ = enforce_closed_candles(_rraw, self._timeframe, log_symbol=_retry_sym)
+                        if _rraw and len(_rraw) >= 30:
+                            _ohlcv_cache[_retry_key] = _rraw
+                            metrics.symbols_fetched_ok += 1
+                            metrics.retries += 1
+                            logger.info("Scanner: retry OK for %s — %d bars (%.0fms)",
+                                        _retry_sym, len(_rraw), (time.time() - _rt0) * 1000)
+                    except Exception as _re:
+                        logger.warning("Scanner: retry FAILED for %s: %s", _retry_sym, _re)
+                _ok_primary = [s for s in qualifying if _ohlcv_cache.get(f"{s}|primary") and len(_ohlcv_cache[f"{s}|primary"]) >= 30]
+                _still_fail = [s for s in qualifying if s not in _ok_primary]
+                if _still_fail:
+                    logger.warning("Scanner: %d symbols still failed after retry: %s", len(_still_fail), _still_fail)
 
             # ══════════════════════════════════════════════════════════
             # PHASE 2: Parallel per-symbol compute pipeline
@@ -1101,7 +1145,8 @@ class ScanWorker(QThread):
         if candidate and _ss.get("mtf_enabled", False):
             try:
                 _higher_tf = _ss.get("higher_tf")
-                raw_htf = prefetched_mtf
+                # Fall back to ctx_4h if mtf key was deduped (both are 4h)
+                raw_htf = prefetched_mtf or prefetched_ctx_4h
                 if raw_htf and len(raw_htf) >= 20:
                     df_htf = pd.DataFrame(raw_htf, columns=["timestamp", "open", "high", "low", "close", "volume"])
                     df_htf["timestamp"] = pd.to_datetime(df_htf["timestamp"], unit="ms", utc=True)
