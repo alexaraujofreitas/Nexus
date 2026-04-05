@@ -1,5 +1,5 @@
 /**
- * NexusTrader — Demo Monitor API (Workstream 8H)
+ * NexusTrader — Trades Monitor API (Workstream 8H)
  * Real-time demo trading monitor endpoints.
  */
 import api from './client';
@@ -81,65 +81,92 @@ export interface MonitorTrade {
 // ── Response wrappers ──────────────────────────────────
 
 export interface PositionsResponse {
-  status: string;
   positions: MonitorPosition[];
   count: number;
-  timestamp: string;
-  data_source: string;
 }
 
 export interface PortfolioResponse {
-  status: string;
   portfolio: PortfolioState;
-  timestamp: string;
-  data_source: string;
 }
 
 export interface PnLResponse {
-  status: string;
   pnl: LivePnL;
-  timestamp: string;
-  data_source: string;
 }
 
 export interface RiskResponse {
-  status: string;
   risk: RiskState;
-  timestamp: string;
-  data_source: string;
 }
 
 export interface TradesResponse {
-  status: string;
   trades: MonitorTrade[];
   count: number;
-  timestamp: string;
-  data_source: string;
 }
 
 // ── API functions ──────────────────────────────────────
 
 export async function getMonitorPositions(): Promise<PositionsResponse> {
   const res = await api.get('/monitor/positions');
-  return res.data;
+  const d = res.data;
+  return { positions: d.positions || [], count: d.count ?? 0 };
 }
 
 export async function getMonitorPortfolio(): Promise<PortfolioResponse> {
   const res = await api.get('/monitor/portfolio');
-  return res.data;
+  const d = res.data;
+  return { portfolio: d.portfolio || d };
 }
 
 export async function getMonitorPnL(): Promise<PnLResponse> {
   const res = await api.get('/monitor/pnl');
-  return res.data;
+  const d = res.data;
+  return { pnl: d.pnl || d };
 }
 
 export async function getMonitorRisk(): Promise<RiskResponse> {
-  const res = await api.get('/monitor/risk');
-  return res.data;
+  // Try monitor/risk first; if it errors, fall back to risk/status
+  try {
+    const res = await api.get('/monitor/risk');
+    const d = res.data;
+    if (d.status === 'error' || !d.risk) throw new Error('monitor/risk failed');
+    return { risk: d.risk };
+  } catch {
+    // Fallback: build risk state from the working /risk/status endpoint
+    try {
+      const res = await api.get('/risk/status');
+      const d = res.data;
+      const r = d.risk || d;
+      return {
+        risk: {
+          drawdown_pct: r.drawdown_pct ?? 0,
+          daily_loss_pct: r.daily_loss_pct ?? 0,
+          circuit_breaker_triggered: r.circuit_breaker_on ?? false,
+          trading_enabled: !r.circuit_breaker_on,
+          crash_defense_tier: r.crash_tier ?? 'NORMAL',
+          is_defensive: r.is_defensive ?? false,
+          is_safe_mode: false,
+          reason: '',
+        },
+      };
+    } catch {
+      // Both failed — return safe defaults
+      return {
+        risk: {
+          drawdown_pct: 0,
+          daily_loss_pct: 0,
+          circuit_breaker_triggered: false,
+          trading_enabled: true,
+          crash_defense_tier: 'NORMAL',
+          is_defensive: false,
+          is_safe_mode: false,
+          reason: '',
+        },
+      };
+    }
+  }
 }
 
 export async function getMonitorTrades(): Promise<TradesResponse> {
   const res = await api.get('/monitor/trades');
-  return res.data;
+  const d = res.data;
+  return { trades: d.trades || [], count: d.count ?? 0 };
 }

@@ -119,14 +119,14 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
-              <th className="pb-3 font-medium">Symbol</th>
-              <th className="pb-3 font-medium">Side</th>
-              <th className="pb-3 font-medium text-right">Entry</th>
-              <th className="pb-3 font-medium text-right">Current</th>
-              <th className="pb-3 font-medium text-right">PnL $</th>
-              <th className="pb-3 font-medium text-right">PnL %</th>
-              <th className="pb-3 font-medium">Duration</th>
-              <th className="pb-3 font-medium">Regime</th>
+              <th className="pb-3 pr-3 font-medium">Symbol</th>
+              <th className="pb-3 pr-3 font-medium">Side</th>
+              <th className="pb-3 pr-3 font-medium text-right">Entry</th>
+              <th className="pb-3 pr-3 font-medium text-right">Current</th>
+              <th className="pb-3 pr-3 font-medium text-right">PnL $</th>
+              <th className="pb-3 pr-3 font-medium text-right">PnL %</th>
+              <th className="pb-3 pr-3 font-medium">Duration</th>
+              <th className="pb-3 pr-3 font-medium">Regime</th>
               <th className="pb-3 font-medium">SL / TP</th>
             </tr>
           </thead>
@@ -136,7 +136,7 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
                 'border-b border-gray-100 hover:bg-gray-50',
                 pos.pnl_unrealized >= 0 ? 'bg-green-50/30' : 'bg-red-50/30',
               )}>
-                <td className="py-3 font-medium text-gray-900">{pos.symbol}</td>
+                <td className="py-3 pr-3 font-medium text-gray-900">{pos.symbol}</td>
                 <td className={cn(
                   'py-3 font-medium',
                   pos.side === 'long' ? 'text-green-600' : 'text-red-600',
@@ -144,10 +144,10 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
                   {pos.side.toUpperCase()}
                 </td>
                 <td className="py-3 text-right text-gray-700 font-mono text-xs">
-                  {pos.entry_price.toFixed(2)}
+                  {formatUSD(pos.entry_price)}
                 </td>
                 <td className="py-3 text-right text-gray-700 font-mono text-xs">
-                  {pos.current_price.toFixed(2)}
+                  {formatUSD(pos.current_price)}
                 </td>
                 <td className={cn(
                   'py-3 text-right font-mono font-medium text-xs',
@@ -164,9 +164,9 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
                 <td className="py-3 text-gray-600 text-xs">{formatDuration(pos.duration_s)}</td>
                 <td className="py-3 text-gray-600 text-xs">{pos.regime_at_entry}</td>
                 <td className="py-3 text-gray-600 text-xs">
-                  {pos.stop_loss !== null ? pos.stop_loss.toFixed(2) : '—'}
+                  {pos.stop_loss !== null ? formatUSD(pos.stop_loss) : '—'}
                   {' / '}
-                  {pos.take_profit !== null ? pos.take_profit.toFixed(2) : '—'}
+                  {pos.take_profit !== null ? formatUSD(pos.take_profit) : '—'}
                 </td>
               </tr>
             ))}
@@ -361,15 +361,15 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
-              <th className="pb-3 font-medium">Time</th>
-              <th className="pb-3 font-medium">Symbol</th>
-              <th className="pb-3 font-medium">Side</th>
-              <th className="pb-3 font-medium text-right">Entry</th>
-              <th className="pb-3 font-medium text-right">Exit</th>
-              <th className="pb-3 font-medium text-right">PnL $</th>
-              <th className="pb-3 font-medium text-right">R-Multiple</th>
-              <th className="pb-3 font-medium">Duration</th>
-              <th className="pb-3 font-medium">Regime</th>
+              <th className="pb-3 pr-3 font-medium">Time</th>
+              <th className="pb-3 pr-3 font-medium">Symbol</th>
+              <th className="pb-3 pr-3 font-medium">Side</th>
+              <th className="pb-3 pr-3 font-medium text-right">Entry</th>
+              <th className="pb-3 pr-3 font-medium text-right">Exit</th>
+              <th className="pb-3 pr-3 font-medium text-right">PnL $</th>
+              <th className="pb-3 pr-3 font-medium text-right">R-Multiple</th>
+              <th className="pb-3 pr-3 font-medium">Duration</th>
+              <th className="pb-3 pr-3 font-medium">Regime</th>
               <th className="pb-3 font-medium">Exit Reason</th>
             </tr>
           </thead>
@@ -383,15 +383,15 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
                 <td className="py-2 font-medium text-gray-900">{trade.symbol}</td>
                 <td className={cn(
                   'py-2 font-medium',
-                  trade.side === 'long' ? 'text-green-600' : 'text-red-600',
+                  (trade.side === 'long' || trade.side === 'buy') ? 'text-green-600' : 'text-red-600',
                 )}>
-                  {trade.side.toUpperCase()}
+                  {(trade.side === 'buy' || trade.side === 'long') ? 'LONG' : 'SHORT'}
                 </td>
                 <td className="py-2 text-right text-gray-700 font-mono text-xs">
-                  {trade.entry_price.toFixed(2)}
+                  {formatUSD(trade.entry_price)}
                 </td>
                 <td className="py-2 text-right text-gray-700 font-mono text-xs">
-                  {trade.exit_price.toFixed(2)}
+                  {formatUSD(trade.exit_price)}
                 </td>
                 <td className={cn(
                   'py-2 text-right font-mono font-medium text-xs',
@@ -490,8 +490,8 @@ export default function DemoMonitor() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Demo Monitor</h1>
-          <p className="text-sm text-gray-500 mt-1">Real-time paper trading dashboard (Phase 1)</p>
+          <h1 className="text-2xl font-bold text-gray-900">Trades</h1>
+          <p className="text-sm text-gray-500 mt-1">Real-time paper trading monitor</p>
         </div>
         <div className="flex items-center gap-2">
           <span className={cn(

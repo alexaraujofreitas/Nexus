@@ -46,7 +46,7 @@ export interface MenuItem {
  */
 export const menuItems: MenuItem[] = [
   { label: 'Dashboard',        icon: LayoutDashboard,  path: '/' },
-  { label: 'Demo Monitor',     icon: Monitor,          path: '/monitor' },
+  { label: 'Trades',            icon: Monitor,          path: '/monitor' },
   { label: 'Asset Management', icon: Boxes,            path: '/assets' },
   { label: 'Scanner',          icon: Radar,            path: '/scanner' },
   { label: 'Market Regime',    icon: TrendingUp,       path: '/regime' },
