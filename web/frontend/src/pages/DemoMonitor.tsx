@@ -44,11 +44,10 @@ function computeDuration(durationFromApi: number, openedAt?: string): number {
 function PaginationBar({ page, totalPages, total, onPageChange }: {
   page: number; totalPages: number; total: number; onPageChange: (p: number) => void;
 }) {
-  if (totalPages <= 1) return null;
   return (
     <div className="flex items-center justify-between pt-3 mt-1 border-t border-gray-100">
       <span className="text-xs text-gray-400">
-        Page {page} of {totalPages}
+        Page {page} of {totalPages || 1} <span className="ml-2 text-gray-300">({total} items)</span>
       </span>
       <div className="flex items-center gap-1">
         <button
