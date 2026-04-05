@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   getMonitorPositions,
   getMonitorPortfolio,
@@ -13,7 +14,9 @@ import { getCurrentRegime } from '../api/analytics';
 import { useWSStore } from '../stores/wsStore';
 import { formatUSD, formatPct, timeAgo, cn } from '../lib/utils';
 
-// ── Helper: Format duration ────────────────────────────
+const PAGE_SIZE = 10;
+
+// ── Helpers ──────────────────────────────────────────────
 function formatDuration(seconds: number): string {
   if (seconds <= 0) return '—';
   if (seconds < 60) return `${seconds}s`;
@@ -28,7 +31,6 @@ function formatDuration(seconds: number): string {
   return `${d}d ${h}h`;
 }
 
-/** Compute duration from opened_at string. Falls back to duration_s from API. */
 function computeDuration(durationFromApi: number, openedAt?: string): number {
   if (durationFromApi > 0) return durationFromApi;
   if (!openedAt) return 0;
@@ -38,7 +40,45 @@ function computeDuration(durationFromApi: number, openedAt?: string): number {
   return Math.max(0, Math.floor((Date.now() - openMs) / 1000));
 }
 
-// ── Component: Portfolio Summary Bar ───────────────────
+// ── Reusable Pagination Bar ──────────────────────────────
+function PaginationBar({ page, totalPages, total, onPageChange }: {
+  page: number; totalPages: number; total: number; onPageChange: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between pt-3 mt-1 border-t border-gray-100">
+      <span className="text-xs text-gray-400">
+        Page {page} of {totalPages}
+      </span>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onPageChange(page - 1)}
+          disabled={page <= 1}
+          className={cn(
+            'p-1.5 rounded-lg transition-colors',
+            page <= 1 ? 'text-gray-200 cursor-not-allowed' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
+          )}
+          aria-label="Previous page"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => onPageChange(page + 1)}
+          disabled={page >= totalPages}
+          className={cn(
+            'p-1.5 rounded-lg transition-colors',
+            page >= totalPages ? 'text-gray-200 cursor-not-allowed' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
+          )}
+          aria-label="Next page"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Portfolio Summary Bar ────────────────────────────────
 function PortfolioSummary({ portfolio, pnl }: { portfolio: any; pnl: any }) {
   if (!portfolio || !pnl) {
     return (
@@ -54,14 +94,13 @@ function PortfolioSummary({ portfolio, pnl }: { portfolio: any; pnl: any }) {
   }
 
   const stats = [
-    { label: 'Equity',          value: formatUSD(portfolio.equity),             color: 'default' as const },
-    { label: 'Daily PnL',       value: formatUSD(pnl.daily_pnl),               color: (pnl.daily_pnl >= 0 ? 'green' : 'red') as const },
-    { label: 'Unrealized PnL',  value: formatUSD(pnl.total_unrealized),         color: (pnl.total_unrealized >= 0 ? 'green' : 'red') as const },
-    { label: 'Realized PnL',    value: formatUSD(pnl.total_realized),           color: (pnl.total_realized >= 0 ? 'green' : 'red') as const },
-    { label: 'Portfolio Heat',   value: formatPct(portfolio.portfolio_heat_pct), color: (portfolio.portfolio_heat_pct > 5 ? 'red' : portfolio.portfolio_heat_pct > 3 ? 'yellow' : 'green') as const },
-    { label: 'Fees Paid',       value: formatUSD(pnl.fees_paid),                color: 'default' as const },
+    { label: 'Equity',         value: formatUSD(portfolio.equity),             color: 'default' as const },
+    { label: 'Daily PnL',      value: formatUSD(pnl.daily_pnl),               color: (pnl.daily_pnl >= 0 ? 'green' : 'red') as const },
+    { label: 'Unrealized PnL', value: formatUSD(pnl.total_unrealized),         color: (pnl.total_unrealized >= 0 ? 'green' : 'red') as const },
+    { label: 'Realized PnL',   value: formatUSD(pnl.total_realized),           color: (pnl.total_realized >= 0 ? 'green' : 'red') as const },
+    { label: 'Portfolio Heat',  value: formatPct(portfolio.portfolio_heat_pct), color: (portfolio.portfolio_heat_pct > 5 ? 'red' : portfolio.portfolio_heat_pct > 3 ? 'yellow' : 'green') as const },
+    { label: 'Fees Paid',      value: formatUSD(pnl.fees_paid),                color: 'default' as const },
   ];
-
   const colorMap = { green: 'text-green-600', red: 'text-red-600', yellow: 'text-yellow-600', default: 'text-gray-900' };
 
   return (
@@ -76,8 +115,21 @@ function PortfolioSummary({ portfolio, pnl }: { portfolio: any; pnl: any }) {
   );
 }
 
-// ── Component: Active Positions Table ──────────────────
+// ── Active Positions Table (paginated) ───────────────────
 function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
+  const [page, setPage] = useState(1);
+
+  const sorted = useMemo(
+    () => [...(positions || [])].sort((a, b) => b.pnl_unrealized - a.pnl_unrealized),
+    [positions],
+  );
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const pageItems = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Reset to page 1 when data changes significantly
+  useEffect(() => { if (page > totalPages && totalPages > 0) setPage(1); }, [totalPages]);
+
   if (!positions || positions.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -86,8 +138,6 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
       </div>
     );
   }
-
-  const sorted = [...positions].sort((a, b) => b.pnl_unrealized - a.pnl_unrealized);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -110,7 +160,7 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((pos, idx) => (
+            {pageItems.map((pos, idx) => (
               <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
                 <td className="py-3 px-3 text-center font-semibold text-gray-900">{pos.symbol}</td>
                 <td className={cn('py-3 px-3 text-center font-semibold', pos.side === 'long' ? 'text-green-600' : 'text-red-600')}>
@@ -136,21 +186,19 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
           </tbody>
         </table>
       </div>
+      <PaginationBar page={page} totalPages={totalPages} total={sorted.length} onPageChange={setPage} />
     </div>
   );
 }
 
-// ── Component: Risk Panel ──────────────────────────────
+// ── Risk Panel ───────────────────────────────────────────
 function RiskPanel({ risk, regime }: { risk: any; regime: any }) {
   if (!risk) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
         <div className="space-y-4">
           {[...Array(5)].map((_, i) => (
-            <div key={i}>
-              <div className="h-3 bg-gray-200 rounded w-1/3 mb-2" />
-              <div className="h-4 bg-gray-200 rounded w-full" />
-            </div>
+            <div key={i}><div className="h-3 bg-gray-200 rounded w-1/3 mb-2" /><div className="h-4 bg-gray-200 rounded w-full" /></div>
           ))}
         </div>
       </div>
@@ -158,13 +206,10 @@ function RiskPanel({ risk, regime }: { risk: any; regime: any }) {
   }
 
   const tierColor: Record<string, string> = {
-    NORMAL: 'bg-green-100 text-green-700',
-    DEFENSIVE: 'bg-yellow-100 text-yellow-700',
-    HIGH_ALERT: 'bg-orange-100 text-orange-700',
-    EMERGENCY: 'bg-red-100 text-red-700',
+    NORMAL: 'bg-green-100 text-green-700', DEFENSIVE: 'bg-yellow-100 text-yellow-700',
+    HIGH_ALERT: 'bg-orange-100 text-orange-700', EMERGENCY: 'bg-red-100 text-red-700',
     SYSTEMIC: 'bg-red-200 text-red-800',
   };
-
   const regimeColors: Record<string, string> = {
     bull_trend: '#16a34a', bear_trend: '#dc2626', ranging: '#ca8a04',
     vol_expansion: '#7c3aed', uncertain: '#6b7280',
@@ -188,7 +233,6 @@ function RiskPanel({ risk, regime }: { risk: any; regime: any }) {
           </div>
         </div>
       )}
-
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">Risk Status</p>
         <div className="mb-4">
@@ -230,8 +274,20 @@ function RiskPanel({ risk, regime }: { risk: any; regime: any }) {
   );
 }
 
-// ── Component: Recent Trades Table ─────────────────────
+// ── Recent Trades Table (paginated) ──────────────────────
 function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
+  const [page, setPage] = useState(1);
+
+  const sorted = useMemo(
+    () => [...(trades || [])].sort((a, b) => new Date(b.closed_at).getTime() - new Date(a.closed_at).getTime()),
+    [trades],
+  );
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const pageItems = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  useEffect(() => { if (page > totalPages && totalPages > 0) setPage(1); }, [totalPages]);
+
   if (!trades || trades.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -241,11 +297,11 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
     );
   }
 
-  const sorted = [...trades].sort((a, b) => new Date(b.closed_at).getTime() - new Date(a.closed_at).getTime());
-
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">Recent Trades (Last 50)</p>
+      <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">
+        Recent Trades ({sorted.length})
+      </p>
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
@@ -264,7 +320,7 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.slice(0, 50).map((trade, idx) => {
+            {pageItems.map((trade, idx) => {
               const isLong = trade.side === 'buy' || trade.side === 'long';
               return (
                 <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
@@ -293,15 +349,15 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
           </tbody>
         </table>
       </div>
+      <PaginationBar page={page} totalPages={totalPages} total={sorted.length} onPageChange={setPage} />
     </div>
   );
 }
 
-// ── Main Page ──────────────────────────────────────────
+// ── Main Page ────────────────────────────────────────────
 export default function DemoMonitor() {
   const { connect, subscribe, lastMessage, status } = useWSStore();
 
-  // Tick every 10s to update live durations
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 10000);
@@ -332,7 +388,6 @@ export default function DemoMonitor() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Trades</h1>
