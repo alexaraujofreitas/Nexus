@@ -640,7 +640,7 @@ class ScanWorker(QThread):
                     _compute_pool.submit(_process_symbol, sym): sym
                     for sym in qualifying
                 }
-                for _fut in concurrent.futures.as_completed(_compute_futures, timeout=30):
+                for _fut in concurrent.futures.as_completed(_compute_futures, timeout=90):
                     try:
                         result = _fut.result()
                         if len(result) == 8:

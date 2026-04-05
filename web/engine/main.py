@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import signal
 import sys
@@ -40,9 +41,23 @@ install_qt_shim()
 from core_patch.event_bus import EventBus, Topics  # noqa: E402
 from core_patch.redis_bridge import RedisBridge  # noqa: E402
 
+# ── Logging: stdout + rotating file ────────────────────────
+_LOG_FORMAT = "%(asctime)s | %(name)-30s | %(levelname)-7s | %(message)s"
+_LOG_DIR = os.path.join(_PROJECT_ROOT, "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(name)-30s | %(levelname)-7s | %(message)s",
+    format=_LOG_FORMAT,
+    handlers=[
+        logging.StreamHandler(),                          # stdout
+        logging.handlers.RotatingFileHandler(             # file
+            os.path.join(_LOG_DIR, "web_engine.log"),
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=5,
+            encoding="utf-8",
+        ),
+    ],
 )
 logger = logging.getLogger("nexus.engine")
 
@@ -308,9 +323,51 @@ class TradingEngineService:
             auto_start = self._settings.get("scanner.auto_execute", True)
         if auto_start:
             self._scanner.start()
-            logger.info("Scanner auto-started")
+            logger.info("Scanner auto-started (QTimer-based timers active)")
+            # v3: asyncio-based scan loop as safety net.
+            # The Qt shim's QTimer runs in daemon threads which can silently die.
+            # This asyncio task ensures scans fire on candle boundaries regardless.
+            self._scan_loop_task = asyncio.create_task(self._scan_loop())
+            logger.info("Engine: asyncio scan loop started as safety net")
         else:
             logger.info("Scanner imported (auto_execute=false, idle)")
+
+    async def _scan_loop(self):
+        """
+        Asyncio-based scan loop that fires scans on candle boundaries.
+        Acts as a safety net for the QTimer-based scanner timers which
+        may fail silently in the headless (non-Qt) environment.
+        """
+        from core.scanning.scanner import TF_POLL_SECONDS, _seconds_to_next_candle
+        tf = self._scanner._timeframe if self._scanner else "30m"
+        interval_s = TF_POLL_SECONDS.get(tf, 1800)
+
+        # Wait for the first candle boundary
+        first_delay = _seconds_to_next_candle(tf)
+        logger.info("Engine scan loop: first aligned scan in %ds (TF=%s)", first_delay, tf)
+        await asyncio.sleep(first_delay)
+
+        while self._running:
+            try:
+                if self._scanner and self._scanner._running:
+                    if not self._scanner._any_scan_active:
+                        logger.info("Engine scan loop: triggering aligned scan")
+                        self._scanner._trigger_scan()
+                    else:
+                        logger.info("Engine scan loop: scan already active, skipping")
+                        # Safety: if scan has been active for > 120s, force-reset
+                        if (self._scanner._worker_started_at and
+                                time.time() - self._scanner._worker_started_at > 120):
+                            logger.warning("Engine scan loop: scan stuck for >120s, force-resetting _any_scan_active")
+                            self._scanner._any_scan_active = False
+                            self._scanner._worker = None
+                            self._scanner._worker_started_at = None
+            except Exception as e:
+                logger.error("Engine scan loop error: %s", e, exc_info=True)
+
+            # Sleep until next candle boundary
+            next_delay = _seconds_to_next_candle(tf)
+            await asyncio.sleep(next_delay)
 
     def _on_scan_all_results(self, results: list):
         """Store per-symbol scan results (all symbols incl. rejected/filtered)."""
