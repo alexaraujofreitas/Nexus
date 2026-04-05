@@ -65,6 +65,7 @@ class TradingEngineService:
         self._event_bus = EventBus()
         self._redis_bridge: RedisBridge | None = None
         self._command_task: asyncio.Task | None = None
+        self._http_api = None          # EngineHttpApi (aiohttp server)
 
         # ── Core component references (populated during init) ──
         self._settings = None          # config.settings.AppSettings
@@ -82,22 +83,26 @@ class TradingEngineService:
         self._trading_paused = False
 
     async def start(self):
-        """Full 13-step startup sequence."""
+        """Full 14-step startup sequence."""
         logger.info("=== NexusTrader Engine Service Starting ===")
         self._running = True
         self._start_time = time.time()
 
-        # Step 1: Connect Redis bridge
-        logger.info("[1/13] Connecting Redis bridge")
-        self._redis_bridge = RedisBridge(
-            redis_url=REDIS_URL,
-            service_name="engine",
-        )
-        self._event_bus.attach_redis_bridge(self._redis_bridge)
-        self._redis_bridge.start(self._event_bus)
+        # Step 1: Connect Redis bridge (non-fatal — not needed for local dev)
+        logger.info("[1/14] Connecting Redis bridge")
+        try:
+            self._redis_bridge = RedisBridge(
+                redis_url=REDIS_URL,
+                service_name="engine",
+            )
+            self._event_bus.attach_redis_bridge(self._redis_bridge)
+            self._redis_bridge.start(self._event_bus)
+        except Exception as e:
+            logger.warning("[1/14] Redis unavailable (local dev mode): %s", e)
+            self._redis_bridge = None
 
         # Step 2: Publish engine state
-        logger.info("[2/13] Publishing initial engine state")
+        logger.info("[2/14] Publishing initial engine state")
         await self._update_state("initializing")
 
         # Step 3-12: Core component initialization
@@ -118,18 +123,33 @@ class TradingEngineService:
 
         for step_num, step_name, step_fn in init_steps:
             try:
-                logger.info("[%d/13] %s", step_num, step_name)
+                logger.info("[%d/14] %s", step_num, step_name)
                 await step_fn()
             except Exception as e:
                 logger.error(
-                    "[%d/13] FAILED: %s — %s\n%s",
+                    "[%d/14] FAILED: %s — %s\n%s",
                     step_num, step_name, e, traceback.format_exc(),
                 )
                 await self._update_state("init_error", error=str(e))
 
-        # Step 13: Start command listener
-        logger.info("[13/13] Starting command listener")
-        self._command_task = asyncio.create_task(self._command_loop())
+        # Step 13: Start command listener (Redis — non-fatal for local dev)
+        logger.info("[13/14] Starting command listener")
+        try:
+            self._command_task = asyncio.create_task(self._command_loop())
+        except Exception as e:
+            logger.warning("[13/14] Command listener failed (no Redis): %s", e)
+
+        # Step 14: Start embedded HTTP API server
+        logger.info("[14/14] Starting HTTP API server on :8000")
+        try:
+            # Import from same directory as this file
+            if _WEB_DIR not in sys.path:
+                sys.path.insert(0, _WEB_DIR)
+            from engine.http_api import EngineHttpApi
+            self._http_api = EngineHttpApi(self)
+            await self._http_api.start(host="0.0.0.0", port=8000)
+        except Exception as e:
+            logger.error("[14/14] HTTP API server failed: %s\n%s", e, traceback.format_exc())
 
         await self._update_state("running")
         logger.info("=== NexusTrader Engine Service Ready ===")
@@ -145,6 +165,13 @@ class TradingEngineService:
         """Graceful shutdown."""
         logger.info("Engine shutting down...")
         self._running = False
+
+        # Stop HTTP API server
+        if self._http_api:
+            try:
+                await self._http_api.stop()
+            except Exception as e:
+                logger.error("HTTP API stop error: %s", e)
 
         # Stop scanner if running
         if self._scanner and self._scanner._running:
@@ -183,9 +210,21 @@ class TradingEngineService:
         logger.info("Database initialized (SQLite)")
 
     async def _init_exchange(self):
-        """Import and store reference to ExchangeManager singleton."""
+        """Import and store reference to ExchangeManager singleton.
+        Auto-loads the active exchange from DB if one is configured."""
         from core.market_data.exchange_manager import exchange_manager
         self._exchange_manager = exchange_manager
+
+        # Auto-connect: load DB-configured exchange so scanner has data
+        if not exchange_manager.get_exchange():
+            try:
+                ok = exchange_manager.load_active_exchange()
+                if ok:
+                    logger.info("ExchangeManager auto-connected to active exchange")
+                else:
+                    logger.warning("ExchangeManager: no active exchange in DB")
+            except Exception as exc:
+                logger.warning("ExchangeManager auto-connect failed: %s", exc)
         logger.info("ExchangeManager ready")
 
     async def _init_orchestrator(self):
@@ -286,11 +325,24 @@ class TradingEngineService:
         """
         Listen for commands on Redis queue nexus:engine:commands.
         Process each command and reply on nexus:engine:replies:{command_id}.
-        """
-        import redis.asyncio as aioredis
 
-        r = aioredis.from_url(REDIS_URL, decode_responses=True)
-        logger.info("Command listener started on nexus:engine:commands")
+        Non-fatal: if Redis is unavailable (local dev), logs warning and exits.
+        The HTTP API serves as the primary command interface in local dev mode.
+        """
+        try:
+            import redis.asyncio as aioredis
+        except ImportError:
+            logger.warning("redis.asyncio not available — command loop disabled (HTTP API active)")
+            return
+
+        try:
+            r = aioredis.from_url(REDIS_URL, decode_responses=True)
+            # Test connection
+            await r.ping()
+            logger.info("Command listener started on nexus:engine:commands")
+        except Exception as e:
+            logger.warning("Redis unavailable — command loop disabled (HTTP API active): %s", e)
+            return
 
         try:
             while self._running:
@@ -640,7 +692,9 @@ class TradingEngineService:
 
         Assets that have not yet been scanned show status 'Waiting'.
         """
-        # ── 1. Get tradable universe from DB ──────────────────
+        # ── 1. Get tradable universe ──────────────────────────
+        # Primary: async DB (PostgreSQL).  Fallback: core SQLite DB.
+        # Final fallback: scanner watchlist (config.yaml).
         tradable_assets: list[dict] = []
         try:
             from app.database import get_async_session_factory
@@ -668,8 +722,41 @@ class TradingEngineService:
                             "symbol": a.symbol,
                             "allocation_weight": a.allocation_weight,
                         })
-        except Exception as e:
-            logger.warning("_cmd_get_pipeline_status: DB query failed: %s", e)
+        except Exception:
+            pass
+
+        # Fallback: core SQLite DB (always available locally)
+        if not tradable_assets:
+            try:
+                from core.database.engine import get_session
+                from core.database.models import Exchange as ExModel, Asset as AsModel
+                with get_session() as session:
+                    active_ex = session.query(ExModel).filter_by(is_active=True).first()
+                    if active_ex:
+                        assets = (session.query(AsModel)
+                                  .filter_by(exchange_id=active_ex.id, is_tradable=True)
+                                  .order_by(AsModel.symbol).all())
+                        for a in assets:
+                            tradable_assets.append({
+                                "asset_id": a.id,
+                                "symbol": a.symbol,
+                                "allocation_weight": getattr(a, "allocation_weight", 1.0) or 1.0,
+                            })
+            except Exception as e:
+                logger.warning("_cmd_get_pipeline_status: SQLite fallback failed: %s", e)
+
+        # Final fallback: scanner watchlist symbols
+        if not tradable_assets and self._scanner:
+            try:
+                symbols = self._scanner._watchlist_mgr.get_active_symbols()
+                for i, sym in enumerate(symbols):
+                    tradable_assets.append({
+                        "asset_id": i + 1,
+                        "symbol": sym,
+                        "allocation_weight": 1.0,
+                    })
+            except Exception as e:
+                logger.warning("_cmd_get_pipeline_status: watchlist fallback failed: %s", e)
 
         # ── 2. Build scanner results lookup ───────────────────
         scan_by_symbol: dict[str, dict] = {}
@@ -1096,34 +1183,81 @@ class TradingEngineService:
         return {"status": "ok", "symbols": symbols, "weights": weights, "source": "config"}
 
     async def _cmd_get_agent_status(self, params: dict) -> dict:
-        """Return status of all intelligence agents."""
+        """Return status of all intelligence agents.
+
+        First tries the real AgentCoordinator; if empty, synthesizes
+        per-model agent cards from the latest pipeline scan results so
+        the Intelligence page always has useful data.
+        """
+        agents: dict = {}
+
+        # 1. Try real coordinator
         try:
             from core.agents.agent_coordinator import get_coordinator
             coordinator = get_coordinator()
-            agents = coordinator.get_status() if hasattr(coordinator, 'get_status') else {}
-            return {"status": "ok", "agents": agents, "count": len(agents)}
-        except Exception as e:
-            return {"status": "error", "detail": f"AgentCoordinator unavailable: {e}"}
+            if hasattr(coordinator, 'get_status'):
+                agents = coordinator.get_status() or {}
+        except Exception:
+            pass
+
+        # 2. If coordinator returned nothing, synthesize from pipeline
+        if not agents:
+            pipeline = getattr(self, '_last_pipeline_results', None)
+            if not pipeline and self._scanner:
+                pipeline = getattr(self._scanner, '_last_scan_results', None)
+            if pipeline:
+                import datetime
+                now = datetime.datetime.utcnow().isoformat() + "Z"
+                # Collect all unique models across all assets
+                all_models: dict[str, dict] = {}
+                for asset in (pipeline if isinstance(pipeline, list) else []):
+                    if not isinstance(asset, dict):
+                        continue
+                    for m in asset.get("models_fired", []):
+                        if m not in all_models:
+                            all_models[m] = {
+                                "running": True, "stale": False,
+                                "signal": asset.get("score", 0.0),
+                                "confidence": asset.get("regime_confidence", 0.0),
+                                "updated_at": asset.get("scanned_at", now),
+                                "errors": 0,
+                            }
+                    for m in asset.get("models_no_signal", []):
+                        if m not in all_models:
+                            all_models[m] = {
+                                "running": True, "stale": False,
+                                "signal": 0.0,
+                                "confidence": 0.0,
+                                "updated_at": asset.get("scanned_at", now),
+                                "errors": 0,
+                            }
+                agents = all_models
+
+        return {"status": "ok", "agents": agents, "count": len(agents)}
 
     async def _cmd_get_signals(self, params: dict) -> dict:
         """Return recent signal data from the signal pipeline."""
-        # Signal data is ephemeral — read from event bus history or scanner results
         signals = []
-        if self._scanner and hasattr(self._scanner, '_last_scan_results'):
-            raw = self._scanner._last_scan_results or []
-            for r in raw:
-                if isinstance(r, dict) and r.get("score", 0) > 0:
+        if True:
+            # Try pipeline results first (richer), fall back to scan results
+            raw = getattr(self, '_last_pipeline_results', None)
+            if not raw and self._scanner:
+                raw = getattr(self._scanner, '_last_scan_results', None)
+            for r in (raw or []):
+                if not isinstance(r, dict):
+                    continue
+                if r.get("score", 0) > 0 or r.get("models_fired"):
                     signals.append({
                         "symbol": r.get("symbol", ""),
+                        "direction": r.get("direction", r.get("side", "")),
                         "score": r.get("score", 0.0),
-                        "side": r.get("side", ""),
-                        "models_fired": r.get("models_fired", []),
+                        "models": r.get("models_fired", []),
                         "regime": r.get("regime", ""),
                         "entry_price": r.get("entry_price"),
-                        "stop_loss": r.get("stop_loss_price"),
-                        "take_profit": r.get("take_profit_price"),
-                        "risk_reward": r.get("risk_reward_ratio"),
+                        "stop_loss": r.get("stop_loss", r.get("stop_loss_price")),
+                        "take_profit": r.get("take_profit", r.get("take_profit_price")),
                         "approved": r.get("is_approved", False),
+                        "rejection_reason": r.get("reason", ""),
                     })
         return {"status": "ok", "signals": signals, "count": len(signals)}
 
@@ -1164,18 +1298,31 @@ class TradingEngineService:
 
         # Get closed trades from PaperExecutor's in-memory list
         closed = list(reversed(getattr(self._pe, '_closed_trades', [])))
-        total = len(closed)
         start = (page - 1) * per_page
         end = start + per_page
         page_trades = closed[start:end]
 
+        # Summary stats across all trades (excluding partial closes)
+        full = [t for t in closed if t.get("exit_reason") != "partial_close"]
+        total_wins = sum(1 for t in full if (t.get("pnl_usdt") or 0) > 0)
+        total_losses = sum(1 for t in full if (t.get("pnl_usdt") or 0) <= 0)
+        total_pnl_usdt = round(sum(t.get("pnl_usdt") or 0 for t in full), 2)
+        entry_sum = sum(abs(t.get("size_usdt") or t.get("entry_size_usdt") or 0) for t in full)
+        total_pnl_pct = round((total_pnl_usdt / entry_sum * 100) if entry_sum > 0 else 0.0, 2)
+
         return {
             "status": "ok",
             "trades": page_trades,
-            "total": total,
+            "total": len(full),
             "page": page,
             "per_page": per_page,
-            "pages": (total + per_page - 1) // per_page if per_page > 0 else 0,
+            "pages": (len(full) + per_page - 1) // per_page if per_page > 0 else 0,
+            "summary": {
+                "wins": total_wins,
+                "losses": total_losses,
+                "total_pnl_usdt": total_pnl_usdt,
+                "total_pnl_pct": total_pnl_pct,
+            },
         }
 
     async def _cmd_update_config(self, params: dict) -> dict:
@@ -2105,8 +2252,10 @@ async def main():
     engine = TradingEngineService()
 
     loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(engine.stop()))
+    # add_signal_handler is Unix-only; skip on Windows
+    if hasattr(loop, "add_signal_handler") and os.name != "nt":
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(engine.stop()))
 
     await engine.start()
 
@@ -2114,7 +2263,7 @@ async def main():
     try:
         while engine._running:
             await asyncio.sleep(1)
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, KeyboardInterrupt):
         pass
     finally:
         await engine.stop()

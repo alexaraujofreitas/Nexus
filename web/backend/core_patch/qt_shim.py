@@ -47,7 +47,13 @@ class _Signal:
 
     def connect(self, callback: Callable) -> None:
         with self._lock:
-            if callback not in self._callbacks:
+            # Support signal-to-signal relay: in real Qt, connect(otherSignal)
+            # relays emissions.  The shim's _Signal is not callable, so wrap it.
+            if isinstance(callback, _Signal):
+                relay = callback.emit
+                if relay not in self._callbacks:
+                    self._callbacks.append(relay)
+            elif callback not in self._callbacks:
                 self._callbacks.append(callback)
 
     def disconnect(self, callback: Optional[Callable] = None) -> None:

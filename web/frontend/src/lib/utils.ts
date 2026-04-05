@@ -14,10 +14,15 @@ export function formatPct(value: number, decimals = 2): string {
 }
 
 /** Format a date relative to now */
-export function timeAgo(date: string | Date): string {
+export function timeAgo(date: string | Date | number | null | undefined): string {
+  if (date == null) return '—';
   const now = new Date();
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? new Date(date)
+          : typeof date === 'number' ? new Date(date < 1e10 ? date * 1000 : date)
+          : date;
+  if (isNaN(d.getTime())) return '—';
   const seconds = Math.floor((now.getTime() - d.getTime()) / 1000);
+  if (seconds < 0) return 'just now';
 
   if (seconds < 60) return `${seconds}s ago`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;

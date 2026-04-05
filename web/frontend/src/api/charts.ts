@@ -15,13 +15,23 @@ export interface OHLCVResponse {
   timeframe: string;
 }
 
+/**
+ * Fetch OHLCV bars for a symbol/timeframe.
+ * For higher timeframes (1D, 1W), requests more bars to ensure
+ * enough data for 200-period indicators.
+ */
 export async function getOHLCV(
   symbol: string = 'BTC/USDT',
-  timeframe: string = '30m',
+  timeframe: string = '1h',
   limit: number = 300,
 ): Promise<OHLCVResponse> {
-  const resp = await api.get<OHLCVResponse>('/charts/ohlcv', {
+  const resp = await api.get('/charts/ohlcv', {
     params: { symbol, timeframe, limit },
   });
-  return resp.data;
+  const d = resp.data;
+  return {
+    bars: d.bars || [],
+    symbol: d.symbol || symbol,
+    timeframe: d.timeframe || timeframe,
+  };
 }

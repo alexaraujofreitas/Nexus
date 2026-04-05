@@ -1,22 +1,9 @@
 import { useState } from 'react';
-import { NavLink } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { useWSStore } from '../../stores/wsStore';
 import { cn } from '../../lib/utils';
-
-const mobileNavItems = [
-  { label: 'Dashboard', path: '/' },
-  { label: 'Scanner', path: '/scanner' },
-  { label: 'Charts', path: '/charts' },
-  { label: 'Trading', path: '/trading' },
-  { label: 'Intelligence', path: '/intelligence' },
-  { label: 'Risk', path: '/risk' },
-  { label: 'Analytics', path: '/analytics' },
-  { label: 'Backtest', path: '/backtest' },
-  { label: 'Validation', path: '/validation' },
-  { label: 'Logs', path: '/logs' },
-  { label: 'Settings', path: '/settings' },
-];
+import { menuItems } from './menuConfig';
+import SidebarItem from './SidebarItem';
 
 export default function Header() {
   const { email, logout } = useAuthStore();
@@ -72,24 +59,12 @@ export default function Header() {
       {menuOpen && (
         <div data-testid="mobile-drawer" className="md:hidden bg-white border-b border-gray-200 shadow-sm">
           <ul className="py-1 px-2">
-            {mobileNavItems.map((item) => (
-              <li key={item.path}>
-                <NavLink
-                  to={item.path}
-                  end
-                  onClick={() => setMenuOpen(false)}
-                  className={({ isActive }) =>
-                    cn(
-                      'block px-3 py-2.5 rounded-md text-sm font-medium transition-colors min-h-[44px] flex items-center',
-                      isActive
-                        ? 'bg-blue-50 text-blue-700'
-                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
-                    )
-                  }
-                >
-                  {item.label}
-                </NavLink>
-              </li>
+            {menuItems.map((item) => (
+              <SidebarItem
+                key={item.path}
+                item={item}
+                onClick={() => setMenuOpen(false)}
+              />
             ))}
           </ul>
         </div>

@@ -64,13 +64,24 @@ export default function EquityDrawdown() {
   useEffect(() => {
     if (!equityChart.current || !curveData?.points?.length) return;
     const initial = curveData.initial_capital ?? curveData.points[0]?.capital ?? 0;
+    // Deduplicate by time and ensure ascending order
+    const seen = new Set<number>();
+    const dedupedPoints = curveData.points
+      .filter((p) => {
+        const t = p.time;
+        if (seen.has(t)) return false;
+        seen.add(t);
+        return true;
+      })
+      .sort((a, b) => a.time - b.time);
+    if (dedupedPoints.length === 0) return;
     const series = equityChart.current.addSeries(AreaSeries, {
       lineColor: '#2563eb',
       lineWidth: 2,
       topColor: 'rgba(37,99,235,0.3)',
       bottomColor: 'rgba(37,99,235,0.02)',
     });
-    series.setData(curveData.points.map((p) => ({ time: p.time as Time, value: p.capital })));
+    series.setData(dedupedPoints.map((p) => ({ time: p.time as Time, value: p.capital })));
     // Add baseline at initial capital
     series.createPriceLine({ price: initial, color: '#9ca3af', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' });
     equityChart.current.timeScale().fitContent();
@@ -96,6 +107,11 @@ export default function EquityDrawdown() {
 
   useEffect(() => {
     if (!ddChart.current || !ddData?.points?.length) return;
+    const seen = new Set<number>();
+    const dedupedPoints = ddData.points
+      .filter((p) => { const t = p.time; if (seen.has(t)) return false; seen.add(t); return true; })
+      .sort((a, b) => a.time - b.time);
+    if (dedupedPoints.length === 0) return;
     const series = ddChart.current.addSeries(AreaSeries, {
       lineColor: '#dc2626',
       lineWidth: 2,
@@ -103,7 +119,7 @@ export default function EquityDrawdown() {
       bottomColor: 'rgba(220,38,38,0.3)',
       invertFilledArea: true,
     });
-    series.setData(ddData.points.map((p) => ({
+    series.setData(dedupedPoints.map((p) => ({
       time: p.time as Time,
       value: -Math.abs(p.drawdown_pct),
     })));
@@ -130,12 +146,17 @@ export default function EquityDrawdown() {
 
   useEffect(() => {
     if (!rollingChart.current || !rollingData?.points?.length) return;
+    const seen = new Set<number>();
+    const dedupedPoints = rollingData.points
+      .filter((p) => { const t = p.time; if (seen.has(t)) return false; seen.add(t); return true; })
+      .sort((a, b) => a.time - b.time);
+    if (dedupedPoints.length === 0) return;
     const wrSeries = rollingChart.current.addSeries(LineSeries, {
       color: '#2563eb',
       lineWidth: 2,
       title: 'Win Rate %',
     });
-    wrSeries.setData(rollingData.points.map((p) => ({
+    wrSeries.setData(dedupedPoints.map((p) => ({
       time: p.time as Time,
       value: p.rolling_wr,
     })));
@@ -145,7 +166,7 @@ export default function EquityDrawdown() {
       title: 'Profit Factor',
       priceScaleId: 'pf',
     });
-    pfSeries.setData(rollingData.points.map((p) => ({
+    pfSeries.setData(dedupedPoints.map((p) => ({
       time: p.time as Time,
       value: p.rolling_pf,
     })));

@@ -298,7 +298,7 @@ function PipelineTableRow({ row, expanded, onToggle }: {
 
         {/* Price */}
         <td className="px-3 py-3 font-mono text-sm text-gray-700 whitespace-nowrap">
-          {row.price != null ? row.price.toFixed(2) : '—'}
+          {row.price != null ? formatUSD(row.price) : '—'}
         </td>
 
         {/* Regime */}
@@ -363,8 +363,11 @@ function PipelineTableRow({ row, expanded, onToggle }: {
         </td>
 
         {/* Scanned */}
-        <td className="px-3 py-3 text-xs text-gray-400 whitespace-nowrap">
-          {row.scanned_at ? timeAgo(row.scanned_at) : '—'}
+        <td className="px-3 py-3 text-xs text-gray-400 whitespace-nowrap font-mono">
+          {row.scanned_at
+            ? new Date(row.scanned_at.endsWith('Z') ? row.scanned_at : row.scanned_at + 'Z')
+                .toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            : '—'}
         </td>
       </tr>
 
@@ -484,7 +487,10 @@ export default function Scanner() {
             {scannerRunning ? 'Running' : 'Stopped'}
           </span>
           {lastScanAt && (
-            <span className="text-xs text-gray-400">Last scan: {timeAgo(lastScanAt)}</span>
+            <span className="text-xs text-gray-400">Last scan: {
+              new Date(lastScanAt.endsWith('Z') ? lastScanAt : lastScanAt + 'Z')
+                .toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            }</span>
           )}
         </div>
         <button

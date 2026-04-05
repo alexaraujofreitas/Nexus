@@ -50,8 +50,6 @@ function ModeBadge({ mode }: { mode: string }) {
 // ── Main Page ─────────────────────────────────────────────
 
 export default function ExchangeManagement() {
-  const [activeTab, setActiveTab] = useState<Tab>('exchanges');
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -65,31 +63,26 @@ export default function ExchangeManagement() {
         </div>
       </div>
 
-      {/* Tab Bar */}
-      <div className="flex gap-1 border-b border-gray-200">
-        {([
-          { key: 'exchanges' as Tab, label: 'Exchanges', icon: Plug },
-          { key: 'assets' as Tab, label: 'Asset Management', icon: Coins },
-        ]).map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setActiveTab(t.key)}
-            className={cn(
-              'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px',
-              activeTab === t.key
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
-            )}
-          >
-            <t.icon className="w-4 h-4" />
-            {t.label}
-          </button>
-        ))}
+      <ExchangesTab />
+    </div>
+  );
+}
+
+export function AssetManagementPage() {
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Coins className="w-5 h-5 text-gray-400" />
+          <div>
+            <h1 className="text-xl font-semibold text-gray-900">Asset Management</h1>
+            <p className="text-sm text-gray-500">Manage tradable assets and allocation weights</p>
+          </div>
+        </div>
       </div>
 
-      {/* Content */}
-      {activeTab === 'exchanges' && <ExchangesTab />}
-      {activeTab === 'assets' && <AssetsTab />}
+      <AssetsTab />
     </div>
   );
 }
@@ -662,7 +655,7 @@ function AssetsTab() {
   const queryClient = useQueryClient();
   const [quote, setQuote] = useState('USDT');
   const [search, setSearch] = useState('');
-  const [tradableFilter, setTradableFilter] = useState<TradableFilter>('all');
+  const [tradableFilter, setTradableFilter] = useState<TradableFilter>('tradable');
   const [syncStatus, setSyncStatus] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());

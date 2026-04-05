@@ -1179,10 +1179,10 @@ function PortfolioAllocationTab({ draft, setVal, get: g }: { draft: any; setVal:
 function APIKeysTab({ draft, setVal, get: g }: { draft: any; setVal: any; get: any }) {
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
   const keys = [
-    { id: 'cryptopanic_api_key', label: 'CryptoPanic API Key', path: 'api_keys.cryptopanic' },
-    { id: 'coinglass_api_key', label: 'Coinglass API Key', path: 'api_keys.coinglass' },
-    { id: 'reddit_client_id', label: 'Reddit Client ID', path: 'api_keys.reddit_client_id' },
-    { id: 'reddit_client_secret', label: 'Reddit Client Secret', path: 'api_keys.reddit_client_secret' },
+    { id: 'cryptopanic_api_key', label: 'CryptoPanic API Key', path: 'agents.cryptopanic_api_key' },
+    { id: 'coinglass_api_key', label: 'Coinglass API Key', path: 'agents.coinglass_api_key' },
+    { id: 'reddit_client_id', label: 'Reddit Client ID', path: 'sentiment.reddit_client_id' },
+    { id: 'reddit_client_secret', label: 'Reddit Client Secret', path: 'sentiment.reddit_client_secret' },
   ];
 
   const mask = (val: string) => val ? `${'*'.repeat(Math.max(val.length - 4, 4))}${val.slice(-4)}` : '(not set)';

@@ -3,7 +3,8 @@ import api from './client';
 export async function getSettings(section?: string): Promise<Record<string, unknown>> {
   const params = section ? { section } : {};
   const resp = await api.get('/settings/', { params });
-  return resp.data;
+  // Backend wraps response as {status, config: {...}} — unwrap to flat config dict
+  return resp.data?.config ?? resp.data;
 }
 
 export async function updateSettings(updates: Record<string, unknown>): Promise<{ status: string }> {

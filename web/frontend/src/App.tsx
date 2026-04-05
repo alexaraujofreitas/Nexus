@@ -16,7 +16,7 @@ import Analytics from './pages/Analytics';
 import MarketRegime from './pages/MarketRegime';
 import DemoMonitor from './pages/DemoMonitor';
 import Validation from './pages/Validation';
-import ExchangeManagement from './pages/ExchangeManagement';
+import ExchangeManagement, { AssetManagementPage } from './pages/ExchangeManagement';
 import Notifications from './pages/Notifications';
 import NotFound from './pages/NotFound';
 
@@ -53,6 +53,7 @@ export default function App() {
             <Route element={<AppShell />}>
               <Route path="/" element={<Dashboard />} />
               <Route path="monitor" element={<DemoMonitor />} />
+              <Route path="assets" element={<AssetManagementPage />} />
               <Route path="scanner" element={<Scanner />} />
               <Route path="regime" element={<MarketRegime />} />
               <Route path="charts" element={<Suspense fallback={<LazyFallback />}><Charts /></Suspense>} />

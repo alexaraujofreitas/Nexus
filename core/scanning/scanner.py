@@ -48,8 +48,8 @@ TF_POLL_SECONDS: dict[str, int] = {
 }
 
 # Default buffer (seconds) added after candle close before scanning.
-# 30s gives the exchange time to finalize and serve the closed bar.
-_CANDLE_CLOSE_BUFFER_S: int = 30
+# 2s is enough for Bybit REST to serve the finalized bar.
+_CANDLE_CLOSE_BUFFER_S: int = 2
 
 
 def _seconds_to_next_candle(timeframe: str, buffer_s: int = _CANDLE_CLOSE_BUFFER_S) -> int:
@@ -1794,9 +1794,13 @@ class AssetScanner(QObject):
 
 
 # ── Module-level singleton ────────────────────────────────
-# v1.2: Default primary timeframe is 30m (Phase 5 winning config).
-# HTF confirmation uses 4h regime gate (set in tf_map above).
-scanner = AssetScanner(timeframe="30m")
+# Timeframe is read from config.yaml (data.default_timeframe); fallback 30m.
+try:
+    from config.settings import settings as _tf_s
+    _scanner_tf = _tf_s.get("data.default_timeframe", "30m")
+except Exception:
+    _scanner_tf = "30m"
+scanner = AssetScanner(timeframe=_scanner_tf)
 
 # Apply startup configuration from settings
 try:
