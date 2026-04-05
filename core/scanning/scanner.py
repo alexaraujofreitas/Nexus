@@ -1057,11 +1057,7 @@ class ScanWorker(QThread):
                 logger.debug("Scanner: shadow tracker error: %s", _st_exc)
 
         # ── Model-level diagnostics for rationale panel ───────────────
-        try:
-            from config.settings import settings as _sc_d
-            _disabled_names = list(_sc_d.get("disabled_models", []))
-        except Exception:
-            _disabled_names = []
+        _disabled_names = list(_ss.get("disabled_models", []))
         _all_m_names = [m.name for m in self._sig_gen._models]
         # Include RL model name if it exists
         if self._sig_gen._rl_model is not None:
