@@ -460,6 +460,7 @@ class ScanWorker(QThread):
             # v3 optimisations:
             #   1. De-duplicate 4h (ctx_4h + MTF both need 4h → one fetch)
             #   2. TTL cache hit for context TFs → skip REST call entirely
+            _ohlcv_cache: dict[str, list] = {}  # cache_key → raw OHLCV (initialised here so pre-populate writes succeed)
             _fetch_manifest: list[tuple[str, str, int, str]] = []
             _cache_hits = 0
             for sym in qualifying:
@@ -521,7 +522,6 @@ class ScanWorker(QThread):
             # for market-data endpoints, so 20 concurrent is safe.
             _max_fetch_workers = min(len(_fetch_manifest), 20)
             metrics.fetch_concurrency = _max_fetch_workers
-            _ohlcv_cache: dict[str, list] = {}  # cache_key → raw OHLCV
 
             _pool = concurrent.futures.ThreadPoolExecutor(max_workers=_max_fetch_workers)
             try:
