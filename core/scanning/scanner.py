@@ -839,8 +839,8 @@ class ScanWorker(QThread):
                 logger.debug("Scanner: HMM classification failed for %s: %s", symbol, exc)
                 regime_probs = {}
 
-        # Emit symbol progress
-        self.symbol_scanned.emit(symbol, regime, 0.0)
+        # Note: symbol_scanned signal is emitted in run() after result collection
+        # to avoid cross-thread Qt signal emission from worker pool threads.
 
         # ── Regime diagnostics for rationale panel ────────────────────
         _sym_diag["regime_confidence"] = round(confidence, 3)
@@ -1095,68 +1095,23 @@ class ScanWorker(QThread):
 
         logger.debug("Scanner: %s — candidate score=%.3f, about to enter MTF block", symbol, candidate.score)
 
-        # ── Multi-timeframe confirmation ──────────────────────────────
-        from config.settings import settings as _sc
-        logger.debug("Scanner: %s — entering MTF confirmation check (candidate=%s, mtf_enabled=%s)",
-                     symbol, candidate is not None, _sc.get("multi_tf.confirmation_required", False))
-        if candidate and _sc.get("multi_tf.confirmation_required", False):
+        # ── Multi-timeframe confirmation (using prefetched data) ──────
+        # v2: MTF data was fetched in the batch OHLCV prefetch phase.
+        # No per-symbol REST calls here — just DataFrame construction.
+        if candidate and _ss.get("mtf_enabled", False):
             try:
-                # v1.2: 30m primary → 4h HTF gate (Phase 5 winning config).
-                # Previously 30m mapped to "1h"; updated to "4h" per Study 5 results.
-                tf_map = {"1m": "5m", "3m": "15m", "5m": "15m", "15m": "1h",
-                          "30m": "4h", "1h": "4h", "2h": "4h", "4h": "1d",
-                          "6h": "1d", "12h": "1d", "1d": "1w"}
-                higher_tf = tf_map.get(self._timeframe)
-                if higher_tf:
-                    # Wrap with timeout so a hanging exchange call cannot
-                    # permanently stall the ScanWorker thread.
-                    # IMPORTANT: Do NOT use `with ThreadPoolExecutor` here.
-                    # The context manager calls shutdown(wait=True) on exit,
-                    # which blocks forever if the submitted thread is hung on
-                    # a network call — even after TimeoutError is raised.
-                    # Instead, use shutdown(wait=False, cancel_futures=True)
-                    # to abandon the hung thread immediately.
-                    _pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                    try:
-                        _fut = _pool.submit(
-                            self._exchange.fetch_ohlcv, symbol, higher_tf, limit=50
-                        )
-                        raw_htf = _fut.result(timeout=10.0)
-                    except concurrent.futures.TimeoutError:
-                        logger.warning(
-                            "Scanner: MTF 4h fetch TIMED OUT for %s (%s) after 10s "
-                            "— skipping MTF confirmation for this symbol "
-                            "(Bybit Demo 4h endpoint may be unresponsive)",
-                            symbol, higher_tf,
-                        )
-                        raw_htf = None
-                    except Exception as _mtf_exc:
-                        logger.warning(
-                            "Scanner: MTF 4h fetch FAILED for %s (%s): %s "
-                            "— skipping MTF confirmation for this symbol",
-                            symbol, higher_tf, _mtf_exc,
-                        )
-                        raw_htf = None
-                    finally:
-                        _pool.shutdown(wait=False, cancel_futures=True)
-                    if raw_htf and len(raw_htf) >= 20:
-                        raw_htf, _htf_dropped = enforce_closed_candles(
-                            raw_htf, higher_tf, log_symbol=f"{symbol}/MTF",
-                        )
-                    if raw_htf and len(raw_htf) >= 20:
-                        df_htf = pd.DataFrame(raw_htf, columns=["timestamp", "open", "high", "low", "close", "volume"])
-                        df_htf["timestamp"] = pd.to_datetime(df_htf["timestamp"], unit="ms", utc=True)
-                        df_htf = df_htf.set_index("timestamp").astype(float)
-                        df_htf = calculate_scan_mode(df_htf)   # regime only needs CORE set
-                        htf_regime, _, _ = self._regime_clf.classify(df_htf)
-                        candidate.higher_tf_regime = htf_regime
-                        logger.debug("Scanner: %s higher-TF (%s) regime=%s", symbol, higher_tf, htf_regime)
+                _higher_tf = _ss.get("higher_tf")
+                raw_htf = prefetched_mtf
+                if raw_htf and len(raw_htf) >= 20:
+                    df_htf = pd.DataFrame(raw_htf, columns=["timestamp", "open", "high", "low", "close", "volume"])
+                    df_htf["timestamp"] = pd.to_datetime(df_htf["timestamp"], unit="ms", utc=True)
+                    df_htf = df_htf.set_index("timestamp").astype(float)
+                    df_htf = calculate_scan_mode(df_htf)
+                    htf_regime, _, _ = _local_clf.classify(df_htf)
+                    candidate.higher_tf_regime = htf_regime
+                    logger.debug("Scanner: %s higher-TF (%s) regime=%s (prefetched)", symbol, _higher_tf, htf_regime)
             except Exception as exc:
-                logger.debug("Scanner: MTF fetch failed for %s: %s", symbol, exc)
-
-        if candidate:
-            logger.debug("Scanner: %s — emitting symbol_scanned signal (score=%.3f)", symbol, candidate.score)
-            self.symbol_scanned.emit(symbol, regime, candidate.score)
+                logger.debug("Scanner: MTF classification failed for %s: %s", symbol, exc)
 
         logger.debug("Scanner: %s — _scan_symbol_with_regime RETURNING (candidate=%s)", symbol, candidate is not None)
         return candidate, regime, confidence, df, "", _sym_diag
