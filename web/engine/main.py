@@ -313,9 +313,13 @@ class TradingEngineService:
         # for the pipeline-status endpoint.
         self._last_pipeline_results: list[dict] = []
         self._last_pipeline_ts: str = ""
+        self._last_scan_metrics: dict = {}
         if hasattr(self._scanner, "scan_all_results"):
             self._scanner.scan_all_results.connect(self._on_scan_all_results)
             logger.info("Engine: connected scan_all_results signal for pipeline-status")
+        if hasattr(self._scanner, "scan_metrics_updated"):
+            self._scanner.scan_metrics_updated.connect(self._on_scan_metrics_updated)
+            logger.info("Engine: connected scan_metrics_updated signal for phase timing")
 
         # config.yaml: scanner.auto_execute MUST always be true per CLAUDE.md
         auto_start = True
@@ -375,6 +379,11 @@ class TradingEngineService:
         self._last_pipeline_results = results or []
         self._last_pipeline_ts = datetime.utcnow().isoformat()
         logger.debug("Engine: stored %d pipeline results", len(self._last_pipeline_results))
+
+    def _on_scan_metrics_updated(self, metrics_dict: dict):
+        """Store scan cycle metrics for phase timing display."""
+        self._last_scan_metrics = metrics_dict or {}
+        logger.debug("Engine: stored scan metrics (total=%.0fms)", metrics_dict.get("total_cycle_ms", 0))
 
     # ── Command Loop ────────────────────────────────────────
 
@@ -955,6 +964,7 @@ class TradingEngineService:
             "scanner_running": bool(self._scanner and self._scanner._running),
             "last_scan_at": getattr(self, "_last_pipeline_ts", ""),
             "source": "db",
+            "phase_timing": getattr(self, "_last_scan_metrics", {}),
         }
 
     @staticmethod

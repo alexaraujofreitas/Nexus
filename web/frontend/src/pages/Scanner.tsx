@@ -5,7 +5,7 @@ import {
   CheckCircle2, XCircle, AlertTriangle, Clock, Filter as FilterIcon, Minus,
 } from 'lucide-react';
 import { getPipelineStatus, triggerScan } from '../api/scanner';
-import type { PipelineRow, PipelineStatus, PipelineDiagnostics, MILBreakdown } from '../api/scanner';
+import type { PipelineRow, PipelineStatus, PipelineDiagnostics, MILBreakdown, PhaseTiming } from '../api/scanner';
 import { useWSStore } from '../stores/wsStore';
 import { cn, timeAgo, formatUSD } from '../lib/utils';
 
@@ -42,7 +42,82 @@ function SummaryCard({ label, value, color }: { label: string; value: number; co
   );
 }
 
-// ── Diagnostic Expansion Panel ────────────────────────────────
+// ── Phase Timing Panel ────��───────────────────────────────
+function PhaseTimingBar({ label, ms, maxMs, color }: {
+  label: string; ms: number; maxMs: number; color: string;
+}) {
+  const pct = maxMs > 0 ? Math.min((ms / maxMs) * 100, 100) : 0;
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-xs font-medium text-gray-600 w-28 text-right shrink-0">{label}</span>
+      <div className="flex-1 bg-gray-100 rounded-full h-4 relative overflow-hidden">
+        <div
+          className={cn('h-4 rounded-full transition-all duration-500', color)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-xs font-mono text-gray-700 w-20 text-right shrink-0">
+        {ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(0)}ms`}
+      </span>
+    </div>
+  );
+}
+
+function PhaseTimingPanel({ timing }: { timing: PhaseTiming }) {
+  const phases = [
+    { label: 'OHLCV Fetch', ms: timing.ohlcv_fetch_ms, color: 'bg-blue-500' },
+    { label: 'Indicators', ms: timing.indicator_ms, color: 'bg-emerald-500' },
+    { label: 'Regime Classify', ms: timing.regime_ms, color: 'bg-purple-500' },
+    { label: 'Signal Models', ms: timing.signal_ms, color: 'bg-amber-500' },
+    { label: 'Confluence Score', ms: timing.confluence_ms, color: 'bg-pink-500' },
+    { label: 'Risk Gate', ms: timing.risk_gate_ms, color: 'bg-red-400' },
+  ];
+  const maxMs = Math.max(...phases.map((p) => p.ms), 1);
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Phase Timing</h3>
+        <div className="flex items-center gap-4 text-xs text-gray-500">
+          <span>
+            Total: <span className="font-mono font-semibold text-gray-900">
+              {timing.total_cycle_ms >= 1000
+                ? `${(timing.total_cycle_ms / 1000).toFixed(2)}s`
+                : `${timing.total_cycle_ms.toFixed(0)}ms`}
+            </span>
+          </span>
+          <span>
+            Symbols: <span className="font-mono font-medium">{timing.symbols_computed}/{timing.symbols_total}</span>
+          </span>
+          <span>
+            Avg/symbol: <span className="font-mono font-medium">
+              {timing.avg_symbol_ms.toFixed(0)}ms
+            </span>
+          </span>
+          {timing.slowest_symbol && (
+            <span>
+              Slowest: <span className="font-mono font-medium">
+                {timing.slowest_symbol} ({timing.slowest_symbol_ms.toFixed(0)}ms)
+              </span>
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        {phases.map((p) => (
+          <PhaseTimingBar key={p.label} label={p.label} ms={p.ms} maxMs={maxMs} color={p.color} />
+        ))}
+      </div>
+      {timing.symbols_failed && timing.symbols_failed.length > 0 && (
+        <div className="mt-2 text-xs text-red-600">
+          Failed: {timing.symbols_failed.join(', ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Diagnostic Expansion Panel ──────────────────���─────────────
 function DiagnosticPanel({ row }: { row: PipelineRow }) {
   const d = row.diagnostics as PipelineDiagnostics;
   if (!d || !d.candle_count) {
@@ -420,6 +495,7 @@ export default function Scanner() {
   const summary = pipelineData?.summary || { total: 0, eligible: 0, active_signals: 0, blocked: 0 };
   const scannerRunning = pipelineData?.scanner_running ?? false;
   const lastScanAt = pipelineData?.last_scan_at || '';
+  const phaseTiming = pipelineData?.phase_timing;
 
   // Collect unique regimes for filter
   const uniqueRegimes = useMemo(() => {
@@ -515,6 +591,11 @@ export default function Scanner() {
         <SummaryCard label="Active Signals" value={summary.active_signals} color="border-blue-200 bg-blue-50 text-blue-800" />
         <SummaryCard label="Blocked" value={summary.blocked} color="border-red-200 bg-red-50 text-red-800" />
       </div>
+
+      {/* Phase Timing */}
+      {phaseTiming && phaseTiming.total_cycle_ms > 0 && (
+        <PhaseTimingPanel timing={phaseTiming} />
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">

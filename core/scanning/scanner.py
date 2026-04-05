@@ -135,6 +135,43 @@ class ScanCycleMetrics:
     retries: int = 0
     timeouts: int = 0
 
+    # ── Sub-phase aggregates (populated from per-symbol _sym_diag) ──
+    indicator_ms: float = 0.0       # Total indicator computation time
+    regime_ms: float = 0.0          # Total regime classification time
+    signal_ms: float = 0.0          # Total signal model evaluation time
+    confluence_ms: float = 0.0      # Total confluence scoring time
+
+    def to_dict(self) -> dict:
+        """Serialise metrics for API responses."""
+        return {
+            "total_cycle_ms": round(self.total_cycle_ms, 1),
+            "ohlcv_fetch_ms": round(self.ohlcv_prefetch_ms, 1),
+            "indicator_ms": round(self.indicator_ms, 1),
+            "regime_ms": round(self.regime_ms, 1),
+            "signal_ms": round(self.signal_ms, 1),
+            "confluence_ms": round(self.confluence_ms, 1),
+            "ticker_fetch_ms": round(self.ticker_fetch_ms, 1),
+            "universe_filter_ms": round(self.universe_filter_ms, 1),
+            "compute_phase_ms": round(self.compute_phase_ms, 1),
+            "risk_gate_ms": round(self.risk_gate_ms, 1),
+            "post_scan_ms": round(self.post_scan_ms, 1),
+            "symbols_total": self.symbols_total,
+            "symbols_qualifying": self.symbols_qualifying,
+            "symbols_fetched_ok": self.symbols_fetched_ok,
+            "symbols_computed": self.symbols_computed,
+            "symbols_failed": self.symbols_failed,
+            "fetch_concurrency": self.fetch_concurrency,
+            "compute_concurrency": self.compute_concurrency,
+            "slowest_symbol": self.slowest_symbol,
+            "slowest_symbol_ms": round(self.slowest_symbol_ms, 1),
+            "avg_symbol_ms": round(self.avg_symbol_ms, 1),
+            "per_symbol_ms": {k: round(v, 1) for k, v in self.per_symbol_ms.items()},
+            "context_fetches_total": self.context_fetches_total,
+            "context_fetches_ok": self.context_fetches_ok,
+            "retries": self.retries,
+            "timeouts": self.timeouts,
+        }
+
     def log_summary(self):
         """Emit a structured performance summary to logs."""
         logger.info(
@@ -230,6 +267,8 @@ class ScanWorker(QThread):
     # entry_price, stop_loss_price, take_profit_price, risk_reward_ratio,
     # position_size_usdt, generated_at, status, is_approved.
     scan_all_results = Signal(list)
+    # Phase timing metrics dict — emitted after every scan cycle for UI display.
+    scan_metrics_updated = Signal(object)
 
     def __init__(
         self,
@@ -654,6 +693,13 @@ class ScanWorker(QThread):
                         metrics.per_symbol_ms[symbol] = elapsed_ms
                         metrics.symbols_computed += 1
 
+                        # Aggregate sub-phase timings from sym_diag
+                        if isinstance(sym_diag, dict):
+                            metrics.indicator_ms += sym_diag.get("_indicator_ms", 0.0)
+                            metrics.regime_ms += sym_diag.get("_regime_ms", 0.0)
+                            metrics.signal_ms += sym_diag.get("_signal_ms", 0.0)
+                            metrics.confluence_ms += sym_diag.get("_confluence_ms", 0.0)
+
                         if df is not None:
                             df_cache[symbol] = df
                         if regime:
@@ -788,6 +834,11 @@ class ScanWorker(QThread):
             # ── Log performance report ────────────────────────
             metrics.total_cycle_ms = (time.time() - metrics.cycle_start) * 1000
             metrics.log_summary()
+            # Emit metrics dict for UI consumption
+            try:
+                self.scan_metrics_updated.emit(metrics.to_dict())
+            except Exception:
+                pass
 
         except Exception as exc:
             logger.error("ScanWorker fatal error: %s", exc, exc_info=True)
@@ -867,7 +918,9 @@ class ScanWorker(QThread):
         # active live-scan consumers (TrendModel, MomentumBreakout, Regime,
         # ATR-based models, volatility pre-filter). BacktestEngine and
         # IDSSBacktester continue to call calculate_all() for the full set.
+        _t_ind = time.time()
         df = calculate_scan_mode(df)
+        _sym_diag["_indicator_ms"] = (time.time() - _t_ind) * 1000
 
         # ── Indicator presence guard ──────────────────────────────────
         # calculate_scan_mode() has a silent failure mode: if the 'ta'
@@ -912,6 +965,7 @@ class ScanWorker(QThread):
         # This eliminates HMM 4-state retraining every cycle (~30-100ms per symbol).
         # Thread safety: each symbol has its own instance, and the ThreadPoolExecutor
         # processes each symbol in exactly one thread.
+        _t_regime = time.time()
         try:
             from core.regime.ensemble_regime_classifier import EnsembleRegimeClassifier as _ERC
             if symbol not in self._ensemble_classifiers:
@@ -990,6 +1044,7 @@ class ScanWorker(QThread):
         # to avoid cross-thread Qt signal emission from worker pool threads.
 
         # ── Regime diagnostics for rationale panel ────────────────────
+        _sym_diag["_regime_ms"] = (time.time() - _t_regime) * 1000
         _sym_diag["regime_confidence"] = round(confidence, 3)
         _sym_diag["regime_probs"]      = regime_probs
 
@@ -1105,6 +1160,7 @@ class ScanWorker(QThread):
         # PBL and SLC are excluded here: their ACTIVE_REGIMES=["bull_trend"] /
         # ["bear_trend"] will block them against the HMM regime string reliably,
         # but they are given dedicated calls below with the correct classifier.
+        _t_signal = time.time()
         signals = self._sig_gen.generate(
             symbol, df, regime, self._timeframe,
             regime_probs=regime_probs,
@@ -1218,6 +1274,8 @@ class ScanWorker(QThread):
             except Exception as _st_exc:
                 logger.debug("Scanner: shadow tracker error: %s", _st_exc)
 
+        _sym_diag["_signal_ms"] = (time.time() - _t_signal) * 1000
+
         # ── Model-level diagnostics for rationale panel ───────────────
         _disabled_names = list(_ss.get("disabled_models", []))
         _all_m_names = [m.name for m in self._sig_gen._models]
@@ -1242,7 +1300,9 @@ class ScanWorker(QThread):
             return None, regime, confidence, df, "No signal", _sym_diag
 
         # Confluence scoring with regime probabilities
+        _t_confl = time.time()
         candidate = self._scorer.score(signals, symbol, regime_probs=regime_probs)
+        _sym_diag["_confluence_ms"] = (time.time() - _t_confl) * 1000
         logger.debug("Scanner: %s — scorer returned candidate=%s", symbol, candidate is not None)
 
         # ── Merge scorer diagnostics into sym_diag ────────────────────
@@ -1295,6 +1355,7 @@ class AssetScanner(QObject):
     candidates_ready  = Signal(list)   # list of approved OrderCandidate dicts (UI display only)
     confirmed_ready   = Signal(list)   # list of CONFIRMED candidate dicts (execution trigger)
     scan_all_results  = Signal(list)   # all per-symbol results with rejection reasons (UI only)
+    scan_metrics_updated = Signal(object)  # ScanCycleMetrics dict — phase timing for UI
     scan_started      = Signal()
     scan_finished     = Signal(int)    # n candidates found (HTF)
     ltf_scan_finished = Signal(int)    # n confirmed (LTF)
@@ -1830,6 +1891,7 @@ class AssetScanner(QObject):
         self._worker.symbol_scanned.connect(self.symbol_progress)
         self._worker.df_cache_updated.connect(self._on_df_cache_updated)
         self._worker.scan_all_results.connect(self.scan_all_results)
+        self._worker.scan_metrics_updated.connect(self.scan_metrics_updated)
         self._worker_started_at = time.time()
         self._worker.start()
 

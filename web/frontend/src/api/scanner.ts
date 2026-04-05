@@ -124,6 +124,31 @@ export interface PipelineSummary {
   blocked: number;
 }
 
+export interface PhaseTiming {
+  total_cycle_ms: number;
+  ohlcv_fetch_ms: number;
+  indicator_ms: number;
+  regime_ms: number;
+  signal_ms: number;
+  confluence_ms: number;
+  ticker_fetch_ms: number;
+  universe_filter_ms: number;
+  compute_phase_ms: number;
+  risk_gate_ms: number;
+  post_scan_ms: number;
+  symbols_total: number;
+  symbols_qualifying: number;
+  symbols_fetched_ok: number;
+  symbols_computed: number;
+  symbols_failed: string[];
+  fetch_concurrency: number;
+  compute_concurrency: number;
+  slowest_symbol: string;
+  slowest_symbol_ms: number;
+  avg_symbol_ms: number;
+  per_symbol_ms: Record<string, number>;
+}
+
 export interface PipelineStatusResponse {
   status: string;
   pipeline: PipelineRow[];
@@ -131,6 +156,7 @@ export interface PipelineStatusResponse {
   scanner_running: boolean;
   last_scan_at: string;
   source: string;
+  phase_timing?: PhaseTiming;
 }
 
 // ── API functions ────────────────────────────────────────────
