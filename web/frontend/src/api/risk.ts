@@ -18,13 +18,42 @@ export interface CrashDefenseDetail {
 }
 
 export async function getRiskStatus(): Promise<RiskStatus> {
-  const resp = await api.get<RiskStatus>('/risk/status');
-  return resp.data;
+  const resp = await api.get('/risk/status');
+  const d = resp.data;
+  const r = d.risk || d;
+
+  // Also fetch portfolio heat from monitor endpoint for accuracy
+  let heat = r.portfolio_heat_pct ?? 0;
+  try {
+    const portResp = await api.get('/monitor/portfolio');
+    const pd = portResp.data;
+    const portfolio = pd.portfolio || pd;
+    if (portfolio.portfolio_heat_pct !== undefined) {
+      heat = portfolio.portfolio_heat_pct;
+    }
+  } catch { /* use risk endpoint value */ }
+
+  return {
+    portfolio_heat_pct: heat,
+    drawdown_pct: r.drawdown_pct ?? 0,
+    open_positions: r.open_positions ?? 0,
+    circuit_breaker_on: r.circuit_breaker_on ?? false,
+    daily_loss_pct: r.daily_loss_pct ?? 0,
+    crash_tier: r.crash_tier ?? 'NORMAL',
+    is_defensive: r.is_defensive ?? false,
+  };
 }
 
 export async function getCrashDefenseDetail(): Promise<CrashDefenseDetail> {
-  const resp = await api.get<CrashDefenseDetail>('/dashboard/crash-defense');
-  return resp.data;
+  const resp = await api.get('/dashboard/crash-defense');
+  const d = resp.data;
+  const cd = d.crash_defense || d;
+  return {
+    tier: cd.tier ?? 'NORMAL',
+    score: cd.score ?? 0,
+    is_defensive: cd.is_defensive ?? false,
+    actions_log: cd.actions_log || [],
+  };
 }
 
 export async function triggerKillSwitch(): Promise<{ status: string; message: string }> {
