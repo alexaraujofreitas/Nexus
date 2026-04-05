@@ -851,9 +851,21 @@ class SettingsPage(QWidget):
         v.addWidget(self._alloc_mode_section)
 
         # ── Static weights ─────────────────────────────────────────────────
-        _symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
-        _static_defaults = {"BTC/USDT": 1.0, "ETH/USDT": 1.2, "SOL/USDT": 1.3,
-                            "BNB/USDT": 0.8, "XRP/USDT": 0.8}
+        _symbols = [
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ]
+        _static_defaults = {
+            "BTC/USDT": 1.0, "ETH/USDT": 1.2, "SOL/USDT": 1.3,
+            "BNB/USDT": 0.8, "XRP/USDT": 0.8, "TRX/USDT": 0.7,
+            "DOGE/USDT": 0.7, "ADA/USDT": 0.7, "BCH/USDT": 0.7,
+            "HYPE/USDT": 0.7, "LINK/USDT": 0.7, "XLM/USDT": 0.7,
+            "AVAX/USDT": 0.7, "HBAR/USDT": 0.7, "SUI/USDT": 0.7,
+            "NEAR/USDT": 0.7, "ICP/USDT": 0.7, "ONDO/USDT": 0.7,
+            "ALGO/USDT": 0.7, "RENDER/USDT": 0.7,
+        }
 
         self._alloc_static_section = SettingsSection(
             "Static Weights  (used in STATIC mode)"

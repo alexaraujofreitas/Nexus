@@ -1068,7 +1068,12 @@ def run_ab_comparison(
     """
     from core.features.indicator_library import calculate_all
 
-    symbols = symbols or ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    symbols = symbols or [
+        "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+        "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+        "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+        "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+    ]
     gen = SyntheticRegimeDataGenerator(seed=seed)
 
     # Generate 1H data for all symbols

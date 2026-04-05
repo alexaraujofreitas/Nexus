@@ -350,11 +350,13 @@ DEFAULT_CONFIG = {
         "mode": "STATIC",
         # ── Static weights (Study 4 baseline) ────────────────────────────────
         "static_weights": {
-            "BTC/USDT": 1.0,
-            "ETH/USDT": 1.2,
-            "SOL/USDT": 1.3,
-            "BNB/USDT": 0.8,
-            "XRP/USDT": 0.8,
+            "BTC/USDT": 1.0, "ETH/USDT": 1.2, "SOL/USDT": 1.3,
+            "BNB/USDT": 0.8, "XRP/USDT": 0.8,
+            "TRX/USDT": 0.7, "DOGE/USDT": 0.7, "ADA/USDT": 0.7,
+            "BCH/USDT": 0.7, "HYPE/USDT": 0.7, "LINK/USDT": 0.7,
+            "XLM/USDT": 0.7, "AVAX/USDT": 0.7, "HBAR/USDT": 0.7,
+            "SUI/USDT": 0.7, "NEAR/USDT": 0.7, "ICP/USDT": 0.7,
+            "ONDO/USDT": 0.7, "ALGO/USDT": 0.7, "RENDER/USDT": 0.7,
         },
         # ── BTC Dominance (DYNAMIC mode) ─────────────────────────────────────
         # User updates btc_dominance_pct manually or via future agent integration.

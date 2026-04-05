@@ -21,7 +21,12 @@ import pandas as pd
 
 sys.path.insert(0, ".")
 
-SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+SYMBOLS = [
+    "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+    "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+    "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+    "TAO/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+]
 TIMEFRAME = "1h"
 # Sep 1, 2024 to Feb 28, 2025 (~6 months, ~4320 1H bars per symbol)
 SINCE = int(pd.Timestamp("2024-09-01 00:00:00+00:00").timestamp() * 1000)

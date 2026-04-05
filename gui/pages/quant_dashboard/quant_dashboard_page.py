@@ -367,7 +367,15 @@ class CommandChart(QFrame):
     TF_BUTTONS = ["1m", "5m", "15m", "1h", "4h", "1d"]
     _TF_SECS   = {"1m": 60, "5m": 300, "15m": 900,
                   "1h": 3600, "4h": 14400, "1d": 86400}
-    _DEMO_PRICE = {"BTC/USDT": 70_000.0, "ETH/USDT": 3_500.0, "BNB/USDT": 650.0, "SOL/USDT": 140.0, "XRP/USDT": 2.0}
+    _DEMO_PRICE = {
+        "BTC/USDT": 70_000.0, "ETH/USDT": 3_500.0, "BNB/USDT": 650.0,
+        "SOL/USDT": 140.0, "XRP/USDT": 2.0, "TRX/USDT": 0.25,
+        "DOGE/USDT": 0.40, "ADA/USDT": 1.10, "BCH/USDT": 500.0,
+        "HYPE/USDT": 25.0, "LINK/USDT": 18.0, "XLM/USDT": 0.45,
+        "AVAX/USDT": 40.0, "HBAR/USDT": 0.30, "SUI/USDT": 4.50,
+        "NEAR/USDT": 7.50, "ICP/USDT": 12.0, "ONDO/USDT": 1.50,
+        "ALGO/USDT": 0.45, "RENDER/USDT": 10.0,
+    }
 
     # Signal for safe cross-thread data delivery — background fetch thread
     # emits this; Qt automatically dispatches it to the main thread.
@@ -415,7 +423,12 @@ class CommandChart(QFrame):
         hh.setSpacing(8)
 
         self._sym_btns: dict = {}
-        for sym in ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"]:
+        for sym in [
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ]:
             b = QPushButton(sym.replace("/USDT", ""))
             b.setFixedHeight(22)
             b.setStyleSheet(self._btn_style(sym == self._symbol))

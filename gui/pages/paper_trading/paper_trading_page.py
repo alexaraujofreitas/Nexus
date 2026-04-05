@@ -685,7 +685,12 @@ class PaperTradingPage(QWidget):
         form = QFormLayout(dlg)
 
         sym_cb = QComboBox()
-        sym_cb.addItems(["BNB/USDT", "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"])
+        sym_cb.addItems([
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ])
         side_cb = QComboBox()
         side_cb.addItems(["sell", "buy"])
 

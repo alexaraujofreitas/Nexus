@@ -369,7 +369,12 @@ class BacktestingPage(QWidget):
         lbl_sym.setStyleSheet(f"color: {_C_MUTED}; font-size: 11px; font-weight: bold;")
         self.combo_symbol = QComboBox()
         self.combo_symbol.setStyleSheet(_COMBO)
-        self.combo_symbol.addItems(["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT"])
+        self.combo_symbol.addItems([
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ])
         row1.addLayout(self._form_col(lbl_sym, self.combo_symbol))
 
         # Timeframe

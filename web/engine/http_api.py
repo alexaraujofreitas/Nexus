@@ -1064,7 +1064,12 @@ class EngineHttpApi:
 
     async def _backtest_start(self, req: web.Request) -> web.Response:
         body = await req.json()
-        symbols = body.get("symbols", ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+        symbols = body.get("symbols", [
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ])
         start_date = body.get("start_date", "2024-01-01")
         end_date = body.get("end_date", "2026-03-01")
         timeframe = body.get("timeframe", "30m")
@@ -1080,8 +1085,15 @@ class EngineHttpApi:
                 job["progress"] = 10
                 from research.engine.backtest_runner import BacktestRunner
                 # Map short names to full symbols
-                sym_map = {"BTC": "BTC/USDT", "ETH": "ETH/USDT", "SOL": "SOL/USDT",
-                           "BNB": "BNB/USDT", "XRP": "XRP/USDT"}
+                sym_map = {
+                    "BTC": "BTC/USDT", "ETH": "ETH/USDT", "BNB": "BNB/USDT",
+                    "XRP": "XRP/USDT", "SOL": "SOL/USDT", "TRX": "TRX/USDT",
+                    "DOGE": "DOGE/USDT", "ADA": "ADA/USDT", "BCH": "BCH/USDT",
+                    "HYPE": "HYPE/USDT", "LINK": "LINK/USDT", "XLM": "XLM/USDT",
+                    "AVAX": "AVAX/USDT", "HBAR": "HBAR/USDT", "SUI": "SUI/USDT",
+                    "NEAR": "NEAR/USDT", "ICP": "ICP/USDT", "ONDO": "ONDO/USDT",
+                    "ALGO": "ALGO/USDT", "RENDER": "RENDER/USDT",
+                }
                 full_syms = [sym_map.get(s, s) for s in symbols]
 
                 job["progress"] = 20

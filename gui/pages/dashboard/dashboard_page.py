@@ -73,7 +73,12 @@ class MetricCard(QFrame):
 class TickerTable(QFrame):
     """Mini live price table for top symbols."""
 
-    WATCH_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+    WATCH_SYMBOLS = [
+        "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+        "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+        "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+        "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+    ]
     COLUMNS = ["Symbol", "Last Price", "24h Change", "Volume", "High", "Low"]
 
     def __init__(self, parent=None):

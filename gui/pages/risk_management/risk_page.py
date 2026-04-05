@@ -588,7 +588,12 @@ class RiskManagementPage(QWidget):
         corr_layout.addWidget(sep_corr)
 
         # Correlation grid — cells stored as instance attr for live refresh
-        self._corr_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+        self._corr_symbols = [
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ]
         self._corr_cells: dict[tuple[int, int], QLabel] = {}
 
         grid = QGridLayout()

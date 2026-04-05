@@ -58,7 +58,12 @@ logger = logging.getLogger("demo_validation")
 
 # ── Config defaults ───────────────────────────────────────────────────────────
 _DEFAULT_HOURS   = 48
-_DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT"]
+_DEFAULT_SYMBOLS = [
+    "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+    "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+    "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+    "TAO/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+]
 _DEFAULT_TF      = "1h"
 _START_CAPITAL   = 100_000.0
 _MAX_HEAT_PCT    = 6.0

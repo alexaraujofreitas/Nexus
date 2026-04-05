@@ -73,7 +73,10 @@ class WalkForwardConfig:
     step_bars        : how far to advance the window each cycle
     """
     symbols:            list[str]  = field(default_factory=lambda: [
-        "BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"
+        "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+        "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+        "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+        "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
     ])
     timeframe:          str   = "4h"
     calibration_bars:   int   = 400   # ~67 days of 4h bars

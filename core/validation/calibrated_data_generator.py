@@ -343,7 +343,12 @@ class CalibratedDataGenerator:
         BTC is generated first (to establish the shared innovation
         factor), then alts are generated with cross-asset correlation.
         """
-        symbols = symbols or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+        symbols = symbols or [
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ]
 
         # Correlation coefficients with BTC (empirical approximations)
         _CORR = {

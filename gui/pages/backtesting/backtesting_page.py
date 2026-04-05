@@ -1743,7 +1743,12 @@ class BacktestingPage(QWidget):
             pass
         # Fallback: hardcoded IDSS symbols if watchlist unavailable
         if not symbols:
-            symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT"]
+            symbols = [
+                "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+                "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+                "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+                "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+            ]
 
         current = self._idss_symbol_combo.currentText()
         self._idss_symbol_combo.blockSignals(True)

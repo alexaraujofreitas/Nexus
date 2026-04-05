@@ -195,7 +195,10 @@ class SignalExplorerPage(QWidget):
         self._sym_filter = QComboBox()
         self._sym_filter.addItems([
             "All",
-            "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
         ])
         self._sym_filter.setFixedWidth(110)
         h.addWidget(self._sym_filter)

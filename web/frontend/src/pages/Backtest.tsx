@@ -4,7 +4,12 @@ import { startBacktest, getBacktestStatus, getBacktestResults } from '../api/bac
 import type { BacktestMetrics } from '../api/backtest';
 import { cn, formatPct } from '../lib/utils';
 
-const SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT'];
+const SYMBOLS = [
+  'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT', 'SOL/USDT',
+  'TRX/USDT', 'DOGE/USDT', 'ADA/USDT', 'BCH/USDT', 'HYPE/USDT',
+  'LINK/USDT', 'XLM/USDT', 'AVAX/USDT', 'HBAR/USDT', 'SUI/USDT',
+  'NEAR/USDT', 'ICP/USDT', 'ONDO/USDT', 'ALGO/USDT', 'RENDER/USDT',
+];
 const TIMEFRAMES = ['15m', '30m', '1h', '4h'];
 
 function MetricBadge({ label, value, threshold, format = 'num' }: {
@@ -21,7 +26,7 @@ function MetricBadge({ label, value, threshold, format = 'num' }: {
 }
 
 export default function Backtest() {
-  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(['BTC/USDT', 'ETH/USDT', 'SOL/USDT']);
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT']);
   const [startDate, setStartDate] = useState('2024-01-01');
   const [endDate, setEndDate] = useState('2026-03-01');
   const [timeframe, setTimeframe] = useState('30m');

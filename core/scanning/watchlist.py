@@ -20,9 +20,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WATCHLIST = {
     "Default": {
-        "symbols": ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"],
+        "symbols": [
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ],
         "enabled": True,
-        "description": "Major crypto assets",
+        "description": "Top 20 crypto assets",
     }
 }
 

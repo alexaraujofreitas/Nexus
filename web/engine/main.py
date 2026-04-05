@@ -573,7 +573,12 @@ class TradingEngineService:
         """
         if not self._exchange_manager:
             return {"status": "error", "detail": "ExchangeManager not initialized"}
-        symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+        symbols = [
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ]
         if self._settings:
             cfg_symbols = self._settings.get("scanner.watchlist", None)
             if cfg_symbols and isinstance(cfg_symbols, list):
@@ -1169,8 +1174,18 @@ class TradingEngineService:
             logger.warning("_cmd_get_watchlist: PostgreSQL unavailable, falling back to config: %s", e)
 
         # ── Fallback: config.yaml (desktop-only compatibility) ─
-        symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
-        weights = {"SOL/USDT": 1.3, "ETH/USDT": 1.2, "BTC/USDT": 1.0, "BNB/USDT": 0.8, "XRP/USDT": 0.8}
+        symbols = [
+            "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+            "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+            "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+            "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+        ]
+        weights = {
+            "BTC/USDT": 1.0, "ETH/USDT": 1.2, "SOL/USDT": 1.3, "BNB/USDT": 0.8, "XRP/USDT": 0.8,
+            "TRX/USDT": 0.7, "DOGE/USDT": 0.7, "ADA/USDT": 0.7, "BCH/USDT": 0.7, "HYPE/USDT": 0.7,
+            "LINK/USDT": 0.7, "XLM/USDT": 0.7, "AVAX/USDT": 0.7, "HBAR/USDT": 0.7, "SUI/USDT": 0.7,
+            "NEAR/USDT": 0.7, "ICP/USDT": 0.7, "ONDO/USDT": 0.7, "ALGO/USDT": 0.7, "RENDER/USDT": 0.7,
+        }
 
         if self._settings:
             cfg_symbols = self._settings.get("scanner.watchlist", None)
