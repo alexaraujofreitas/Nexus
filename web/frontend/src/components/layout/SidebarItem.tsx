@@ -35,7 +35,7 @@ export default function SidebarItem({ item, onClick, collapsed }: SidebarItemPro
           collapsed ? 'justify-center px-2 py-2' : 'gap-3 px-3 py-2',
           isActive
             ? 'bg-blue-50 text-blue-700'
-            : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900',
+            : 'text-gray-900 hover:bg-gray-50',
         )}
       >
         <Icon
@@ -43,7 +43,7 @@ export default function SidebarItem({ item, onClick, collapsed }: SidebarItemPro
           strokeWidth={1.75}
           className={cn(
             'shrink-0 transition-colors duration-150',
-            isActive ? 'text-blue-600' : 'text-gray-400',
+            isActive ? 'text-blue-600' : 'text-gray-600',
           )}
         />
         {!collapsed && (
