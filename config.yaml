@@ -2130,14 +2130,29 @@ scanner:
   ohlcv_bars: 300
   watchlists:
     Default:
-      description: Major crypto assets
+      description: Top 20 crypto assets
       enabled: true
       symbols:
       - BTC/USDT
       - ETH/USDT
       - BNB/USDT
-      - SOL/USDT
       - XRP/USDT
+      - SOL/USDT
+      - TRX/USDT
+      - DOGE/USDT
+      - ADA/USDT
+      - BCH/USDT
+      - HYPE/USDT
+      - LINK/USDT
+      - XLM/USDT
+      - AVAX/USDT
+      - HBAR/USDT
+      - SUI/USDT
+      - NEAR/USDT
+      - ICP/USDT
+      - ONDO/USDT
+      - ALGO/USDT
+      - RENDER/USDT
   websocket_enabled: false
   websocket_symbol: BTC/USDT
   websocket_timeframe: 1h
