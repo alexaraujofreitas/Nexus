@@ -7,7 +7,7 @@ import Login from './pages/Login';
 import Setup from './pages/Setup';
 import Dashboard from './pages/Dashboard';
 import Scanner from './pages/Scanner';
-import Trading from './pages/Trading';
+// Trading page removed — Trades (DemoMonitor) page is the consolidated view
 import Intelligence from './pages/Intelligence';
 import Risk from './pages/Risk';
 import Settings from './pages/Settings';
@@ -57,7 +57,6 @@ export default function App() {
               <Route path="scanner" element={<Scanner />} />
               <Route path="regime" element={<MarketRegime />} />
               <Route path="charts" element={<Suspense fallback={<LazyFallback />}><Charts /></Suspense>} />
-              <Route path="trading" element={<Trading />} />
               <Route path="intelligence" element={<Intelligence />} />
               <Route path="risk" element={<Risk />} />
               <Route path="analytics" element={<Analytics />} />
