@@ -57,7 +57,7 @@ function PortfolioSummary({ portfolio, pnl }: { portfolio: any; pnl: any }) {
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
       {stats.map((s) => (
         <div key={s.label} className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{s.label}</p>
+          <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider">{s.label}</p>
           <p className={cn('text-lg font-bold mt-1.5', colorMap[s.color])}>{s.value}</p>
         </div>
       ))}
@@ -70,7 +70,7 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
   if (!positions || positions.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-4">Active Positions</p>
+        <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">Active Positions</p>
         <p className="text-sm text-gray-400">No active positions</p>
       </div>
     );
@@ -80,13 +80,13 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-4">
+      <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">
         Active Positions ({sorted.length})
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
-            <tr className="text-[11px] text-gray-400 uppercase tracking-wider border-b border-gray-200">
+            <tr className="text-[11px] text-gray-900 uppercase tracking-wider border-b border-gray-200">
               <th className="pb-3 px-3 text-center font-semibold">Symbol</th>
               <th className="pb-3 px-3 text-center font-semibold">Side</th>
               <th className="pb-3 px-3 text-center font-semibold">Entry</th>
@@ -167,7 +167,7 @@ function RiskPanel({ risk, regime }: { risk: any; regime: any }) {
     <div className="space-y-4">
       {regime && (
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Market Regime</p>
+          <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-3">Market Regime</p>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full" style={{ backgroundColor: regimeColors[regime.regime] || '#6b7280' }} />
@@ -179,7 +179,7 @@ function RiskPanel({ risk, regime }: { risk: any; regime: any }) {
       )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-4">
-        <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-4">Risk Status</p>
+        <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">Risk Status</p>
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs text-gray-600">Drawdown</span>
@@ -224,7 +224,7 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
   if (!trades || trades.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-4">Recent Trades</p>
+        <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">Recent Trades</p>
         <p className="text-sm text-gray-400">No recent trades</p>
       </div>
     );
@@ -234,11 +234,11 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-4">Recent Trades (Last 50)</p>
+      <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">Recent Trades (Last 50)</p>
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
-            <tr className="text-[11px] text-gray-400 uppercase tracking-wider border-b border-gray-200">
+            <tr className="text-[11px] text-gray-900 uppercase tracking-wider border-b border-gray-200">
               <th className="pb-3 px-3 text-center font-semibold">Time</th>
               <th className="pb-3 px-3 text-center font-semibold">Symbol</th>
               <th className="pb-3 px-3 text-center font-semibold">Side</th>
