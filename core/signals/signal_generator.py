@@ -137,24 +137,23 @@ class SignalGenerator:
                 return []
 
         # Fetch orchestrator context for sub-model awareness (A-1 fix)
+        # v3: Cached reference avoids per-call import lock contention.
         orch_direction = "neutral"
         orch_meta = 0.0
         try:
-            from core.orchestrator.orchestrator_engine import get_orchestrator
-            _orch = get_orchestrator()
-            _orch_sig = _orch.get_signal()
-            orch_direction = _orch_sig.direction
-            orch_meta = _orch_sig.meta_signal
+            if not hasattr(self, "_orch_ref"):
+                from core.orchestrator.orchestrator_engine import get_orchestrator
+                self._orch_ref = get_orchestrator()
+            if self._orch_ref is not None:
+                _orch_sig = self._orch_ref.get_signal()
+                orch_direction = _orch_sig.direction
+                orch_meta = _orch_sig.meta_signal
         except Exception:
             pass
 
         signals: list[ModelSignal] = []
 
         # ── Phase 3.4 Opt: read all settings ONCE before the model loop ──────
-        # settings.get() was called 4.9M times per simulation run (~4.4s) because
-        # it was called inside the for-model loop for disabled_models,
-        # adaptive_activation.*, and mr_pbl_slc.enabled on EVERY iteration.
-        # Reading them once outside the loop saves ~4.4s per simulation.
         from config.settings import settings as _sc
         _disabled       = set(_sc.get("disabled_models", []))
         _adaptive_en    = bool(_sc.get("adaptive_activation.enabled", True))
@@ -171,14 +170,17 @@ class SignalGenerator:
                 continue
 
             # Check model_performance_tracker auto-disable
+            # v3: Cached reference avoids per-model import lock contention.
             try:
-                from core.analytics.model_performance_tracker import get_model_performance_tracker
-                _mpt = get_model_performance_tracker()
-                _should_disable, _disable_reason = _mpt.should_auto_disable(model.name)
-                if _should_disable:
-                    logger.warning("SignalGenerator: auto-disabling %s (%s)", model.name, _disable_reason)
-                    _disabled.add(model.name)
-                    continue
+                if not hasattr(self, "_mpt_ref"):
+                    from core.analytics.model_performance_tracker import get_model_performance_tracker
+                    self._mpt_ref = get_model_performance_tracker()
+                if self._mpt_ref is not None:
+                    _should_disable, _disable_reason = self._mpt_ref.should_auto_disable(model.name)
+                    if _should_disable:
+                        logger.warning("SignalGenerator: auto-disabling %s (%s)", model.name, _disable_reason)
+                        _disabled.add(model.name)
+                        continue
             except Exception:
                 pass
 

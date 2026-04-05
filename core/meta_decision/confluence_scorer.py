@@ -444,6 +444,18 @@ class ConfluenceScorer:
                 combined_adj = _outcome_tracker.get_weight_adjustment(model_name)
             return base_weight * activation * combined_adj
 
+        # v3: Memoize _get_adaptive_weight — called 11+ times per score()
+        # with repeated (model_name, base_weight) pairs. Cache eliminates
+        # redundant regime_affinity + adaptive_engine + outcome_tracker lookups.
+        _aw_cache: dict[str, float] = {}
+        _raw_get_adaptive_weight = _get_adaptive_weight
+
+        def _get_adaptive_weight(model_name: str, base_weight: float) -> float:
+            _key = f"{model_name}:{base_weight}"
+            if _key not in _aw_cache:
+                _aw_cache[_key] = _raw_get_adaptive_weight(model_name, base_weight)
+            return _aw_cache[_key]
+
         long_weight_sum = sum(
             _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name)) * s.strength
             for s in long_signals
