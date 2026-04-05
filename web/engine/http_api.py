@@ -696,8 +696,35 @@ class EngineHttpApi:
                     "blocked": 0,
                 }
 
+        # Merge in any tradable assets missing from scanner results
+        pipeline = result.get("pipeline", [])
+        scanned_syms = {r["symbol"] for r in pipeline}
+        active_ex = self._store.get_active_exchange()
+        if active_ex:
+            tradable = self._store.get_tradable_assets(active_ex["id"])
+            for a in tradable:
+                if a["symbol"] not in scanned_syms:
+                    pipeline.append({
+                        "asset_id": a["id"], "symbol": a["symbol"],
+                        "allocation_weight": a.get("allocation_weight", 1.0),
+                        "price": None, "regime": "", "regime_confidence": 0.0,
+                        "models_fired": [], "models_no_signal": [],
+                        "score": 0.0, "direction": "", "status": "Waiting",
+                        "reason": "Not yet scanned", "is_approved": False,
+                        "entry_price": None, "stop_loss": 0.0, "take_profit": 0.0,
+                        "rr_ratio": 0.0, "position_size_usdt": 0.0, "scanned_at": "",
+                        "technical_score": 0.0, "final_score": 0.0,
+                        "mil_active": False, "mil_total_delta": 0.0,
+                        "mil_influence_pct": 0.0, "mil_capped": False,
+                        "mil_dominant_source": "", "mil_breakdown": {},
+                        "decision_explanation": "Awaiting scanner cycle",
+                        "block_reasons": [], "diagnostics": {},
+                    })
+            result["pipeline"] = pipeline
+            if "summary" in result:
+                result["summary"]["total"] = len(pipeline)
+
         # Enrich pipeline rows with live prices from ticker cache
-        # (Asset Management already fetches these — reuse the same data)
         pipeline = result.get("pipeline", [])
         if pipeline and self._ticker_cache:
             for row in pipeline:

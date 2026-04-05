@@ -141,7 +141,41 @@ export async function getScannerResults(): Promise<ScannerResults> {
 
 export async function getPipelineStatus(): Promise<PipelineStatusResponse> {
   const resp = await api.get<PipelineStatusResponse>('/scanner/pipeline-status');
-  return resp.data;
+  const data = resp.data;
+  const pipeline = data.pipeline || [];
+  const scannedSyms = new Set(pipeline.map((r: PipelineRow) => r.symbol));
+
+  // Merge in tradable assets not yet in scan results
+  try {
+    const wlResp = await api.get('/scanner/watchlist');
+    const wl = wlResp.data;
+    const watchSyms: string[] = wl.symbols || [];
+    const weights: Record<string, number> = wl.weights || {};
+    for (const sym of watchSyms) {
+      if (!scannedSyms.has(sym)) {
+        pipeline.push({
+          asset_id: 0, symbol: sym,
+          allocation_weight: weights[sym] || 1.0,
+          price: null, regime: '', regime_confidence: 0,
+          models_fired: [], models_no_signal: [],
+          score: 0, direction: '', status: 'Waiting' as PipelineStatus,
+          reason: 'Not yet scanned', is_approved: false,
+          entry_price: null, stop_loss: 0, take_profit: 0,
+          rr_ratio: 0, position_size_usdt: 0, scanned_at: '',
+          technical_score: 0, final_score: 0,
+          mil_active: false, mil_total_delta: 0, mil_influence_pct: 0,
+          mil_capped: false, mil_dominant_source: '',
+          mil_breakdown: {} as any,
+          decision_explanation: 'Awaiting scanner cycle',
+          block_reasons: [], diagnostics: {} as any,
+        });
+      }
+    }
+    data.pipeline = pipeline;
+    if (data.summary) data.summary.total = pipeline.length;
+  } catch { /* watchlist fetch failed — use pipeline as-is */ }
+
+  return data;
 }
 
 export async function getWatchlist(): Promise<WatchlistResponse> {
