@@ -1,445 +1,245 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getCurrentRegime, getRegimeHistory } from '../api/analytics';
-import { formatPct, timeAgo } from '../lib/utils';
+import { TrendingUp, RefreshCw } from 'lucide-react';
+import { getPipelineStatus } from '../api/scanner';
+import type { PipelineRow } from '../api/scanner';
+import { cn } from '../lib/utils';
 
-const REGIME_COLORS: Record<string, string> = {
-  bull_trend: '#16a34a',
-  bear_trend: '#dc2626',
-  ranging: '#ca8a04',
-  vol_expansion: '#7c3aed',
-  vol_compression: '#8b5cf6',
-  accumulation: '#22c55e',
-  distribution: '#f87171',
-  uncertain: '#6b7280',
+const MAX_SNAPSHOTS = 20;
+
+// ── Regime visual config ─────────────────────────────────
+const REGIME_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
+  bull_trend:       { label: 'Bull',       bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500' },
+  bear_trend:       { label: 'Bear',       bg: 'bg-red-100',    text: 'text-red-700',    dot: 'bg-red-500' },
+  ranging:          { label: 'Range',      bg: 'bg-yellow-100', text: 'text-yellow-700', dot: 'bg-yellow-500' },
+  vol_expansion:    { label: 'Vol+',       bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
+  vol_compression:  { label: 'Vol-',       bg: 'bg-violet-100', text: 'text-violet-700', dot: 'bg-violet-500' },
+  accumulation:     { label: 'Accum',      bg: 'bg-emerald-100',text: 'text-emerald-700',dot: 'bg-emerald-500' },
+  distribution:     { label: 'Dist',       bg: 'bg-orange-100', text: 'text-orange-700', dot: 'bg-orange-500' },
+  uncertain:        { label: 'Uncertain',  bg: 'bg-gray-100',   text: 'text-gray-500',   dot: 'bg-gray-400' },
+  volatility_expansion: { label: 'Vol+',   bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
 };
 
-const REGIME_LABELS: Record<string, string> = {
-  bull_trend: 'Bull Trend',
-  bear_trend: 'Bear Trend',
-  ranging: 'Ranging',
-  vol_expansion: 'Vol Expansion',
-  vol_compression: 'Vol Compression',
-  accumulation: 'Accumulation',
-  distribution: 'Distribution',
-  uncertain: 'Uncertain',
-};
-
-function CurrentRegimeCard({ regime, isLoading, isError }: {
-  regime: any;
-  isLoading: boolean;
-  isError: boolean;
-}) {
-  if (isLoading) {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/3" />
-          <div className="h-6 bg-gray-200 rounded w-1/2" />
-          <div className="h-4 bg-gray-200 rounded w-full" />
-        </div>
-      </div>
-    );
-  }
-
-  if (isError || !regime) {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <p className="text-sm text-red-600">Failed to load regime data</p>
-      </div>
-    );
-  }
-
-  const color = REGIME_COLORS[regime.regime] || '#6b7280';
-
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-            Current Market Regime
-          </p>
-          <div className="flex items-center gap-3 mb-4">
-            <div
-              className="w-4 h-4 rounded-full"
-              style={{ backgroundColor: color }}
-            />
-            <h2 className="text-3xl font-bold text-gray-900">
-              {REGIME_LABELS[regime.regime] || regime.regime}
-            </h2>
-          </div>
-        </div>
-        <div className="text-right">
-          <p className="text-sm text-gray-600">Confidence</p>
-          <p className="text-2xl font-semibold text-gray-900">
-            {formatPct(regime.confidence)}
-          </p>
-        </div>
-      </div>
-
-      {/* Confidence Bar */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-medium text-gray-600">Confidence Level</p>
-          <p className="text-xs text-gray-400">{Math.round(regime.confidence * 100)}%</p>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-2">
-          <div
-            className="h-2 rounded-full transition-all duration-300"
-            style={{
-              width: `${regime.confidence * 100}%`,
-              backgroundColor: color,
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Classifier & Description */}
-      <div className="grid grid-cols-2 gap-4 mb-6 pb-6 border-b border-gray-200">
-        <div>
-          <p className="text-xs font-medium text-gray-600 mb-1">Classifier</p>
-          <p className="text-sm text-gray-900 font-medium">{regime.classifier || 'Unknown'}</p>
-          {regime.hmm_fitted !== undefined && (
-            <p className="text-xs text-gray-400 mt-1">
-              HMM Fitted: {regime.hmm_fitted ? 'Yes' : 'No'}
-            </p>
-          )}
-        </div>
-        <div>
-          <p className="text-xs font-medium text-gray-600 mb-1">Source</p>
-          <p className="text-sm text-gray-900 font-medium">{regime.source || 'Unknown'}</p>
-        </div>
-      </div>
-
-      {/* Description & Strategy Hints */}
-      {regime.description && (
-        <div className="mb-4">
-          <p className="text-xs font-medium text-gray-600 mb-1">Description</p>
-          <p className="text-sm text-gray-700">{regime.description}</p>
-        </div>
-      )}
-
-      {regime.strategies && regime.strategies.length > 0 && (
-        <div className="mb-4">
-          <p className="text-xs font-medium text-gray-600 mb-2">Recommended Strategies</p>
-          <div className="flex flex-wrap gap-2">
-            {regime.strategies.map((strategy: string, idx: number) => (
-              <span
-                key={idx}
-                className="px-3 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700"
-              >
-                {strategy}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {regime.risk_adjustment && (
-        <div>
-          <p className="text-xs font-medium text-gray-600 mb-1">Risk Adjustment</p>
-          <p className="text-sm text-gray-700">{regime.risk_adjustment}</p>
-        </div>
-      )}
-    </div>
-  );
+interface RegimeSnapshot {
+  timestamp: string;        // ISO string of scan time
+  displayTime: string;      // formatted for column header
+  regimes: Record<string, string>; // symbol → regime
 }
 
-function HMMProbabilityDistribution({ regime, isLoading, isError }: {
-  regime: any;
-  isLoading: boolean;
-  isError: boolean;
-}) {
-  if (isLoading || isError || !regime?.probabilities) {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">
-          HMM Probability Distribution
-        </p>
-        {isLoading && <div className="text-sm text-gray-400">Loading...</div>}
-        {isError && <div className="text-sm text-red-600">Failed to load probabilities</div>}
-        {!regime?.probabilities && <div className="text-sm text-gray-400">No probability data</div>}
-      </div>
-    );
-  }
-
-  const probs = regime.probabilities;
-  const regimeKeys = Object.keys(probs).sort();
-
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">
-        HMM Probability Distribution
-      </p>
-      <div className="space-y-3">
-        {regimeKeys.map((key: string) => {
-          const prob = probs[key];
-          const color = REGIME_COLORS[key] || '#6b7280';
-          const pctStr = (prob * 100).toFixed(1);
-
-          return (
-            <div key={key} className="space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-medium text-gray-700">
-                  {REGIME_LABELS[key] || key}
-                </span>
-                <span className="font-mono text-gray-600">{pctStr}%</span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-2">
-                <div
-                  className="h-2 rounded-full transition-all duration-300"
-                  style={{
-                    width: `${prob * 100}%`,
-                    backgroundColor: color,
-                  }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+function formatScanTime(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+    + '\n' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function RegimeStatistics({ history, isLoading, isError }: {
-  history: any[];
-  isLoading: boolean;
-  isError: boolean;
-}) {
-  if (isLoading || isError || !history) {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">
-          Regime Distribution
-        </p>
-        {isLoading && <div className="text-sm text-gray-400">Loading...</div>}
-        {isError && <div className="text-sm text-red-600">Failed to load history</div>}
-      </div>
-    );
-  }
-
-  // Count regimes in history
-  const regimeCounts: Record<string, number> = {};
-  history.forEach((entry) => {
-    regimeCounts[entry.regime] = (regimeCounts[entry.regime] || 0) + 1;
-  });
-
-  const sorted = Object.entries(regimeCounts)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 8);
-
+function RegimeCell({ regime }: { regime: string | undefined }) {
+  if (!regime) return <td className="px-2 py-2.5 text-center text-gray-200 text-xs">—</td>;
+  const cfg = REGIME_CONFIG[regime] || REGIME_CONFIG['uncertain'];
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">
-        Regime Distribution
-      </p>
-      <div className="grid grid-cols-2 gap-3">
-        {sorted.map(([regime, count]) => {
-          const color = REGIME_COLORS[regime] || '#6b7280';
-          return (
-            <div
-              key={regime}
-              className="bg-gray-50 rounded-lg p-3 border border-gray-200"
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <div
-                  className="w-2.5 h-2.5 rounded-full"
-                  style={{ backgroundColor: color }}
-                />
-                <p className="text-xs font-medium text-gray-700">
-                  {REGIME_LABELS[regime] || regime}
-                </p>
-              </div>
-              <p className="text-lg font-semibold text-gray-900">{count}</p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {((count / history.length) * 100).toFixed(1)}%
-              </p>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function RegimeHistoryTable({ history, isLoading, isError }: {
-  history: any[];
-  isLoading: boolean;
-  isError: boolean;
-}) {
-  if (isLoading) {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">
-          Regime History
-        </p>
-        <div className="space-y-2">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (isError || !history) {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">
-          Regime History
-        </p>
-        <p className="text-sm text-red-600">Failed to load history</p>
-      </div>
-    );
-  }
-
-  if (history.length === 0) {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">
-          Regime History
-        </p>
-        <p className="text-sm text-gray-400">No regime history available</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">
-        Regime History (Last 50 Changes)
-      </p>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
-              <th className="pb-3 font-medium">Time</th>
-              <th className="pb-3 font-medium">Regime</th>
-              <th className="pb-3 font-medium">Confidence</th>
-              <th className="pb-3 font-medium">Classifier</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.slice(0, 50).map((entry, idx) => {
-              const color = REGIME_COLORS[entry.regime] || '#6b7280';
-              return (
-                <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-3 text-gray-600 font-mono text-xs">
-                    {timeAgo(entry.timestamp)}
-                  </td>
-                  <td className="py-3">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: color }}
-                      />
-                      <span className="font-medium text-gray-900">
-                        {REGIME_LABELS[entry.regime] || entry.regime}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="py-3 text-gray-700 font-mono">
-                    {(entry.confidence * 100).toFixed(1)}%
-                  </td>
-                  <td className="py-3 text-gray-600 text-xs">
-                    {entry.classifier || 'Unknown'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <td className="px-1.5 py-2 text-center">
+      <span className={cn('inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide', cfg.bg, cfg.text)}>
+        {cfg.label}
+      </span>
+    </td>
   );
 }
 
 export default function MarketRegime() {
+  const snapshotsRef = useRef<RegimeSnapshot[]>([]);
+  const [snapshots, setSnapshots] = useState<RegimeSnapshot[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  const {
-    data: regime,
-    isLoading: regimeLoading,
-    isError: regimeError,
-    refetch: refetchRegime,
-  } = useQuery({
-    queryKey: ['current-regime'],
-    queryFn: getCurrentRegime,
-    refetchInterval: 60000, // 60 seconds
-    staleTime: 30000, // 30 seconds
+  // Poll pipeline status every 30s
+  const { data: pipelineData, refetch } = useQuery({
+    queryKey: ['pipeline-status-regime'],
+    queryFn: getPipelineStatus,
+    refetchInterval: 30000,
+    staleTime: 15000,
   });
 
-  const {
-    data: historyData,
-    isLoading: historyLoading,
-    isError: historyError,
-    refetch: refetchHistory,
-  } = useQuery({
-    queryKey: ['regime-history'],
-    queryFn: getRegimeHistory,
-    refetchInterval: 120000, // 120 seconds
-    staleTime: 60000, // 60 seconds
-  });
+  // When pipeline data arrives, extract regime snapshot
+  useEffect(() => {
+    if (!pipelineData?.pipeline?.length) return;
 
-  const history = historyData?.history || [];
+    const pipeline: PipelineRow[] = pipelineData.pipeline;
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await Promise.all([refetchRegime(), refetchHistory()]);
-    } finally {
-      setRefreshing(false);
+    // Find the scan timestamp (use the first scanned symbol's timestamp)
+    const scannedRows = pipeline.filter(r => r.scanned_at);
+    if (scannedRows.length === 0) return;
+
+    const scanTimestamp = scannedRows[0].scanned_at;
+    if (!scanTimestamp) return;
+
+    // Check if we already have this timestamp
+    const existing = snapshotsRef.current;
+    if (existing.length > 0 && existing[0].timestamp === scanTimestamp) return;
+
+    // Build regime map for this scan cycle
+    const regimes: Record<string, string> = {};
+    for (const row of pipeline) {
+      if (row.regime) {
+        regimes[row.symbol] = row.regime;
+      }
     }
-  };
+
+    // Create snapshot
+    const snapshot: RegimeSnapshot = {
+      timestamp: scanTimestamp,
+      displayTime: formatScanTime(scanTimestamp),
+      regimes,
+    };
+
+    // Prepend (newest first), cap at MAX_SNAPSHOTS
+    const updated = [snapshot, ...existing].slice(0, MAX_SNAPSHOTS);
+    snapshotsRef.current = updated;
+    setSnapshots(updated);
+  }, [pipelineData]);
+
+  // Collect all unique symbols across all snapshots, sorted
+  const symbols = useMemo(() => {
+    const set = new Set<string>();
+    for (const snap of snapshots) {
+      for (const sym of Object.keys(snap.regimes)) set.add(sym);
+    }
+    // Also add pipeline symbols that haven't been scanned yet
+    if (pipelineData?.pipeline) {
+      for (const row of pipelineData.pipeline) set.add(row.symbol);
+    }
+    return Array.from(set).sort();
+  }, [snapshots, pipelineData]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await refetch(); } finally { setTimeout(() => setRefreshing(false), 500); }
+  }, [refetch]);
+
+  // Summary: count current regimes
+  const currentRegimeCounts = useMemo(() => {
+    if (snapshots.length === 0) return {};
+    const counts: Record<string, number> = {};
+    for (const [, regime] of Object.entries(snapshots[0].regimes)) {
+      counts[regime] = (counts[regime] || 0) + 1;
+    }
+    return counts;
+  }, [snapshots]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Market Regime</h1>
-          <p className="text-sm text-gray-500 mt-1">Real-time regime classification and analysis</p>
+        <div className="flex items-center gap-3">
+          <TrendingUp className="w-5 h-5 text-blue-500" />
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">Market Regime</h1>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Rolling regime history by tradable pair ({snapshots.length} scan{snapshots.length !== 1 ? 's' : ''} captured)
+            </p>
+          </div>
         </div>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors',
+            refreshing ? 'bg-gray-100 text-gray-400' : 'bg-blue-600 text-white hover:bg-blue-700',
+          )}
         >
-          {refreshing ? 'Refreshing...' : 'Refresh'}
+          <RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />
+          Refresh
         </button>
       </div>
 
-      {/* Current Regime Card (Full Width) */}
-      <CurrentRegimeCard
-        regime={regime}
-        isLoading={regimeLoading}
-        isError={regimeError}
-      />
+      {/* Current Regime Summary */}
+      {Object.keys(currentRegimeCounts).length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(currentRegimeCounts)
+            .sort(([, a], [, b]) => b - a)
+            .map(([regime, count]) => {
+              const cfg = REGIME_CONFIG[regime] || REGIME_CONFIG['uncertain'];
+              return (
+                <div key={regime} className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg border', cfg.bg)}>
+                  <span className={cn('w-2 h-2 rounded-full', cfg.dot)} />
+                  <span className={cn('text-xs font-bold', cfg.text)}>
+                    {(REGIME_CONFIG[regime]?.label || regime).toUpperCase()}
+                  </span>
+                  <span className={cn('text-xs font-mono', cfg.text)}>{count}</span>
+                </div>
+              );
+            })}
+        </div>
+      )}
 
-      {/* Two-Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* HMM Probability Distribution */}
-        <HMMProbabilityDistribution
-          regime={regime}
-          isLoading={regimeLoading}
-          isError={regimeError}
-        />
-
-        {/* Regime Statistics */}
-        <RegimeStatistics
-          history={history}
-          isLoading={historyLoading}
-          isError={historyError}
-        />
+      {/* Regime Matrix Table */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        {symbols.length === 0 || snapshots.length === 0 ? (
+          <div className="p-12 text-center">
+            <TrendingUp className="w-10 h-10 text-gray-200 mx-auto mb-3" />
+            <p className="text-sm font-medium text-gray-500">Waiting for scan data...</p>
+            <p className="text-xs text-gray-400 mt-1">Regime history will populate after the first scan cycle completes</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left text-[11px] font-bold text-gray-900 uppercase tracking-wider border-r border-gray-200 min-w-[130px]">
+                    Tradable Pair
+                  </th>
+                  {snapshots.map((snap, i) => (
+                    <th
+                      key={snap.timestamp}
+                      className={cn(
+                        'px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wider min-w-[80px]',
+                        i === 0 ? 'text-blue-700 bg-blue-50/50' : 'text-gray-500',
+                      )}
+                    >
+                      <div className="whitespace-pre-line leading-tight">
+                        {snap.displayTime}
+                      </div>
+                      {i === 0 && (
+                        <span className="inline-block mt-0.5 px-1 py-0 rounded text-[8px] font-bold bg-blue-100 text-blue-600">
+                          LATEST
+                        </span>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {symbols.map((sym, rowIdx) => (
+                  <tr key={sym} className={cn('border-b border-gray-50', rowIdx % 2 === 0 ? '' : 'bg-gray-50/30')}>
+                    <td className="sticky left-0 z-10 bg-white px-4 py-2.5 font-semibold text-gray-900 text-xs border-r border-gray-100 whitespace-nowrap">
+                      {sym}
+                    </td>
+                    {snapshots.map((snap, colIdx) => (
+                      <RegimeCell key={snap.timestamp} regime={snap.regimes[sym]} />
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* Regime History Table (Full Width) */}
-      <RegimeHistoryTable
-        history={history}
-        isLoading={historyLoading}
-        isError={historyError}
-      />
+      {/* Legend */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <p className="text-[11px] font-bold text-gray-900 uppercase tracking-wider mb-3">Regime Legend</p>
+        <div className="flex flex-wrap gap-3">
+          {Object.entries(REGIME_CONFIG)
+            .filter(([key]) => !['volatility_expansion'].includes(key))
+            .map(([key, cfg]) => (
+              <div key={key} className="flex items-center gap-1.5">
+                <span className={cn('w-2.5 h-2.5 rounded-full', cfg.dot)} />
+                <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-bold uppercase', cfg.bg, cfg.text)}>
+                  {cfg.label}
+                </span>
+              </div>
+            ))}
+        </div>
+      </div>
     </div>
   );
 }
