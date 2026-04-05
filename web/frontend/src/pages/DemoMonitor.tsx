@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getMonitorPositions,
@@ -15,6 +15,7 @@ import { formatUSD, formatPct, timeAgo, cn } from '../lib/utils';
 
 // ── Helper: Format duration ────────────────────────────
 function formatDuration(seconds: number): string {
+  if (seconds <= 0) return '—';
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   if (seconds < 86400) {
@@ -25,6 +26,16 @@ function formatDuration(seconds: number): string {
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   return `${d}d ${h}h`;
+}
+
+/** Compute duration from opened_at string. Falls back to duration_s from API. */
+function computeDuration(durationFromApi: number, openedAt?: string): number {
+  if (durationFromApi > 0) return durationFromApi;
+  if (!openedAt) return 0;
+  const ts = openedAt.endsWith('Z') ? openedAt : openedAt + 'Z';
+  const openMs = new Date(ts).getTime();
+  if (isNaN(openMs)) return 0;
+  return Math.max(0, Math.floor((Date.now() - openMs) / 1000));
 }
 
 // ── Component: Portfolio Summary Bar ───────────────────
@@ -113,7 +124,7 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
                 <td className={cn('py-3 px-3 text-center font-mono text-xs font-semibold', pos.pnl_unrealized >= 0 ? 'text-green-600' : 'text-red-600')}>
                   {formatPct(pos.pnl_pct)}
                 </td>
-                <td className="py-3 px-3 text-center font-mono text-xs text-gray-500">{formatDuration(pos.duration_s)}</td>
+                <td className="py-3 px-3 text-center font-mono text-xs text-gray-500">{formatDuration(computeDuration(pos.duration_s, pos.opened_at))}</td>
                 <td className="py-3 px-3 text-center text-xs text-gray-500">{pos.regime_at_entry}</td>
                 <td className="py-3 px-3 text-center font-mono text-xs text-gray-500 whitespace-nowrap">
                   {pos.stop_loss !== null ? formatUSD(pos.stop_loss) : '—'}
@@ -289,6 +300,13 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
 // ── Main Page ──────────────────────────────────────────
 export default function DemoMonitor() {
   const { connect, subscribe, lastMessage, status } = useWSStore();
+
+  // Tick every 10s to update live durations
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 10000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => { connect(); }, [connect]);
   useEffect(() => {

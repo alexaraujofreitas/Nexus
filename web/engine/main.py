@@ -1904,7 +1904,9 @@ class TradingEngineService:
                     if opened_at:
                         try:
                             dt = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
-                            duration_s = int((datetime.now(timezone.utc) - dt).total_seconds())
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            duration_s = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
                         except Exception:
                             pass
                     # Compute pnl_pct
