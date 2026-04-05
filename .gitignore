@@ -157,3 +157,6 @@ test-results/
 # Uncomment the line below if you want each machine to have
 # its own settings.yaml (exchange keys, watchlists, etc.)
 # config/settings.yaml
+
+# ── Web frontend runtime data ─────────────────────────────
+data/web_assets.json

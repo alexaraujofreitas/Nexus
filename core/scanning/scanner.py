@@ -1,26 +1,37 @@
 # ============================================================
-# NEXUS TRADER — Asset Scanner
+# NEXUS TRADER — Asset Scanner  (v2 — Parallel Pipeline)
 #
 # Orchestrates the full IDSS scan cycle:
 #   1. Get active symbols from WatchlistManager
 #   2. Apply UniverseFilter (liquidity, spread, ATR)
-#   3. For each qualifying symbol:
-#      a. Fetch recent candles
-#      b. Calculate indicators
-#      c. Classify regime
-#      d. Run SignalGenerator
-#      e. Score with ConfluenceScorer
-#      f. Validate with RiskGate
-#   4. Emit events for approved OrderCandidates
+#   3. PHASE 1 (I/O): Concurrent OHLCV fetch for ALL symbols
+#      and ALL timeframes (primary + 4h/1h context + MTF)
+#   4. PHASE 2 (COMPUTE): Parallel per-symbol pipeline:
+#      a. Calculate indicators
+#      b. Classify regime (ensemble + HMM)
+#      c. Run SignalGenerator
+#      d. Score with ConfluenceScorer
+#   5. PHASE 3 (FINALIZE): Risk gate + atomic result publish
 #
-# Runs on a QTimer (default: every primary_tf minutes on-close
-# approximation). Thread-safe: scan runs in a QThread worker.
+# Architecture:
+#   - OHLCV fetches are fully batched and concurrent (bounded pool)
+#   - Per-symbol compute runs in parallel via ThreadPoolExecutor
+#   - Each parallel worker has its own EnsembleRegimeClassifier
+#     and RegimeTransitionController to avoid shared mutable state
+#   - Thread-safe shared objects: HMM models (per-symbol keyed,
+#     each with RLock), ConfluenceScorer (has threading.Lock),
+#     MS-GARCH singleton (has threading.Lock), SignalGenerator
+#     (read-only model list, stateless evaluate calls)
+#   - Results are collected atomically before emission
+#
+# Performance target: ≤10s for 20 symbols end-to-end
 # ============================================================
 from __future__ import annotations
 
 import concurrent.futures
 import logging
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -39,6 +50,75 @@ from core.scanning.closed_candle_guard import enforce_closed_candles
 from core.event_bus import bus, Topics
 
 logger = logging.getLogger(__name__)
+
+
+# ── Scan Cycle Metrics ────────────────────────────────────────
+@dataclass
+class ScanCycleMetrics:
+    """Professional-grade timing instrumentation for scan cycles."""
+    cycle_start: float = 0.0
+    ticker_fetch_ms: float = 0.0
+    universe_filter_ms: float = 0.0
+    ohlcv_prefetch_ms: float = 0.0
+    compute_phase_ms: float = 0.0
+    risk_gate_ms: float = 0.0
+    post_scan_ms: float = 0.0
+    total_cycle_ms: float = 0.0
+    # Per-symbol timing
+    per_symbol_ms: dict = field(default_factory=dict)
+    # Concurrency info
+    symbols_total: int = 0
+    symbols_qualifying: int = 0
+    symbols_fetched_ok: int = 0
+    symbols_computed: int = 0
+    symbols_failed: list = field(default_factory=list)
+    fetch_concurrency: int = 0
+    compute_concurrency: int = 0
+    # Slowest / average
+    slowest_symbol: str = ""
+    slowest_symbol_ms: float = 0.0
+    avg_symbol_ms: float = 0.0
+    # Context fetch counts
+    context_fetches_total: int = 0
+    context_fetches_ok: int = 0
+    retries: int = 0
+    timeouts: int = 0
+
+    def log_summary(self):
+        """Emit a structured performance summary to logs."""
+        logger.info(
+            "╔══════════════════════════════════════════════════════════╗\n"
+            "║  SCAN CYCLE PERFORMANCE REPORT                         ║\n"
+            "╠══════════════════════════════════════════════════════════╣\n"
+            "║  Total cycle       : %7.0f ms                         ║\n"
+            "║  ├─ Ticker fetch   : %7.0f ms                         ║\n"
+            "║  ├─ Universe filter: %7.0f ms                         ║\n"
+            "║  ├─ OHLCV prefetch : %7.0f ms  (%d workers)           ║\n"
+            "║  ├─ Compute phase  : %7.0f ms  (%d workers)           ║\n"
+            "║  ├─ Risk gate      : %7.0f ms                         ║\n"
+            "║  └─ Post-scan      : %7.0f ms                         ║\n"
+            "║                                                        ║\n"
+            "║  Symbols: %d total → %d qualifying → %d fetched → %d computed ║\n"
+            "║  Slowest : %-12s (%7.0f ms)                    ║\n"
+            "║  Average : %7.0f ms/symbol                            ║\n"
+            "║  Failed  : %s                                         ║\n"
+            "║  Context fetches: %d/%d OK | Timeouts: %d | Retries: %d║\n"
+            "╚══════════════════════════════════════════════════════════╝",
+            self.total_cycle_ms,
+            self.ticker_fetch_ms,
+            self.universe_filter_ms,
+            self.ohlcv_prefetch_ms, self.fetch_concurrency,
+            self.compute_phase_ms, self.compute_concurrency,
+            self.risk_gate_ms,
+            self.post_scan_ms,
+            self.symbols_total, self.symbols_qualifying,
+            self.symbols_fetched_ok, self.symbols_computed,
+            self.slowest_symbol or "N/A", self.slowest_symbol_ms,
+            self.avg_symbol_ms,
+            self.symbols_failed or "none",
+            self.context_fetches_ok, self.context_fetches_total,
+            self.timeouts, self.retries,
+        )
 
 # Timeframe → approximate poll interval in seconds
 TF_POLL_SECONDS: dict[str, int] = {
@@ -192,18 +272,31 @@ class ScanWorker(QThread):
         }
 
     def run(self):
+        """
+        Execute a full scan cycle with parallel I/O and parallel compute.
+
+        Architecture (v2 — Parallel Pipeline):
+          PHASE 1 (I/O-bound):  Concurrent OHLCV fetch for ALL symbols × ALL timeframes
+          PHASE 2 (CPU-bound):  Parallel per-symbol compute (indicators, regime, signals, scoring)
+          PHASE 3 (Sequential): Risk gate, atomic result emission, post-scan housekeeping
+
+        This replaces the old sequential-per-symbol design that took ~3s/symbol × 20 = 60s.
+        Target: ≤10s for 20 symbols.
+        """
+        metrics = ScanCycleMetrics()
+        metrics.cycle_start = time.time()
+        metrics.symbols_total = len(self._symbols)
+
         try:
             all_candidates: list[OrderCandidate] = []
-            # Track regimes seen this cycle so we can broadcast the majority
             _regime_votes: dict[str, int] = {}
             _regime_confs: dict[str, float] = {}
-            # Per-symbol results for scan_all_results signal (all symbols, not just approved)
             _all_sym_results: dict[str, dict] = {}
 
-            # ── Fetch tickers for spread/volume filter ─────────
-            # IMPORTANT: Do NOT use `with ThreadPoolExecutor` here.
-            # The context manager calls shutdown(wait=True) on exit, which blocks
-            # indefinitely if the thread hangs. Use explicit pool + finally shutdown.
+            # ══════════════════════════════════════════════════════════
+            # PHASE 0: Ticker fetch + Universe filter
+            # ══════════════════════════════════════════════════════════
+            _t0 = time.time()
             tickers = {}
             _tp = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             try:
@@ -211,151 +304,181 @@ class ScanWorker(QThread):
                 tickers = _fut.result(timeout=15.0) or {}
             except concurrent.futures.TimeoutError:
                 logger.warning("Scanner: fetch_tickers timed out after 15s — continuing with empty tickers")
+                metrics.timeouts += 1
             except Exception as exc:
                 logger.warning("Scanner: ticker fetch failed: %s", exc)
             finally:
                 _tp.shutdown(wait=False, cancel_futures=True)
+            metrics.ticker_fetch_ms = (time.time() - _t0) * 1000
 
-            # ── Apply universe filter ──────────────────────────
-            # Pass the previous cycle's indicator DataFrames so the ATR range
-            # filter can reject excessively volatile or illiquid symbols.
+            _t0 = time.time()
             qualifying = self._univ_filter.apply(
                 self._symbols, tickers, feature_dfs=self._prev_df_cache or None
             )
-            # Seed results for symbols that didn't pass the universe filter
             for _sym in self._symbols:
                 if _sym not in qualifying:
                     _all_sym_results[_sym] = self._empty_sym_result(_sym, "Filtered")
+            metrics.universe_filter_ms = (time.time() - _t0) * 1000
+            metrics.symbols_qualifying = len(qualifying)
+
             if not qualifying:
                 self.scan_complete.emit([])
                 self.scan_all_results.emit(list(_all_sym_results.values()))
+                metrics.total_cycle_ms = (time.time() - metrics.cycle_start) * 1000
+                metrics.log_summary()
                 return
 
-            # ── Concurrent OHLCV pre-fetch ─────────────────────
-            # Fetch candles for ALL qualifying symbols in parallel to overlap
-            # network I/O. Processing (indicators, regime, signals) stays
-            # sequential to avoid any thread-safety issues with shared objects.
+            # ══════════════════════════════════════════════════════════
+            # PHASE 1: Concurrent OHLCV prefetch — ALL timeframes
+            #
+            # Batch primary TF + context TFs (4h, 1h) + MTF confirmation
+            # into a SINGLE concurrent fetch phase. This eliminates the
+            # per-symbol sequential REST calls that were the #1 bottleneck.
+            # ══════════════════════════════════════════════════════════
+            _t0 = time.time()
             from config.settings import settings as _sc
             _ohlcv_limit = int(_sc.get("scanner.ohlcv_bars", 300))
-            _ohlcv_cache: dict[str, list] = {}
+            _pbl_slc_enabled = bool(_sc.get("mr_pbl_slc.enabled", False))
+            _mtf_enabled = bool(_sc.get("multi_tf.confirmation_required", False))
+            _slc_bars = int(_sc.get("mr_pbl_slc.slc_1h_bars", 150))
 
-            def _fetch_one(sym: str) -> tuple[str, list]:
-                """Fetch OHLCV for one symbol with a hard 20s per-symbol timeout.
+            # Determine the higher timeframe for MTF confirmation
+            _tf_map = {"1m": "5m", "3m": "15m", "5m": "15m", "15m": "1h",
+                       "30m": "4h", "1h": "4h", "2h": "4h", "4h": "1d",
+                       "6h": "1d", "12h": "1d", "1d": "1w"}
+            _higher_tf = _tf_map.get(self._timeframe)
 
-                The outer concurrent pool calls shutdown(wait=False) on timeout,
-                but running threads are NOT killed — they become zombies if fetch_ohlcv
-                hangs.  To prevent thread accumulation over long sessions, each call
-                is wrapped in its own inner pool with a 20s timeout.  The inner thread
-                may survive briefly (until CCXT's 15s socket timeout fires), but the
-                outer pool thread — the one that accumulates — returns promptly.
-                """
-                _t0 = time.time()
+            # Build fetch manifest: (symbol, timeframe, limit, cache_key)
+            _fetch_manifest: list[tuple[str, str, int, str]] = []
+            for sym in qualifying:
+                # Primary OHLCV
+                _fetch_manifest.append((sym, self._timeframe, _ohlcv_limit, f"{sym}|primary"))
+                # Context TFs for PBL/SLC
+                if _pbl_slc_enabled:
+                    _fetch_manifest.append((sym, "4h", 60, f"{sym}|ctx_4h"))
+                    _fetch_manifest.append((sym, "1h", _slc_bars, f"{sym}|ctx_1h"))
+                # MTF confirmation
+                if _mtf_enabled and _higher_tf:
+                    _fetch_manifest.append((sym, _higher_tf, 50, f"{sym}|mtf"))
+
+            metrics.context_fetches_total = len(_fetch_manifest) - len(qualifying)
+
+            def _fetch_one_batched(sym: str, tf: str, limit: int, cache_key: str) -> tuple[str, str, list]:
+                """Fetch OHLCV for one (symbol, timeframe) pair with timeout."""
+                _t_start = time.time()
                 _inner = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                 try:
-                    _f = _inner.submit(
-                        self._exchange.fetch_ohlcv,
-                        sym, self._timeframe, limit=_ohlcv_limit,
-                    )
+                    _f = _inner.submit(self._exchange.fetch_ohlcv, sym, tf, limit=limit)
                     try:
-                        raw = _f.result(timeout=20.0)
+                        raw = _f.result(timeout=15.0)
                     except concurrent.futures.TimeoutError:
-                        _elapsed_ms = (time.time() - _t0) * 1000
-                        logger.warning(
-                            "Scanner: prefetch TIMED OUT for %s after %.0fms — skipping",
-                            sym, _elapsed_ms,
-                        )
-                        return sym, []
-                    raw, _dropped = enforce_closed_candles(
-                        raw, self._timeframe, log_symbol=sym,
-                    )
-                    _elapsed_ms = (time.time() - _t0) * 1000
-                    _latest_ts = raw[-1][0] if raw else 0
-                    logger.debug(
-                        "Scanner: fetch %s OK — %d bars, %.0fms, latest_ts=%s",
-                        sym, len(raw), _elapsed_ms,
-                        datetime.utcfromtimestamp(_latest_ts / 1000).strftime("%H:%M") if _latest_ts else "N/A",
-                    )
-                    return sym, raw
+                        logger.warning("Scanner: prefetch TIMED OUT %s/%s after 15s", sym, tf)
+                        return cache_key, tf, []
+                    if raw and len(raw) >= 2:
+                        raw, _dropped = enforce_closed_candles(raw, tf, log_symbol=f"{sym}/{tf}")
+                    _elapsed = (time.time() - _t_start) * 1000
+                    logger.debug("Scanner: fetch %s/%s OK — %d bars, %.0fms", sym, tf, len(raw) if raw else 0, _elapsed)
+                    return cache_key, tf, raw or []
                 except Exception as _exc:
-                    _elapsed_ms = (time.time() - _t0) * 1000
-                    logger.warning("Scanner: prefetch FAILED for %s after %.0fms: %s", sym, _elapsed_ms, _exc)
-                    return sym, []
+                    logger.warning("Scanner: prefetch FAILED %s/%s: %s", sym, tf, _exc)
+                    return cache_key, tf, []
                 finally:
                     _inner.shutdown(wait=False, cancel_futures=True)
 
-            # IMPORTANT: Do NOT use `with ThreadPoolExecutor` here.
-            # shutdown(wait=True) in __exit__ blocks forever if any fetch hangs.
-            _pool = concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(qualifying), 8)
-            )
+            # Execute all fetches concurrently — cap at 10 workers to respect rate limits
+            _max_fetch_workers = min(len(_fetch_manifest), 10)
+            metrics.fetch_concurrency = _max_fetch_workers
+            _ohlcv_cache: dict[str, list] = {}  # cache_key → raw OHLCV
+
+            _pool = concurrent.futures.ThreadPoolExecutor(max_workers=_max_fetch_workers)
             try:
-                _futures = {_pool.submit(_fetch_one, sym): sym for sym in qualifying}
-                for _fut in concurrent.futures.as_completed(_futures, timeout=30):
+                _futures = {
+                    _pool.submit(_fetch_one_batched, sym, tf, lim, key): key
+                    for sym, tf, lim, key in _fetch_manifest
+                }
+                for _fut in concurrent.futures.as_completed(_futures, timeout=20):
                     try:
-                        sym, raw = _fut.result()
-                        _ohlcv_cache[sym] = raw
+                        cache_key, tf, raw = _fut.result()
+                        _ohlcv_cache[cache_key] = raw
+                        if "|primary" in cache_key and raw and len(raw) >= 30:
+                            metrics.symbols_fetched_ok += 1
+                        if "|ctx_" in cache_key or "|mtf" in cache_key:
+                            if raw and len(raw) >= 20:
+                                metrics.context_fetches_ok += 1
                     except Exception as _exc:
-                        sym = _futures[_fut]
-                        logger.warning("Scanner: prefetch result error for %s: %s", sym, _exc)
-                        _ohlcv_cache[sym] = []
+                        _key = _futures[_fut]
+                        logger.warning("Scanner: prefetch result error for %s: %s", _key, _exc)
+                        _ohlcv_cache[_key] = []
             except concurrent.futures.TimeoutError:
-                logger.warning("Scanner: concurrent OHLCV prefetch timed out after 30s — will fetch per-symbol")
+                logger.warning("Scanner: OHLCV batch prefetch timed out after 20s")
+                metrics.timeouts += 1
             except Exception as _exc:
-                logger.warning("Scanner: concurrent OHLCV prefetch failed: %s — will fetch per-symbol", _exc)
+                logger.warning("Scanner: OHLCV batch prefetch failed: %s", _exc)
             finally:
                 _pool.shutdown(wait=False, cancel_futures=True)
 
-            # ── Prefetch summary ─────────────────────────────────
-            _ok = [s for s, d in _ohlcv_cache.items() if d and len(d) >= 30]
-            _fail = [s for s in qualifying if s not in _ok]
+            metrics.ohlcv_prefetch_ms = (time.time() - _t0) * 1000
+            _ok_primary = [s for s in qualifying if _ohlcv_cache.get(f"{s}|primary") and len(_ohlcv_cache[f"{s}|primary"]) >= 30]
+            _fail_primary = [s for s in qualifying if s not in _ok_primary]
             logger.info(
-                "Scanner: OHLCV prefetch complete — %d/%d symbols OK%s",
-                len(_ok), len(qualifying),
-                f", failed/short: {_fail}" if _fail else "",
+                "Scanner: OHLCV batch prefetch complete — %d/%d primary OK, %d/%d context OK "
+                "(%.0fms, %d workers)%s",
+                len(_ok_primary), len(qualifying),
+                metrics.context_fetches_ok, metrics.context_fetches_total,
+                metrics.ohlcv_prefetch_ms, _max_fetch_workers,
+                f", failed: {_fail_primary}" if _fail_primary else "",
             )
 
-            # ── Scan each qualifying symbol ────────────────────
-            # df_cache stores the fully-computed indicator DataFrame for each symbol.
-            # This eliminates the duplicate OHLCV fetch that previously occurred
-            # when CrashDetector re-fetched data at the end of the scan loop.
+            # ══════════════════════════════════════════════════════════
+            # PHASE 2: Parallel per-symbol compute pipeline
+            #
+            # Each symbol is processed independently in a thread pool.
+            # Thread safety is ensured by:
+            #   - Per-symbol EnsembleRegimeClassifier (created in worker)
+            #   - Per-symbol RegimeTransitionController (created in worker)
+            #   - Per-symbol HMM model (keyed dict, each has RLock)
+            #   - Shared SignalGenerator (stateless model.evaluate() calls)
+            #   - Shared ConfluenceScorer (has threading.Lock)
+            #   - Shared MS-GARCH singleton (has threading.Lock)
+            # ══════════════════════════════════════════════════════════
+            _t0 = time.time()
             df_cache: dict[str, pd.DataFrame] = {}
-            for _sym_idx, symbol in enumerate(qualifying):
-                logger.debug("Scanner: === BEGIN symbol %d/%d: %s ===", _sym_idx + 1, len(qualifying), symbol)
-                _sym_start = time.time()
+
+            # Pre-read settings ONCE (avoids per-symbol lock contention on settings)
+            _settings_snapshot = {
+                "ms_garch_enabled": bool(_sc.get("ms_garch.enabled", True)),
+                "hmm_enabled": bool(_sc.get("hmm_regime.enabled", True)),
+                "pbl_slc_enabled": _pbl_slc_enabled,
+                "mtf_enabled": _mtf_enabled,
+                "higher_tf": _higher_tf,
+                "disabled_models": list(_sc.get("disabled_models", [])),
+                "p2c_enh_enabled": bool(_sc.get("phase_2c.pullback_enhancement.enabled", False)),
+                "p2c_rb_enabled": bool(_sc.get("phase_2c.range_breakout.enabled", False)),
+            }
+
+            def _process_symbol(symbol: str) -> tuple[str, Optional[OrderCandidate], str, float, Optional[pd.DataFrame], str, dict]:
+                """
+                Full compute pipeline for one symbol. Thread-safe.
+                Returns (symbol, candidate, regime, confidence, df, pre_rejection, diagnostics).
+                """
+                _sym_t0 = time.time()
                 try:
-                    candidate, regime, confidence, df, pre_rejection, sym_diag = self._scan_symbol_with_regime(
+                    result = self._scan_symbol_with_regime(
                         symbol, tickers.get(symbol, {}),
-                        prefetched_ohlcv=_ohlcv_cache.get(symbol),
+                        prefetched_ohlcv=_ohlcv_cache.get(f"{symbol}|primary"),
+                        prefetched_ctx_4h=_ohlcv_cache.get(f"{symbol}|ctx_4h"),
+                        prefetched_ctx_1h=_ohlcv_cache.get(f"{symbol}|ctx_1h"),
+                        prefetched_mtf=_ohlcv_cache.get(f"{symbol}|mtf"),
+                        settings_snapshot=_settings_snapshot,
                     )
-                    logger.debug("Scanner: === END symbol %d/%d: %s (%.1fs) candidate=%s pre_rejection=%r ===",
-                                 _sym_idx + 1, len(qualifying), symbol,
-                                 time.time() - _sym_start, candidate is not None, pre_rejection)
-                    if df is not None:
-                        df_cache[symbol] = df
-                    if regime:
-                        _regime_votes[regime] = _regime_votes.get(regime, 0) + 1
-                        # Keep the highest-confidence reading for each regime
-                        if confidence > _regime_confs.get(regime, 0.0):
-                            _regime_confs[regime] = confidence
-                    if candidate:
-                        all_candidates.append(candidate)
-                        # Pre-populate result; status will be finalized after risk gate
-                        _all_sym_results[symbol] = {
-                            **candidate.to_dict(),
-                            "status":      "pending",
-                            "is_approved": False,
-                            "diagnostics": sym_diag,
-                        }
-                    else:
-                        _r = self._empty_sym_result(symbol, pre_rejection or "No signal", regime)
-                        _r["diagnostics"] = sym_diag
-                        _all_sym_results[symbol] = _r
-                except Exception as exc:
+                    _elapsed = (time.time() - _sym_t0) * 1000
+                    logger.debug("Scanner: %s compute complete in %.0fms", symbol, _elapsed)
+                    return (symbol, *result, _elapsed)
+                except Exception as _exc:
                     import traceback as _tb
                     _tb_str = _tb.format_exc()
-                    logger.error("Scanner: error scanning %s: %s\n%s", symbol, exc, _tb_str)
-                    # Write full traceback to diagnostic file so it can be read
-                    # even when the log file is inaccessible (e.g. FUSE cache lag).
+                    _elapsed = (time.time() - _sym_t0) * 1000
+                    logger.error("Scanner: error scanning %s (%.0fms): %s\n%s", symbol, _elapsed, _exc, _tb_str)
                     try:
                         import pathlib as _pl, datetime as _dt
                         _diag_path = _pl.Path(__file__).parent.parent.parent / "data" / "scan_error_diag.txt"
@@ -366,11 +489,80 @@ class ScanWorker(QThread):
                             _df.flush()
                     except Exception:
                         pass
-                    _r = self._empty_sym_result(symbol, "Scan error")
-                    _r["diagnostics"] = {}
-                    _all_sym_results[symbol] = _r
+                    return (symbol, None, "", 0.0, None, "Scan error", {}, _elapsed)
 
-            # ── Risk gate (batch) ──────────────────────────────
+            # Execute per-symbol compute in parallel
+            _max_compute_workers = min(len(qualifying), 8)
+            metrics.compute_concurrency = _max_compute_workers
+
+            _compute_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_max_compute_workers)
+            try:
+                _compute_futures = {
+                    _compute_pool.submit(_process_symbol, sym): sym
+                    for sym in qualifying
+                }
+                for _fut in concurrent.futures.as_completed(_compute_futures, timeout=30):
+                    try:
+                        result = _fut.result()
+                        if len(result) == 8:
+                            symbol, candidate, regime, confidence, df, pre_rejection, sym_diag, elapsed_ms = result
+                        else:
+                            # Shouldn't happen but be defensive
+                            symbol = _compute_futures[_fut]
+                            candidate, regime, confidence, df, pre_rejection, sym_diag = None, "", 0.0, None, "Parse error", {}
+                            elapsed_ms = 0.0
+
+                        metrics.per_symbol_ms[symbol] = elapsed_ms
+                        metrics.symbols_computed += 1
+
+                        if df is not None:
+                            df_cache[symbol] = df
+                        if regime:
+                            _regime_votes[regime] = _regime_votes.get(regime, 0) + 1
+                            if confidence > _regime_confs.get(regime, 0.0):
+                                _regime_confs[regime] = confidence
+                        if candidate:
+                            all_candidates.append(candidate)
+                            _all_sym_results[symbol] = {
+                                **candidate.to_dict(),
+                                "status": "pending",
+                                "is_approved": False,
+                                "diagnostics": sym_diag,
+                            }
+                        else:
+                            _r = self._empty_sym_result(symbol, pre_rejection or "No signal", regime)
+                            _r["diagnostics"] = sym_diag
+                            _all_sym_results[symbol] = _r
+
+                        # Emit per-symbol progress for UI
+                        self.symbol_scanned.emit(symbol, regime, candidate.score if candidate else 0.0)
+
+                    except Exception as _exc:
+                        _sym = _compute_futures[_fut]
+                        logger.error("Scanner: compute result error for %s: %s", _sym, _exc)
+                        _r = self._empty_sym_result(_sym, "Scan error")
+                        _r["diagnostics"] = {}
+                        _all_sym_results[_sym] = _r
+                        metrics.symbols_failed.append(_sym)
+            except concurrent.futures.TimeoutError:
+                logger.error("Scanner: parallel compute timed out after 30s")
+                metrics.timeouts += 1
+            finally:
+                _compute_pool.shutdown(wait=False, cancel_futures=True)
+
+            metrics.compute_phase_ms = (time.time() - _t0) * 1000
+
+            # Compute slowest/average symbol metrics
+            if metrics.per_symbol_ms:
+                _slowest = max(metrics.per_symbol_ms, key=metrics.per_symbol_ms.get)
+                metrics.slowest_symbol = _slowest
+                metrics.slowest_symbol_ms = metrics.per_symbol_ms[_slowest]
+                metrics.avg_symbol_ms = sum(metrics.per_symbol_ms.values()) / len(metrics.per_symbol_ms)
+
+            # ══════════════════════════════════════════════════════════
+            # PHASE 3: Risk gate + Atomic result emission
+            # ══════════════════════════════════════════════════════════
+            _t0 = time.time()
             spread_map = {}
             for sym, ticker in tickers.items():
                 bid = ticker.get("bid")
@@ -387,33 +579,32 @@ class ScanWorker(QThread):
             )
 
             for r in rejected:
-                logger.info(
-                    "Scanner: rejected %s — %s", r.symbol, r.rejection_reason
-                )
+                logger.info("Scanner: rejected %s — %s", r.symbol, r.rejection_reason)
                 if r.symbol in _all_sym_results:
-                    _all_sym_results[r.symbol]["status"]           = r.rejection_reason or "Rejected"
-                    _all_sym_results[r.symbol]["is_approved"]      = False
+                    _all_sym_results[r.symbol]["status"] = r.rejection_reason or "Rejected"
+                    _all_sym_results[r.symbol]["is_approved"] = False
                     _all_sym_results[r.symbol]["rejection_reason"] = r.rejection_reason or "Rejected"
 
             _scan_ts = datetime.utcnow().isoformat()
             for c in approved:
                 if c.symbol in _all_sym_results:
-                    _all_sym_results[c.symbol]["status"]      = "approved"
+                    _all_sym_results[c.symbol]["status"] = "approved"
                     _all_sym_results[c.symbol]["is_approved"] = True
-                    # Stamp generated_at so the Age column ticks for approved rows
                     if not _all_sym_results[c.symbol].get("generated_at"):
                         _all_sym_results[c.symbol]["generated_at"] = _scan_ts
 
-            # Stamp scan time for all remaining rows so Age column works everywhere
             for _sym, _row in _all_sym_results.items():
                 if not _row.get("generated_at"):
                     _row["generated_at"] = _scan_ts
 
+            metrics.risk_gate_ms = (time.time() - _t0) * 1000
+
+            # Atomic emission — all results published together
             self.scan_complete.emit([c.to_dict() for c in approved])
             self.scan_all_results.emit(list(_all_sym_results.values()))
 
-            # ── Update CrashDetector with latest scan data ────────────────
-            # Use df_cache built during the main scan loop — no duplicate OHLCV fetch.
+            # ── Post-scan housekeeping (non-critical path) ──────
+            _t0 = time.time()
             try:
                 from core.risk.crash_detector import get_crash_detector
                 _cd = get_crash_detector()
@@ -421,10 +612,6 @@ class ScanWorker(QThread):
             except Exception as exc:
                 logger.debug("Scanner: CrashDetector update failed: %s", exc)
 
-            # ── Update live rolling correlations ──────────────────────────
-            # Compute pairwise correlations from recent returns in df_cache and
-            # update the CorrelationController so RiskGate uses live data instead
-            # of the static pre-computed correlation matrix.
             try:
                 from core.portfolio.correlation_controller import get_correlation_controller
                 _corr_ctrl = get_correlation_controller()
@@ -438,34 +625,30 @@ class ScanWorker(QThread):
             except Exception as exc:
                 logger.debug("Scanner: correlation update failed: %s", exc)
 
-            # ── Emit df_cache for next-cycle ATR filtering ────────────────
-            # AssetScanner stores this as _prev_df_cache and passes it to the
-            # next ScanWorker instance so the UniverseFilter can apply the ATR
-            # range filter without waiting for a second OHLCV fetch.
             self.df_cache_updated.emit(df_cache)
+            metrics.post_scan_ms = (time.time() - _t0) * 1000
 
-            # ── Publish majority regime from this scan cycle ───
+            # ── Publish majority regime ───────────────────────
             if _regime_votes:
                 dominant_regime = max(_regime_votes, key=_regime_votes.__getitem__)
-                dom_confidence  = _regime_confs.get(dominant_regime, 0.5)
-                # Build flat probs from vote counts
+                dom_confidence = _regime_confs.get(dominant_regime, 0.5)
                 total_votes = sum(_regime_votes.values())
                 regime_probs = {r: v / total_votes for r, v in _regime_votes.items()}
                 bus.publish(
                     Topics.REGIME_CHANGED,
                     {
-                        "new_regime":   dominant_regime,
-                        "confidence":   dom_confidence,
+                        "new_regime": dominant_regime,
+                        "confidence": dom_confidence,
                         "regime_probs": regime_probs,
-                        "classifier":   "rule-based (scanner)",
+                        "classifier": "rule-based (scanner)",
                         "symbol_count": len(_regime_votes),
                     },
                     source="scanner",
                 )
-                logger.debug(
-                    "Scanner: dominant regime=%s (conf=%.2f, votes=%d)",
-                    dominant_regime, dom_confidence, _regime_votes[dominant_regime],
-                )
+
+            # ── Log performance report ────────────────────────
+            metrics.total_cycle_ms = (time.time() - metrics.cycle_start) * 1000
+            metrics.log_summary()
 
         except Exception as exc:
             logger.error("ScanWorker fatal error: %s", exc, exc_info=True)
@@ -474,35 +657,30 @@ class ScanWorker(QThread):
     def _scan_symbol_with_regime(
         self, symbol: str, ticker: dict,
         prefetched_ohlcv: Optional[list] = None,
+        prefetched_ctx_4h: Optional[list] = None,
+        prefetched_ctx_1h: Optional[list] = None,
+        prefetched_mtf: Optional[list] = None,
+        settings_snapshot: Optional[dict] = None,
     ) -> tuple[Optional[OrderCandidate], str, float, Optional[pd.DataFrame], str, dict]:
         """
-        Run the full pipeline for one symbol.
+        Run the full compute pipeline for one symbol. Thread-safe.
+
         Returns (candidate_or_None, regime_label, confidence, df_or_None, pre_rejection, diagnostics).
 
-        pre_rejection is a human-readable string explaining why no candidate was produced:
-          ""                — candidate produced (may still be rejected by the risk gate)
-          "No data"         — insufficient or stale OHLCV bars
-          "No signal"       — no sub-model fired for this symbol
-          "Below threshold" — signals fired but confluence score < threshold
-
-        diagnostics is a dict with pipeline transparency data for the rationale panel:
-          regime_confidence, regime_probs, candle_age_s, candle_count, candle_ts_str,
-          models_fired, models_disabled, models_no_signal, all_model_names,
-          raw_score, effective_threshold, per_model, direction_split, dominant_side, etc.
+        v2: Accepts prefetched context data (4h, 1h, MTF) from the batch fetch
+        phase, eliminating per-symbol REST calls inside the compute pipeline.
+        Also accepts a settings_snapshot to avoid lock contention on the settings
+        singleton from multiple parallel threads.
         """
-        # Accumulated diagnostics for the rationale panel — populated progressively
-        # as the pipeline runs and returned at every exit point.
         _sym_diag: dict = {}
+        _ss = settings_snapshot or {}
 
         # Use pre-fetched OHLCV when available; fall back to live fetch otherwise.
-        # The fallback is wrapped with a timeout so a hanging exchange call
-        # cannot permanently stall the ScanWorker thread.
         if prefetched_ohlcv is not None and len(prefetched_ohlcv) >= 30:
             raw = prefetched_ohlcv
         else:
             from config.settings import settings as _sc
             limit = int(_sc.get("scanner.ohlcv_bars", 300))
-            # IMPORTANT: Do NOT use `with ThreadPoolExecutor` here.
             _tp = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             try:
                 _fut = _tp.submit(
@@ -591,13 +769,26 @@ class ScanWorker(QThread):
             _sym_diag["candle_age_s"]  = None
             _sym_diag["candle_ts_str"] = "Unknown"
 
-        # Regime classification
-        regime, confidence, features = self._regime_clf.classify(df)
+        # Regime classification — use a per-call classifier instance for thread safety.
+        # EnsembleRegimeClassifier is lightweight to create (~0ms) and avoids
+        # shared mutable state when running in the parallel compute pool.
+        try:
+            from core.regime.ensemble_regime_classifier import EnsembleRegimeClassifier as _ERC
+            _local_clf = _ERC()
+        except ImportError:
+            _local_clf = RegimeClassifier()
+        regime, confidence, features = _local_clf.classify(df)
         logger.debug("Scanner: %s regime=%s (conf=%.2f)", symbol, regime, confidence)
 
-        # Apply transition controller for hysteresis
-        if self._transition_ctrl is not None:
-            confirmed_regime, in_transition, blend_weight = self._transition_ctrl.update(
+        # Apply transition controller for hysteresis — per-symbol instance
+        # to avoid shared mutable state across parallel threads.
+        try:
+            from core.regime.regime_transition_controller import RegimeTransitionController as _RTC
+            _local_tc = _RTC()
+        except ImportError:
+            _local_tc = None
+        if _local_tc is not None:
+            confirmed_regime, in_transition, blend_weight = _local_tc.update(
                 regime, confidence, features
             )
             if in_transition:
@@ -606,8 +797,7 @@ class ScanWorker(QThread):
 
         # MS-GARCH volatility forecast
         try:
-            from config.settings import settings as _s
-            if _s.get("ms_garch.enabled", True):
+            if _ss.get("ms_garch_enabled", True):
                 from core.regime.ms_garch_forecaster import ms_garch
                 garch_forecast = ms_garch.forecast(df, horizon=3)
                 regime = ms_garch.get_regime_adjustment(regime, garch_forecast)
@@ -624,9 +814,8 @@ class ScanWorker(QThread):
         regime_probs: dict = {}
         if self._use_hmm:
             try:
-                from config.settings import settings as _sc
                 from core.regime.hmm_regime_classifier import HMMRegimeClassifier
-                if _sc.get("hmm_regime.enabled", True):
+                if _ss.get("hmm_enabled", True):
                     # Create per-symbol HMM instance on first encounter
                     if symbol not in self._hmm_models:
                         self._hmm_models[symbol] = HMMRegimeClassifier()
@@ -657,124 +846,59 @@ class ScanWorker(QThread):
         _sym_diag["regime_confidence"] = round(confidence, 3)
         _sym_diag["regime_probs"]      = regime_probs
 
-        # ── PBL/SLC data fetch (when mr_pbl_slc is enabled) ──────────────────────
-        # PullbackLongModel:          needs df_4h for HTF gate (4h EMA20 > EMA50)
-        # SwingLowContinuationModel:  needs df_1h as its primary signal dataframe
-        #
-        # Regime for PBL/SLC comes from ResearchRegimeClassifier applied to the
-        # appropriate timeframe series.  The regime STRING (from regime_to_string())
-        # is passed directly to their generate() calls so the ACTIVE_REGIMES gate
-        # functions as the single filtering mechanism — no regime integers injected
-        # into context.
-        #
-        # Failures are non-fatal — models degrade gracefully when data is absent.
-        _pbl_slc_enabled:    bool                  = False
+        # ── PBL/SLC context data (using prefetched data from batch phase) ────────
+        # v2: Context data (4h, 1h) was fetched in the batch OHLCV prefetch phase.
+        # No per-symbol REST calls here — just DataFrame construction from raw data.
+        _pbl_slc_enabled:    bool                  = _ss.get("pbl_slc_enabled", False)
         _df_4h_ctx:          Optional[pd.DataFrame] = None
         _df_1h_ctx:          Optional[pd.DataFrame] = None
         _res_regime_30m_str: str                    = "ranging"
         _res_regime_1h_str:  str                    = "ranging"
 
         try:
-            from config.settings import settings as _sc_pbl
-            if bool(_sc_pbl.get("mr_pbl_slc.enabled", False)):
-                _pbl_slc_enabled = True
-                _slc_bars = int(_sc_pbl.get("mr_pbl_slc.slc_1h_bars", 150))
+            if _pbl_slc_enabled:
+                # Build DataFrames from prefetched raw OHLCV (no REST calls!)
+                for _tf_key, _raw_data in [("4h", prefetched_ctx_4h), ("1h", prefetched_ctx_1h)]:
+                    if _raw_data and len(_raw_data) >= 20:
+                        _df_tf = pd.DataFrame(
+                            _raw_data,
+                            columns=["timestamp", "open", "high", "low", "close", "volume"],
+                        )
+                        _df_tf["timestamp"] = pd.to_datetime(
+                            _df_tf["timestamp"], unit="ms", utc=True
+                        )
+                        _df_tf = _df_tf.set_index("timestamp").astype(float)
+                        _df_tf = calculate_scan_mode(_df_tf)
+                        if _tf_key == "4h":
+                            _df_4h_ctx = _df_tf
+                        else:
+                            _df_1h_ctx = _df_tf
+                        logger.debug("Scanner: %s context %s — %d bars (prefetched)", symbol, _tf_key, len(_df_tf))
 
-                # ── Concurrent 4h + 1h fetch ────────────────────────────
-                _pool_ctx = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-                _futs: dict = {}
-                try:
-                    _futs["4h"] = _pool_ctx.submit(
-                        self._exchange.fetch_ohlcv, symbol, "4h", limit=60
-                    )
-                    _futs["1h"] = _pool_ctx.submit(
-                        self._exchange.fetch_ohlcv, symbol, "1h", limit=_slc_bars
-                    )
-                    for _tf_key, _fut in _futs.items():
-                        try:
-                            _raw_tf = _fut.result(timeout=10.0)
-                            if _raw_tf and len(_raw_tf) >= 20:
-                                _raw_tf, _ = enforce_closed_candles(
-                                    _raw_tf, _tf_key, log_symbol=f"{symbol}/ctx",
-                                )
-                            if _raw_tf and len(_raw_tf) >= 20:
-                                _df_tf = pd.DataFrame(
-                                    _raw_tf,
-                                    columns=["timestamp", "open", "high", "low", "close", "volume"],
-                                )
-                                _df_tf["timestamp"] = pd.to_datetime(
-                                    _df_tf["timestamp"], unit="ms", utc=True
-                                )
-                                _df_tf = _df_tf.set_index("timestamp").astype(float)
-                                # NOTE: calculate_scan_mode is imported at module level (line 37).
-                                # Do NOT re-import it here — a local `from X import Y` inside
-                                # any branch of this function poisons the entire function scope
-                                # at Python compile time, causing UnboundLocalError at the
-                                # earlier call on line ~553 even when this branch never runs.
-                                _df_tf = calculate_scan_mode(_df_tf)
-                                if _tf_key == "4h":
-                                    _df_4h_ctx = _df_tf
-                                else:
-                                    _df_1h_ctx = _df_tf
-                                logger.debug(
-                                    "Scanner: %s context %s — %d bars fetched",
-                                    symbol, _tf_key, len(_df_tf),
-                                )
-                        except concurrent.futures.TimeoutError:
-                            logger.debug(
-                                "Scanner: %s context fetch %s timed out — model will degrade",
-                                symbol, _tf_key,
-                            )
-                        except Exception as _ctx_exc:
-                            logger.debug(
-                                "Scanner: %s context fetch %s error: %s",
-                                symbol, _tf_key, _ctx_exc,
-                            )
-                finally:
-                    _pool_ctx.shutdown(wait=False, cancel_futures=True)
-
-                # ── Research regime strings (no context injection) ──────
-                # ResearchRegimeClassifier is the single authoritative regime
-                # provider for PBL and SLC.  regime_to_string() converts its
-                # integer output to the NexusTrader string format that the
-                # ACTIVE_REGIMES gate consumes.  These strings are passed as
-                # the `regime` parameter to the per-model generate() calls
-                # below — NOT injected into context.
+                # Research regime strings
                 try:
                     from core.regime.research_regime_classifier import (
                         classify_latest_bar as _res_classify,
                         regime_to_string    as _res_to_str,
                     )
                     _res_regime_30m_str = _res_to_str(_res_classify(df))
-                    logger.debug(
-                        "Scanner: %s research_regime_30m=%s", symbol, _res_regime_30m_str,
-                    )
+                    logger.debug("Scanner: %s research_regime_30m=%s", symbol, _res_regime_30m_str)
                     if _df_1h_ctx is not None and len(_df_1h_ctx) >= 20:
                         _res_regime_1h_str = _res_to_str(_res_classify(_df_1h_ctx))
-                        logger.debug(
-                            "Scanner: %s research_regime_1h=%s", symbol, _res_regime_1h_str,
-                        )
+                        logger.debug("Scanner: %s research_regime_1h=%s", symbol, _res_regime_1h_str)
                 except Exception as _res_exc:
                     logger.debug("Scanner: %s research regime error: %s", symbol, _res_exc)
 
         except Exception as _ctx_outer:
-            logger.debug("Scanner: context fetch outer error for %s: %s", symbol, _ctx_outer)
+            logger.debug("Scanner: context build error for %s: %s", symbol, _ctx_outer)
 
         # ── Phase 2c: Transition event detection on 1h data ────────────────
-        _p2c_enabled:        bool = False
-        _p2c_rb_enabled:     bool = False
-        _p2c_enh_enabled:    bool = False
+        _p2c_enh_enabled:    bool = _ss.get("p2c_enh_enabled", False)
+        _p2c_rb_enabled:     bool = _ss.get("p2c_rb_enabled", False)
+        _p2c_enabled:        bool = _p2c_enh_enabled or _p2c_rb_enabled
         _p2c_transition_ev   = None
         _p2c_rb_event        = None
         _p2c_breakout_active: bool = False
-
-        try:
-            from config.settings import settings as _s_p2c
-            _p2c_enh_enabled = bool(_s_p2c.get("phase_2c.pullback_enhancement.enabled", False))
-            _p2c_rb_enabled  = bool(_s_p2c.get("phase_2c.range_breakout.enabled", False))
-            _p2c_enabled = _p2c_enh_enabled or _p2c_rb_enabled
-        except Exception:
-            pass
 
         if _p2c_enabled and _df_1h_ctx is not None and len(_df_1h_ctx) >= 30:
             try:
