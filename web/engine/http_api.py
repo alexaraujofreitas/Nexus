@@ -797,6 +797,54 @@ class EngineHttpApi:
 
     async def _monitor_trades(self, req: web.Request) -> web.Response:
         result = await self._engine_cmd("get_recent_trades_monitor")
+        trades = result.get("trades", [])
+
+        # Supplement with SQLite trades if in-memory list is small
+        if len(trades) < 20:
+            try:
+                import sqlite3
+                from pathlib import Path
+                db_path = Path(__file__).resolve().parent.parent.parent / "data" / "nexus_trader.db"
+                if db_path.exists():
+                    conn = sqlite3.connect(str(db_path))
+                    conn.row_factory = sqlite3.Row
+                    c = conn.cursor()
+                    c.execute("""SELECT symbol, side, entry_price, exit_price, pnl_usdt, pnl_pct,
+                                       duration_s, exit_reason, regime, models_fired, opened_at, closed_at,
+                                       size_usdt, score
+                                FROM paper_trades ORDER BY closed_at DESC LIMIT 100""")
+                    existing_keys = {(t.get("symbol",""), t.get("closed_at","")) for t in trades}
+                    for row in c.fetchall():
+                        key = (row["symbol"], row["closed_at"] or "")
+                        if key not in existing_keys:
+                            models = row["models_fired"] or "[]"
+                            try:
+                                models = json.loads(models) if isinstance(models, str) else models
+                            except Exception:
+                                models = []
+                            trades.append({
+                                "symbol": row["symbol"],
+                                "side": row["side"],
+                                "entry_price": row["entry_price"] or 0,
+                                "exit_price": row["exit_price"] or 0,
+                                "pnl_usdt": row["pnl_usdt"] or 0,
+                                "pnl_pct": row["pnl_pct"] or 0,
+                                "r_multiple": round((row["pnl_usdt"] or 0) / max(abs(row["size_usdt"] or 1) * 0.02, 0.01), 2),
+                                "duration_s": row["duration_s"] or 0,
+                                "regime": row["regime"] or "",
+                                "exit_reason": row["exit_reason"] or "",
+                                "models_fired": models,
+                                "fees_estimated": 0,
+                                "slippage": 0,
+                                "closed_at": row["closed_at"] or "",
+                                "score": row["score"] or 0,
+                            })
+                    conn.close()
+            except Exception as e:
+                logger.debug("SQLite trade supplement failed: %s", e)
+
+        result["trades"] = trades
+        result["count"] = len(trades)
         return self._json(result)
 
     # ================================================================
