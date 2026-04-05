@@ -1150,20 +1150,44 @@ class EngineHttpApi:
     # ================================================================
 
     async def _ws_handler(self, req: web.Request) -> web.WebSocketResponse:
-        """Minimal WebSocket endpoint — keeps the frontend WS connection alive."""
-        ws = web.WebSocketResponse()
+        """WebSocket endpoint with server-side ping keepalive."""
+        ws = web.WebSocketResponse(heartbeat=30.0)  # aiohttp built-in ping every 30s
         await ws.prepare(req)
         # Send initial connection confirmation
         await ws.send_json({"type": "connected", "message": "Engine WS connected"})
+
+        # Also start a periodic application-level ping (for frontend pong handling)
+        async def _ping_loop():
+            try:
+                while not ws.closed:
+                    await asyncio.sleep(25)
+                    if not ws.closed:
+                        await ws.send_json({"type": "ping"})
+            except (ConnectionResetError, asyncio.CancelledError):
+                pass
+            except Exception:
+                pass
+
+        ping_task = asyncio.ensure_future(_ping_loop())
+
         try:
             async for msg in ws:
                 if msg.type == 1:  # TEXT
                     try:
                         data = json.loads(msg.data)
-                        # Echo back with ack
-                        await ws.send_json({"type": "ack", "data": data})
+                        action = data.get("action", "")
+                        if action == "pong":
+                            pass  # keepalive ack, ignore
+                        elif action == "subscribe":
+                            await ws.send_json({"type": "ack", "action": "subscribed", "channel": data.get("channel", "")})
+                        elif action == "unsubscribe":
+                            await ws.send_json({"type": "ack", "action": "unsubscribed", "channel": data.get("channel", "")})
+                        else:
+                            await ws.send_json({"type": "ack", "data": data})
                     except json.JSONDecodeError:
                         pass
         except Exception:
             pass
+        finally:
+            ping_task.cancel()
         return ws
