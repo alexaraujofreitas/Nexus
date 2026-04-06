@@ -345,7 +345,10 @@ class ScanWorker(QThread):
             # warmup guard is irrelevant here.  Skip it.
             self._sig_gen._warmup_complete = True
             self._sig_gen._warmup_bars_remaining = 0
-        self._univ_filter = UniverseFilter()
+        from config.settings import settings as _uf_cfg
+        self._univ_filter = UniverseFilter(
+            min_volume_usdt=float(_uf_cfg.get("scanner.min_volume_usdt", 500_000)),
+        )
         # Build ConfluenceScorer and RiskGate from live settings so that
         # parameter changes made in the Settings page take effect on the
         # very next scan cycle (no restart needed).
@@ -694,11 +697,13 @@ class ScanWorker(QThread):
                         metrics.symbols_computed += 1
 
                         # Aggregate sub-phase timings from sym_diag
+                        # Use MAX (not SUM) — symbols run in parallel via ThreadPoolExecutor,
+                        # so wall-clock time for each phase ≈ the slowest symbol's time.
                         if isinstance(sym_diag, dict):
-                            metrics.indicator_ms += sym_diag.get("_indicator_ms", 0.0)
-                            metrics.regime_ms += sym_diag.get("_regime_ms", 0.0)
-                            metrics.signal_ms += sym_diag.get("_signal_ms", 0.0)
-                            metrics.confluence_ms += sym_diag.get("_confluence_ms", 0.0)
+                            metrics.indicator_ms = max(metrics.indicator_ms, sym_diag.get("_indicator_ms", 0.0))
+                            metrics.regime_ms = max(metrics.regime_ms, sym_diag.get("_regime_ms", 0.0))
+                            metrics.signal_ms = max(metrics.signal_ms, sym_diag.get("_signal_ms", 0.0))
+                            metrics.confluence_ms = max(metrics.confluence_ms, sym_diag.get("_confluence_ms", 0.0))
 
                         if df is not None:
                             df_cache[symbol] = df

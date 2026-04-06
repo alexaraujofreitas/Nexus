@@ -67,6 +67,9 @@ def get_base_symbols(watchlist_symbols: Optional[list[str]] = None) -> list[str]
         "LTC": "litecoin", "BCH": "bitcoin-cash", "ATOM": "cosmos",
         "TRX": "tron", "TON": "the-open-network", "SUI": "sui",
         "APT": "aptos", "ARB": "arbitrum",
+        "HYPE": "hyperliquid", "XLM": "stellar", "HBAR": "hedera-hashgraph",
+        "NEAR": "near", "ICP": "internet-computer", "ONDO": "ondo-finance",
+        "ALGO": "algorand", "RENDER": "render-token",
     }
     result = []
     for sym in syms:

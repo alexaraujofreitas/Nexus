@@ -29,7 +29,7 @@ _WEB_DIR = os.path.dirname(_ENGINE_DIR)
 _BACKEND_DIR = os.path.join(_WEB_DIR, "backend")
 _PROJECT_ROOT = os.path.dirname(_WEB_DIR)
 
-for p in [_BACKEND_DIR, _PROJECT_ROOT]:
+for p in [_BACKEND_DIR, _PROJECT_ROOT, _WEB_DIR]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -61,6 +61,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("nexus.engine")
 
+# Install the ring-buffer handler so the Logs page can read entries
+from engine.http_api import install_ring_buffer_handler  # noqa: E402
+install_ring_buffer_handler()
+
 # Redis config from environment
 REDIS_URL = os.getenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
 
@@ -89,6 +93,7 @@ class TradingEngineService:
         self._exchange_manager = None  # core.market_data.exchange_manager
         self._orchestrator = None      # core.orchestrator.orchestrator_engine
         self._notification_mgr = None  # core.notifications.notification_manager
+        self._coordinator = None       # core.agents.agent_coordinator
 
         # ── Engine-level trading pause flag ─────────────────────
         # The desktop app has no pause/resume API on OrchestratorEngine.
@@ -188,6 +193,14 @@ class TradingEngineService:
             except Exception as e:
                 logger.error("HTTP API stop error: %s", e)
 
+        # Stop intelligence agents
+        if hasattr(self, '_coordinator') and self._coordinator:
+            try:
+                self._coordinator.stop_all()
+                logger.info("AgentCoordinator stopped")
+            except Exception as e:
+                logger.error("AgentCoordinator stop error: %s", e)
+
         # Stop scanner if running
         if self._scanner and self._scanner._running:
             try:
@@ -249,9 +262,29 @@ class TradingEngineService:
         logger.info("OrchestratorEngine ready")
 
     async def _init_agents(self):
-        """Initialize AgentCoordinator with 23 agents."""
-        from core.agents.agent_coordinator import AgentCoordinator
-        logger.info("AgentCoordinator class available")
+        """Initialize AgentCoordinator and start all 23 intelligence agents.
+
+        The Qt shim (core_patch/qt_shim.py) replaces QThread with
+        threading.Thread, so agents run as daemon threads — no Qt
+        event loop required.
+
+        Because _init_exchange (step 5) already published
+        EXCHANGE_CONNECTED before this step runs, the coordinator
+        won't receive that event.  We call start_all() explicitly.
+        """
+        from core.agents.agent_coordinator import get_coordinator
+
+        coordinator = get_coordinator()          # creates singleton
+        self._coordinator = coordinator          # keep reference for shutdown
+
+        # Exchange was already connected in step 5 — start agents now
+        if not coordinator.is_running:
+            coordinator.start_all()
+
+        logger.info(
+            "AgentCoordinator ready — %d agents running",
+            len(coordinator._agents),
+        )
 
     async def _init_executor(self):
         """Construct PaperExecutor (no global singleton — engine owns it)."""
@@ -314,12 +347,22 @@ class TradingEngineService:
         self._last_pipeline_results: list[dict] = []
         self._last_pipeline_ts: str = ""
         self._last_scan_metrics: dict = {}
+        # Regime snapshot ring buffer — survives page navigation/refresh
+        self._regime_snapshots: list[dict] = []  # newest first, max 20
+        self._MAX_REGIME_SNAPSHOTS = 20
         if hasattr(self._scanner, "scan_all_results"):
             self._scanner.scan_all_results.connect(self._on_scan_all_results)
             logger.info("Engine: connected scan_all_results signal for pipeline-status")
         if hasattr(self._scanner, "scan_metrics_updated"):
             self._scanner.scan_metrics_updated.connect(self._on_scan_metrics_updated)
             logger.info("Engine: connected scan_metrics_updated signal for phase timing")
+
+        # ── Auto-execute: confirmed_ready → execution pathway ──────
+        if hasattr(self._scanner, "confirmed_ready"):
+            self._scanner.confirmed_ready.connect(self._on_confirmed_ready)
+            logger.info("Engine: connected confirmed_ready signal for auto-execution")
+        from core.scanning.auto_execute_guard import AutoExecuteState
+        self._ae_state = AutoExecuteState()
 
         # config.yaml: scanner.auto_execute MUST always be true per CLAUDE.md
         auto_start = True
@@ -380,10 +423,155 @@ class TradingEngineService:
         self._last_pipeline_ts = datetime.utcnow().isoformat()
         logger.debug("Engine: stored %d pipeline results", len(self._last_pipeline_results))
 
+        # ── Capture regime snapshot for Market Regime page ──────────
+        # Extract regime per symbol from this scan cycle and store
+        # in a ring buffer so the frontend can show history across
+        # page navigations and refreshes.
+        regimes: dict[str, str] = {}
+        for r in self._last_pipeline_results:
+            if isinstance(r, dict) and r.get("regime"):
+                regimes[r["symbol"]] = r["regime"]
+        if regimes:
+            snap = {
+                "timestamp": self._last_pipeline_ts,
+                "regimes": regimes,
+            }
+            # Dedup: skip if timestamp matches the most recent snapshot
+            if (not self._regime_snapshots
+                    or self._regime_snapshots[0]["timestamp"] != snap["timestamp"]):
+                self._regime_snapshots.insert(0, snap)
+                self._regime_snapshots = self._regime_snapshots[:self._MAX_REGIME_SNAPSHOTS]
+                logger.debug("Engine: regime snapshot captured (%d total)", len(self._regime_snapshots))
+
     def _on_scan_metrics_updated(self, metrics_dict: dict):
         """Store scan cycle metrics for phase timing display."""
         self._last_scan_metrics = metrics_dict or {}
         logger.debug("Engine: stored scan metrics (total=%.0fms)", metrics_dict.get("total_cycle_ms", 0))
+
+    # ── Auto-Execute (confirmed_ready) ─────────────────────
+
+    def _on_confirmed_ready(self, confirmed_candidates: list):
+        """Handle LTF-confirmed candidates — execution pathway.
+
+        Mirrors the Qt GUI's IDSSScannerTab._on_confirmed_ready flow:
+          1. Read portfolio state from PaperExecutor
+          2. Run auto_execute_guard.run_batch() for safeguard checks
+          3. Build OrderCandidate and submit via order_router
+        """
+        if not confirmed_candidates:
+            return
+        if self._trading_paused:
+            logger.info("Engine: auto-execute skipped — trading paused")
+            return
+
+        logger.info(
+            "Engine: %d LTF-confirmed candidate(s) received for execution",
+            len(confirmed_candidates),
+        )
+
+        from core.scanning.auto_execute_guard import run_batch as _run_batch
+        from config.settings import settings as _s
+
+        self._ae_state.reset_if_new_day()
+
+        if not self._pe:
+            logger.warning("Engine: auto-execute skipped — PaperExecutor not initialised")
+            return
+
+        try:
+            open_positions = self._pe.get_open_positions()
+            drawdown_pct = self._pe.drawdown_pct
+            max_dd = float(_s.get("risk.max_portfolio_drawdown_pct", 15.0))
+            max_pos = int(_s.get("risk.max_concurrent_positions", 3))
+        except Exception as exc:
+            logger.error("Engine: auto-execute could not read portfolio state: %s", exc)
+            return
+
+        tf = self._scanner._timeframe if self._scanner else "30m"
+
+        to_execute = _run_batch(
+            candidates=confirmed_candidates,
+            timeframe=tf,
+            open_positions=open_positions,
+            drawdown_pct=drawdown_pct,
+            max_dd_pct=max_dd,
+            max_pos=max_pos,
+            state=self._ae_state,
+        )
+
+        for c in to_execute:
+            self._do_auto_execute_one(c)
+
+    def _do_auto_execute_one(self, c: dict) -> bool:
+        """Build OrderCandidate from candidate dict and submit via order_router."""
+        sym = c.get("symbol", "?")
+        try:
+            from core.meta_decision.order_candidate import OrderCandidate
+            from core.execution.order_router import order_router
+            from core.market_data.exchange_manager import exchange_manager
+            from datetime import datetime, timedelta
+
+            model_entry = c.get("entry_price") or 0.0
+            stop = c.get("stop_loss_price", 0.0)
+            tp = c.get("take_profit_price", 0.0)
+            size = c.get("position_size_usdt", 40.0)
+
+            # Fetch current market price for market-order fill
+            market_price = 0.0
+            try:
+                ticker = exchange_manager.fetch_ticker(sym)
+                if ticker:
+                    market_price = float(ticker.get("last") or 0.0)
+            except Exception as exc:
+                logger.debug("Engine auto-execute: ticker fetch failed for %s: %s", sym, exc)
+
+            entry = market_price if market_price > 0 else model_entry
+            if market_price > 0 and model_entry > 0:
+                diff_pct = abs(entry - model_entry) / model_entry * 100
+                logger.info(
+                    "Engine auto-execute: %s market price %.4f vs model entry %.4f (Δ%.2f%%)",
+                    sym, market_price, model_entry, diff_pct,
+                )
+
+            candidate = OrderCandidate(
+                symbol=sym,
+                side=c.get("side", "buy"),
+                entry_type="market",
+                entry_price=entry if entry else None,
+                stop_loss_price=stop,
+                take_profit_price=tp,
+                position_size_usdt=size,
+                score=c.get("score", 0.6),
+                models_fired=c.get("models_fired", []),
+                regime=c.get("regime", "unknown"),
+                rationale=c.get("rationale", "Auto-executed by web engine"),
+                timeframe=c.get("timeframe", "30m"),
+                atr_value=c.get("atr_value", 0.0),
+                approved=True,
+                expiry=datetime.utcnow() + timedelta(hours=4),
+            )
+            candidate.symbol_weight = float(c.get("symbol_weight", 1.0) or 1.0)
+            candidate.adjusted_score = float(c.get("adjusted_score", c.get("score", 0.6)) or 0.6)
+
+            ok = order_router.submit(candidate)
+            if ok:
+                price_str = f"{entry:,.4f}" if entry else "market"
+                logger.info("Engine auto-execute: submitted %s %s @ %s", sym, c.get("side"), price_str)
+
+                # Mark candidate as EXECUTED in the CandidateStore
+                staged_id = c.get("staged_candidate_id")
+                if staged_id:
+                    try:
+                        from core.scanning.candidate_store import get_candidate_store
+                        get_candidate_store().mark_executed(staged_id)
+                    except Exception as exc:
+                        logger.warning("Engine auto-execute: could not mark %s as EXECUTED: %s", staged_id, exc)
+            else:
+                logger.warning("Engine auto-execute: order_router rejected %s", sym)
+            return ok
+        except Exception as exc:
+            logger.error("Engine auto-execute: exception for %s: %s", sym, exc, exc_info=True)
+            return False
 
     # ── Command Loop ────────────────────────────────────────
 
@@ -635,7 +823,7 @@ class TradingEngineService:
     async def _cmd_refresh_data(self, params: dict) -> dict:
         """Trigger a data refresh via ExchangeManager.fetch_tickers().
 
-        Uses the 5-symbol watchlist from config or defaults.
+        Uses the watchlist from config or defaults (currently 20 symbols).
         """
         if not self._exchange_manager:
             return {"status": "error", "detail": "ExchangeManager not initialized"}
@@ -690,6 +878,7 @@ class TradingEngineService:
                 "win_rate": stats.get("win_rate", 0.0),
                 "profit_factor": stats.get("profit_factor", 0.0),
                 "total_pnl_usdt": stats.get("total_pnl_usdt", 0.0),
+                "avg_r": stats.get("avg_r", 0.0),
                 "avg_rr": stats.get("avg_rr", 0.0),
                 "last_10_outcomes": prod.get("last_10_outcomes", []),
                 "current_losing_streak": prod.get("current_losing_streak", 0),
@@ -965,6 +1154,7 @@ class TradingEngineService:
             "last_scan_at": getattr(self, "_last_pipeline_ts", ""),
             "source": "db",
             "phase_timing": getattr(self, "_last_scan_metrics", {}),
+            "regime_snapshots": getattr(self, "_regime_snapshots", []),
         }
 
     @staticmethod

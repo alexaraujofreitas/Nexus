@@ -125,7 +125,8 @@ class LiquidityVacuumAgent(BaseAgent):
         if not order_book:
             return {
                 "signal": 0.0,
-                "confidence": 0.2,
+                "confidence": 0.0,
+                "has_data": False,
                 "vacuum_zones": [],
                 "nearest_vacuum_distance_pct": 0.0,
                 "vacuum_direction": None,
@@ -184,6 +185,7 @@ class LiquidityVacuumAgent(BaseAgent):
         return {
             "signal": round(signal, 4),
             "confidence": round(confidence, 4),
+            "has_data": True,
             "vacuum_zones": [
                 {
                     "low": round(z["low"], 2),
@@ -241,7 +243,7 @@ class LiquidityVacuumAgent(BaseAgent):
     def _detect_vacuum_zones(profile: dict[int, float], current_price: float) -> list[dict]:
         """
         Identify vacuum zones: consecutive buckets with <10% avg volume.
-        Returns list of {low, high, size_pct} dicts.
+        Returns list of {low, high, size_pct} dicts with actual price levels computed from buckets.
         """
         if not profile:
             return []
@@ -253,6 +255,22 @@ class LiquidityVacuumAgent(BaseAgent):
         in_vacuum = False
         vacuum_start = None
 
+        # Compute bucket size from price range
+        # This requires extracting the price range from the profile context
+        # Use current_price and bucket distribution to estimate min/max
+        if profile:
+            # Estimate min/max prices from current price and bucket indices
+            max_bucket = max(profile.keys()) if profile else 0
+            min_bucket = min(profile.keys()) if profile else 0
+
+            # Approximate: assume profile spans roughly ±5% of current price
+            estimated_range = current_price * 0.10  # 5% above and below
+            bucket_size = estimated_range / (_VOLUME_BUCKETS / 2)
+            estimated_min_price = current_price - (estimated_range / 2)
+        else:
+            bucket_size = 1.0
+            estimated_min_price = current_price - 500
+
         for idx in sorted(profile.keys()):
             vol = profile[idx]
 
@@ -260,22 +278,30 @@ class LiquidityVacuumAgent(BaseAgent):
                 in_vacuum = True
                 vacuum_start = idx
             elif vol >= vacuum_threshold and in_vacuum:
+                # Compute actual price levels from bucket indices
+                start_price = estimated_min_price + (vacuum_start * bucket_size)
+                end_price = estimated_min_price + ((idx - 1 + 1) * bucket_size)
+
                 vacuums.append({
                     "start_bucket": vacuum_start,
                     "end_bucket": idx - 1,
-                    "low": 0.0,  # Will compute from bucket
-                    "high": 0.0,
-                    "size_pct": 0.0,
+                    "low": round(min(start_price, end_price), 2),
+                    "high": round(max(start_price, end_price), 2),
+                    "size_pct": round((idx - vacuum_start) / max(_VOLUME_BUCKETS, 1) * 100.0, 2),
                 })
                 in_vacuum = False
 
         if in_vacuum and vacuum_start is not None:
+            # Compute actual price levels for final vacuum zone
+            start_price = estimated_min_price + (vacuum_start * bucket_size)
+            end_price = estimated_min_price + ((_VOLUME_BUCKETS - 1 + 1) * bucket_size)
+
             vacuums.append({
                 "start_bucket": vacuum_start,
                 "end_bucket": _VOLUME_BUCKETS - 1,
-                "low": 0.0,
-                "high": 0.0,
-                "size_pct": 0.0,
+                "low": round(min(start_price, end_price), 2),
+                "high": round(max(start_price, end_price), 2),
+                "size_pct": round((_VOLUME_BUCKETS - vacuum_start) / max(_VOLUME_BUCKETS, 1) * 100.0, 2),
             })
 
         return vacuums

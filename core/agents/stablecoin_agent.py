@@ -131,6 +131,7 @@ class StablecoinLiquidityAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "total_supply_usd": 0.0,
                 "net_flow_24h_usd": 0.0,
                 "depegs": [],
@@ -162,6 +163,7 @@ class StablecoinLiquidityAgent(BaseAgent):
         return {
             "signal": round(signal, 4),
             "confidence": round(confidence, 4),
+            "has_data": True,
             "total_supply_usd": round(total_supply, 0),
             "net_flow_24h_usd": round(net_flow_usd, 0),
             "depegs": depegs,
@@ -260,9 +262,16 @@ class StablecoinLiquidityAgent(BaseAgent):
             metadata["reason"] = "Moderate stablecoin supply decline"
             return round(signal, 4), round(confidence, 4), direction, metadata
 
-        # Default: stable
-        signal = 0.0
-        confidence = 0.3
+        # Default: stable — Session 51 fix: produce a micro-signal based on
+        # supply_change_pct even when it doesn't cross major thresholds.
+        # "Stable stablecoins" IS information (mild bullish — no systemic stress).
+        if supply_change_pct > 0:
+            signal = round(min(0.15, supply_change_pct * 0.30), 4)  # mild bullish
+        elif supply_change_pct < 0:
+            signal = round(max(-0.10, supply_change_pct * 0.20), 4)  # mild bearish
+        else:
+            signal = 0.05  # "no stress" is a mild positive for crypto
+        confidence = 0.35
         direction = "stable"
         metadata["reason"] = "Stablecoin conditions stable, no significant flow"
 
@@ -292,7 +301,11 @@ class StablecoinLiquidityAgent(BaseAgent):
         """
         Compute percentage change in total stablecoin supply over 24h.
 
-        Returns percentage change.
+        Session 51 fix: When less than 24h of history exists, use the
+        earliest available entry as baseline instead of returning 0.0.
+        This ensures the agent produces a non-zero signal from its
+        very first poll cycle (comparing current vs. DefiLlama's
+        implicit 24h change data).
         """
         if len(self._supply_history) < 2:
             return 0.0
@@ -306,8 +319,12 @@ class StablecoinLiquidityAgent(BaseAgent):
             if entry["timestamp"] <= cutoff_24h:
                 old_supply = entry["total_supply"]
 
+        # Session 51 fix: if no 24h-old entry exists, use the earliest
+        # available entry as baseline (better than returning 0.0)
         if old_supply is None or old_supply == 0:
-            return 0.0
+            old_supply = self._supply_history[0]["total_supply"]
+            if old_supply == 0:
+                return 0.0
 
         latest_supply = self._supply_history[-1]["total_supply"]
         change_pct = ((latest_supply - old_supply) / old_supply) * 100

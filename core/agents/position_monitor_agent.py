@@ -103,6 +103,7 @@ class PositionMonitorAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "positions_monitored": 0,
                 "actions_taken": [],
                 "states": {},
@@ -157,7 +158,8 @@ class PositionMonitorAgent(BaseAgent):
 
         return {
             "signal": signal,
-            "confidence": min(0.95, len(positions) / 10.0),  # Higher confidence with more positions
+            "confidence": min(0.95, len(positions) / 10.0),
+            "has_data": True,
             "positions_monitored": len(positions),
             "actions_taken": actions_taken,
             "states": states_dict,

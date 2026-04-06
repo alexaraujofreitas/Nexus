@@ -255,6 +255,7 @@ class WhaleTrackingAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "whale_count": 0,
                 "total_volume_btc": 0.0,
                 "dominant_direction": "neutral",
@@ -266,6 +267,7 @@ class WhaleTrackingAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "whale_count": 0,
                 "total_volume_btc": 0.0,
                 "dominant_direction": "neutral",
@@ -308,6 +310,7 @@ class WhaleTrackingAgent(BaseAgent):
         return {
             "signal": round(signal, 4),
             "confidence": round(confidence, 4),
+            "has_data": True,
             "whale_count": len(txs),
             "total_volume_btc": round(metadata.get("total_volume_btc", 0.0), 2),
             "dominant_direction": direction,
@@ -464,47 +467,72 @@ class WhaleTrackingAgent(BaseAgent):
     @staticmethod
     def _fetch_mempool_whales() -> list[dict]:
         """
-        Fetch whale transaction data from mempool.space.
+        Fetch whale transaction data from mempool.space unconfirmed transactions.
 
-        Retrieves recent block fee statistics and mining data to infer
-        whale transaction patterns.
-        Returns list of inferred whale transactions.
+        Retrieves recent large unconfirmed transactions from the mempool
+        to detect whale activity before block confirmation.
+        Returns list of whale transactions with actual direction inferred
+        from input/output structure.
         """
         try:
-            # Get recent mining blocks and fees
-            url = "https://mempool.space/api/v1/mining/blocks/fees/1w"
+            # Get unconfirmed transactions (mempool)
+            url = "https://mempool.space/api/v1/mempool"
             with urllib.request.urlopen(url, timeout=10) as response:
                 text = response.read().decode("utf-8")
-                blocks_data = json.loads(text)
+                mempool_data = json.loads(text)
 
             txs_out = []
 
-            # Analyze blocks for whale patterns
-            if isinstance(blocks_data, list):
-                now = time.time()
-                for i, block in enumerate(blocks_data[:10]):  # Last 10 blocks
-                    block_height = block.get("height", 0)
-                    block_time = block.get("timestamp", int(now))
-                    avg_fee = block.get("avgFee", 0)
-                    min_fee = block.get("minFee", 0)
+            # Get recent tx list
+            tx_ids = mempool_data.get("txids", [])[:50]  # Last 50 unconfirmed txs
 
-                    # High avg fee + blocks ago = likely whale activity
-                    if avg_fee > min_fee * 2:
-                        # Infer whale transaction
-                        whale_amount = (avg_fee / 50000) * 10  # Heuristic conversion
+            now = time.time()
+            for tx_id in tx_ids:
+                try:
+                    # Fetch individual tx details
+                    tx_url = f"https://mempool.space/api/v1/tx/{tx_id}"
+                    with urllib.request.urlopen(tx_url, timeout=5) as resp:
+                        tx_detail = json.loads(resp.read().decode("utf-8"))
+
+                    # Calculate total input/output values
+                    total_input = sum(inp.get("prevout", {}).get("value", 0) for inp in tx_detail.get("vin", []))
+                    total_output = sum(out.get("value", 0) for out in tx_detail.get("vout", []))
+
+                    # Convert from satoshis to BTC
+                    total_input_btc = total_input / 100_000_000
+                    total_output_btc = total_output / 100_000_000
+
+                    # Only consider transactions > 10 BTC as potential whale activity
+                    if total_input_btc >= 10:
+                        # Infer direction: if change < 10% of input, likely an outflow
+                        change = abs(total_output_btc - total_input_btc) / total_input_btc if total_input_btc > 0 else 0
+                        direction = "outflow" if change < 0.10 else "inflow"
+
+                        # Get first input address (sender proxy)
+                        first_input = tx_detail.get("vin", [{}])[0]
+                        address = first_input.get("prevout", {}).get("scriptpubkey_address", "unknown")
+
                         txs_out.append({
-                            "hash": f"mempool_inferred_{block_height}",
-                            "amount_btc": round(whale_amount, 2),
-                            "direction": "inflow" if i % 2 == 0 else "outflow",
-                            "timestamp": block_time,
-                            "address": f"block_{block_height}",
-                            "source": "mempool.space",
+                            "hash": tx_id,
+                            "amount_btc": round(total_input_btc, 2),
+                            "direction": direction,
+                            "timestamp": int(now),
+                            "address": address,
+                            "source": "mempool.space_unconfirmed",
                         })
+                except (URLError, json.JSONDecodeError, KeyError, ValueError):
+                    # Skip individual tx if it fails; continue to next
+                    continue
 
+            if txs_out:
+                logger.info(
+                    "WhaleTrackingAgent: mempool.space found %d whale txs in unconfirmed pool",
+                    len(txs_out),
+                )
             return txs_out
 
         except (URLError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-            logger.debug("WhaleTrackingAgent: mempool.space fetch failed — %s", exc)
+            logger.debug("WhaleTrackingAgent: mempool.space unconfirmed fetch failed — %s", exc)
             return []
 
 

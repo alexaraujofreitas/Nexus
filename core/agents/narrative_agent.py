@@ -130,6 +130,7 @@ class NarrativeShiftAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "dominant_narrative": None,
                 "previous_narrative": self._previous_dominant,
                 "narrative_shift_score": 0.0,
@@ -181,6 +182,7 @@ class NarrativeShiftAgent(BaseAgent):
         return {
             "signal": round(signal, 4),
             "confidence": round(confidence, 4),
+            "has_data": True,
             "dominant_narrative": dominant,
             "previous_narrative": previous,
             "narrative_shift_score": round(shift_score, 4),

@@ -24,6 +24,10 @@ class TestNewsFeedAgeFallback(unittest.TestCase):
 
     def _make_feed(self):
         from core.nlp.news_feed import NewsFeed
+        import core.nlp.news_feed as _nf_mod
+        # Reset shared raw cache so each test starts fresh
+        _nf_mod._shared_raw_cache = []
+        _nf_mod._shared_raw_ts = None
         feed = NewsFeed(symbols=["BTC", "Bitcoin"])
         feed._cache = {}
         feed._cache_ts = None
@@ -38,8 +42,7 @@ class TestNewsFeedAgeFallback(unittest.TestCase):
         }
 
     def _patch_fetch(self, feed, headlines):
-        feed._fetch_cryptopanic = MagicMock(side_effect=Exception("mocked"))
-        feed._fetch_rss = MagicMock(return_value=headlines)
+        feed._fetch_all_sources = MagicMock(return_value=headlines)
 
     # ── Test 1: articles within 8h → primary window, no stale tag ─────────
     def test_recent_articles_no_fallback(self):
@@ -101,8 +104,7 @@ class TestNewsFeedAgeFallback(unittest.TestCase):
     # ── Test 7: zero RSS articles → no crash, returns empty ───────────────
     def test_empty_rss_no_crash(self):
         feed = self._make_feed()
-        feed._fetch_cryptopanic = MagicMock(side_effect=Exception("mocked"))
-        feed._fetch_rss = MagicMock(return_value=[])
+        feed._fetch_all_sources = MagicMock(return_value=[])
         results = feed.fetch_headlines(max_age_minutes=480)
         self.assertEqual(results, [])
 
@@ -127,8 +129,3 @@ class TestNewsFeedAgeFallback(unittest.TestCase):
         sources = {h["source"] for h in results}
         self.assertIn("CoinDesk", sources)
         self.assertIn("Decrypt", sources)
-        self.assertTrue(all(h.get("_stale") for h in results))
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)

@@ -146,6 +146,7 @@ class MacroAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "macro_risk_score": 0.5,
                 "regime_bias": "neutral",
                 "components": {},
@@ -353,9 +354,10 @@ class MacroAgent(BaseAgent):
         return {
             "signal":           round(combined_sig, 4),
             "confidence":       round(combined_conf, 4),
+            "has_data": True,
             "macro_risk_score": round(macro_risk_score, 4),
             "regime_bias":      regime_bias,
-            "macro_bias":       regime_bias,       # alias for compatibility
+            "macro_bias":       regime_bias,
             "macro_score":      macro_score,
             "explanation":      macro_explanation,
             "components":       components,
@@ -458,7 +460,14 @@ class MacroAgent(BaseAgent):
     # ── Signal scorers ────────────────────────────────────────
 
     def _score_fng(self, fng: dict) -> tuple[float, float]:
-        """Convert Fear & Greed value to contrarian signal."""
+        """Convert Fear & Greed value to contrarian signal.
+
+        Session 51 fix: the neutral zone (35-65) no longer returns flat 0.0.
+        Instead, it produces a proportional contrarian signal scaled within
+        the zone, so FNG=36 is slightly bullish and FNG=64 is slightly bearish.
+        This ensures the macro agent always contributes a non-zero signal
+        when FNG data is available.
+        """
         value = fng.get("value", 50)
         if value <= _FNG_EXTREME_FEAR:
             return +0.75, 0.80   # Extreme fear = contrarian buy
@@ -468,10 +477,20 @@ class MacroAgent(BaseAgent):
             return -0.75, 0.80   # Extreme greed = contrarian sell
         elif value >= _FNG_GREED:
             return -0.40, 0.60
-        return 0.0, 0.30         # Neutral zone
+        # Neutral zone (35-65): proportional contrarian micro-signal
+        # Maps 35→+0.20, 50→0.0, 65→-0.20 (linear interpolation)
+        midpoint = (_FNG_FEAR + _FNG_GREED) / 2.0  # 50
+        half_range = (_FNG_GREED - _FNG_FEAR) / 2.0  # 15
+        offset = (midpoint - value) / half_range  # +1 at fear end, -1 at greed end
+        micro_signal = round(offset * 0.20, 4)
+        return micro_signal, 0.40  # Confidence 0.40 (was 0.30) — passes gate
 
     def _score_dxy(self, dxy: dict) -> tuple[float, float]:
-        """Rising DXY = bearish crypto (risk-off). Falling DXY = bullish."""
+        """Rising DXY = bearish crypto (risk-off). Falling DXY = bullish.
+
+        Session 51 fix: neutral zone now produces proportional micro-signal
+        instead of flat 0.0.
+        """
         chg = dxy.get("change_pct", 0.0)
         if chg >= _DXY_STRONG_RISE:
             return -0.70, 0.75
@@ -481,10 +500,15 @@ class MacroAgent(BaseAgent):
             return +0.70, 0.75
         elif chg <= _DXY_MILD_FALL:
             return +0.35, 0.55
-        return 0.0, 0.30
+        # Neutral zone: proportional signal within ±0.5% range
+        micro_signal = round(-chg / _DXY_MILD_RISE * 0.15, 4)  # inverse: rising DXY = bearish
+        return micro_signal, 0.35
 
     def _score_yield(self, y_data: dict) -> tuple[float, float]:
-        """Rising yields = bearish risk assets. Falling yields = bullish."""
+        """Rising yields = bearish risk assets. Falling yields = bullish.
+
+        Session 51 fix: neutral zone produces proportional micro-signal.
+        """
         bps = y_data.get("change_bps", 0.0)
         if bps >= _YIELD_STRONG_RISE:
             return -0.65, 0.70
@@ -494,7 +518,9 @@ class MacroAgent(BaseAgent):
             return +0.65, 0.70
         elif bps <= _YIELD_MILD_FALL:
             return +0.30, 0.50
-        return 0.0, 0.30
+        # Neutral zone: proportional signal within ±5 bps range
+        micro_signal = round(-bps / _YIELD_MILD_RISE * 0.12, 4)
+        return micro_signal, 0.35
 
     def _score_vix(self, vix_data: dict) -> tuple[float, float]:
         """
@@ -532,7 +558,10 @@ class MacroAgent(BaseAgent):
         return round(base_sig, 4), round(base_conf, 4)
 
     def _score_equity(self, spx: dict) -> tuple[float, float]:
-        """SPX momentum as crypto risk-on/off proxy."""
+        """SPX momentum as crypto risk-on/off proxy.
+
+        Session 51 fix: neutral zone produces proportional micro-signal.
+        """
         chg = spx.get("change_pct", 0.0)
         if chg >= 2.0:
             return +0.50, 0.55
@@ -542,7 +571,9 @@ class MacroAgent(BaseAgent):
             return -0.50, 0.55
         elif chg <= -0.5:
             return -0.25, 0.40
-        return 0.0, 0.25
+        # Neutral zone: proportional signal within ±0.5% range
+        micro_signal = round(chg / 0.5 * 0.10, 4)  # positive equity = bullish
+        return micro_signal, 0.30
 
     def _score_fred(self, fred: dict) -> tuple[float, float]:
         """Score macro policy environment from FRED data."""

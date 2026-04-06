@@ -433,10 +433,10 @@ class AgentsDashboard(QWidget):
         # Agents without a key are always shown (no disable gate in coordinator).
         _AGENT_GATE: dict[str, tuple[str, bool]] = {
             "funding_rate":     ("agents.funding_enabled",          True),
-            "order_book":       ("agents.orderbook_enabled",        False),
-            "options_flow":     ("agents.options_enabled",          False),
-            "social_sentiment": ("agents.social_sentiment_enabled", False),
-            "sector_rotation":  ("agents.sector_rotation_enabled",  False),
+            "order_book":       ("agents.orderbook_enabled",        True),
+            "options_flow":     ("agents.options_enabled",          True),
+            "social_sentiment": ("agents.social_sentiment_enabled", True),
+            "sector_rotation":  ("agents.sector_rotation_enabled",  True),
         }
         _ALL_AGENT_NAMES = [
             "funding_rate", "order_book", "options_flow",

@@ -17,7 +17,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -25,6 +27,107 @@ from typing import Any, Optional
 from aiohttp import web
 
 logger = logging.getLogger("nexus.http_api")
+
+
+# ── Logger-name → component mapping ──────────────────────────
+# Maps Python logger name prefixes to the component names the
+# frontend filter expects.
+_COMPONENT_MAP: list[tuple[str, str]] = [
+    ("core.scanning",           "scanner"),
+    ("core.signals",            "signals"),
+    ("core.risk",               "risk"),
+    ("core.execution",          "executor"),
+    ("core.market_data",        "exchange"),
+    ("core.agents",             "engine"),
+    ("core.regime",             "signals"),
+    ("core.meta_decision",      "signals"),
+    ("core.learning",           "engine"),
+    ("core.monitoring",         "engine"),
+    ("core.evaluation",         "engine"),
+    ("core.analytics",          "engine"),
+    ("core.notifications",      "engine"),
+    ("core.nlp",                "engine"),
+    ("nexus.http_api",          "engine"),
+    ("nexus.engine",            "engine"),
+]
+
+
+def _logger_to_component(name: str) -> str:
+    """Map a Python logger name to a frontend-friendly component."""
+    for prefix, comp in _COMPONENT_MAP:
+        if name.startswith(prefix):
+            return comp
+    return "engine"
+
+
+# ── Ring-buffer logging handler ──────────────────────────────
+# Attaches to the root logger and captures every record into a
+# thread-safe deque.  The HTTP endpoint reads from this buffer.
+
+_LOG_RING: deque[dict] = deque(maxlen=2000)
+
+
+class _RingBufferHandler(logging.Handler):
+    """Logging handler that stores formatted entries in a deque."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            entry = {
+                "timestamp": datetime.fromtimestamp(
+                    record.created, tz=timezone.utc
+                ).isoformat(),
+                "level": record.levelname,
+                "component": _logger_to_component(record.name),
+                "message": self.format(record),
+                "extra": {
+                    "logger": record.name,
+                    "func": record.funcName,
+                    "lineno": record.lineno,
+                },
+            }
+            _LOG_RING.appendleft(entry)
+
+            # Broadcast to connected WS clients (fire-and-forget).
+            # The frontend wsStore routes on msg.channel and stores
+            # msg.data as lastMessage[channel].
+            if _ws_clients:
+                payload = json.dumps({"channel": "logs", "data": entry})
+                stale: list[web.WebSocketResponse] = []
+                for ws in _ws_clients:
+                    if ws.closed:
+                        stale.append(ws)
+                        continue
+                    try:
+                        # send_str is a coroutine — schedule it on the
+                        # event loop from the logging thread.
+                        if _event_loop is not None and _event_loop.is_running():
+                            asyncio.run_coroutine_threadsafe(
+                                ws.send_str(payload), _event_loop
+                            )
+                    except Exception:
+                        stale.append(ws)
+                for ws in stale:
+                    _ws_clients.discard(ws)
+        except Exception:
+            pass  # Never let logging handler raise
+
+
+def install_ring_buffer_handler() -> None:
+    """Install the ring-buffer handler on the root logger.
+
+    Call once from main.py after basicConfig so every logger in the
+    process feeds into the ring buffer.
+    """
+    handler = _RingBufferHandler()
+    # Use a minimal format — the structured dict already has metadata
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.setLevel(logging.DEBUG)
+    logging.getLogger().addHandler(handler)
+
+
+# ── WS client tracking ──────────────────────────────────────
+_ws_clients: set[web.WebSocketResponse] = set()
+_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 # ── Data directory for persistent JSON store ──────────────
 _DATA_DIR = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent / "data"
@@ -379,6 +482,9 @@ class EngineHttpApi:
 
     async def start(self, host: str = "0.0.0.0", port: int = 8000):
         """Start the HTTP server and background ticker loop."""
+        global _event_loop
+        _event_loop = asyncio.get_running_loop()
+
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
         site = web.TCPSite(self._runner, host, port)
@@ -1128,7 +1234,27 @@ class EngineHttpApi:
     # ================================================================
 
     async def _logs_recent(self, req: web.Request) -> web.Response:
-        return self._json({"status": "ok", "logs": [], "count": 0})
+        limit = min(int(req.query.get("limit", "200")), 2000)
+        level_filter = req.query.get("level", "").upper() or None
+        comp_filter = req.query.get("component", "") or None
+        search_filter = (req.query.get("search", "") or "").lower() or None
+
+        # Valid log levels for filtering
+        _LEVEL_ORDER = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+
+        entries: list[dict] = []
+        for entry in _LOG_RING:
+            if level_filter and entry.get("level") != level_filter:
+                continue
+            if comp_filter and entry.get("component") != comp_filter:
+                continue
+            if search_filter and search_filter not in entry.get("message", "").lower():
+                continue
+            entries.append(entry)
+            if len(entries) >= limit:
+                break
+
+        return self._json({"entries": entries, "count": len(entries)})
 
     # ================================================================
     # BACKTEST
@@ -1240,6 +1366,7 @@ class EngineHttpApi:
         """WebSocket endpoint with server-side ping keepalive."""
         ws = web.WebSocketResponse(heartbeat=30.0)  # aiohttp built-in ping every 30s
         await ws.prepare(req)
+        _ws_clients.add(ws)
         # Send initial connection confirmation
         await ws.send_json({"type": "connected", "message": "Engine WS connected"})
 
@@ -1277,4 +1404,5 @@ class EngineHttpApi:
             pass
         finally:
             ping_task.cancel()
+            _ws_clients.discard(ws)
         return ws

@@ -117,6 +117,7 @@ class SqueezeDetectionAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "squeeze_probability": 0.0,
                 "squeeze_direction": "none",
                 "crowding_score": 0.0,
@@ -146,10 +147,10 @@ class SqueezeDetectionAgent(BaseAgent):
             signal, confidence, squeeze_prob, squeeze_dir, crowding_score,
         )
 
-        # Cache for external access
         self._cache = {
             "signal": signal,
             "confidence": confidence,
+            "has_data": True,
             "squeeze_probability": squeeze_prob,
             "squeeze_direction": squeeze_dir,
             "crowding_score": crowding_score,
@@ -160,7 +161,6 @@ class SqueezeDetectionAgent(BaseAgent):
             "metadata": metadata,
         }
 
-        # Publish leverage crowding event if detected
         if crowding_score > 0.6:
             crowding_event = {
                 "signal": leverage_signal,
@@ -280,12 +280,33 @@ class SqueezeDetectionAgent(BaseAgent):
             crowding_score = max(crowding_score, min(1.0, (1.0 - current_ls_ratio) / 1.0))
             metadata["reason"] = "Extreme short crowding from L/S ratio"
 
-        # Default case: balanced
+        # Default case: balanced — Session 51 fix: produce a non-zero signal
+        # from L/S ratio deviation and funding rate even when thresholds aren't
+        # extreme.  This ensures the agent always contributes to the orchestrator.
         if squeeze_dir == "none" and squeeze_prob == 0.0:
-            signal = 0.0
-            confidence = 0.30
-            crowding_score = 0.3
-            metadata["reason"] = "No significant squeeze or crowding detected"
+            # Mild directional signal from L/S ratio position relative to 1.0
+            # L/S > 1.0 → slightly more longs → mild bearish contrarian
+            # L/S < 1.0 → slightly more shorts → mild bullish contrarian
+            if current_ls_ratio > 0 and current_ls_ratio != 1.0:
+                ls_deviation = 1.0 - current_ls_ratio  # positive when shorts dominate
+                signal = round(max(-0.30, min(0.30, ls_deviation * 0.25)), 4)
+            else:
+                signal = 0.0
+
+            # Add funding rate micro-signal
+            if funding_rate_avg != 0:
+                # Negative funding = shorts paying = mild bullish
+                fr_signal = round(max(-0.15, min(0.15, -funding_rate_avg * 200)), 4)
+                signal = round(max(-0.40, min(0.40, signal + fr_signal)), 4)
+
+            confidence = 0.35
+            crowding_score = round(min(0.5, abs(current_ls_ratio - 1.0) * 0.5 + abs(funding_rate_avg) * 500), 4)
+            if signal == 0.0:
+                signal = 0.05  # minimal non-zero baseline
+            metadata["reason"] = (
+                f"Balanced market: L/S={current_ls_ratio:.3f}, "
+                f"funding={funding_rate_avg:.6f} — mild directional lean"
+            )
 
         return (
             round(signal, 4),

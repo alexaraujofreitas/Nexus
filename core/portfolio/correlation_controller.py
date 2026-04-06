@@ -30,21 +30,58 @@ OVERNIGHT_REDUCE_HOUR = 17       # 17:00 UTC
 # Correlation matrix of common crypto assets (pre-computed approximate values)
 # Based on 90-day rolling correlations; updated periodically
 _BASE_CORRELATION = {
+    # ── BTC pairs ───────────────────────────────────────────────
     ("BTC/USDT", "ETH/USDT"): 0.85,
     ("BTC/USDT", "SOL/USDT"): 0.75,
     ("BTC/USDT", "BNB/USDT"): 0.70,
     ("BTC/USDT", "ADA/USDT"): 0.72,
     ("BTC/USDT", "XRP/USDT"): 0.65,
     ("BTC/USDT", "DOGE/USDT"): 0.60,
+    ("BTC/USDT", "TRX/USDT"): 0.62,
+    ("BTC/USDT", "BCH/USDT"): 0.78,
+    ("BTC/USDT", "LINK/USDT"): 0.72,
+    ("BTC/USDT", "AVAX/USDT"): 0.74,
+    ("BTC/USDT", "NEAR/USDT"): 0.70,
+    ("BTC/USDT", "SUI/USDT"): 0.72,
+    ("BTC/USDT", "ICP/USDT"): 0.68,
+    ("BTC/USDT", "HBAR/USDT"): 0.65,
+    ("BTC/USDT", "XLM/USDT"): 0.63,
+    ("BTC/USDT", "ALGO/USDT"): 0.66,
+    ("BTC/USDT", "ONDO/USDT"): 0.64,
+    ("BTC/USDT", "RENDER/USDT"): 0.70,
+    ("BTC/USDT", "HYPE/USDT"): 0.60,
+    # ── ETH pairs ───────────────────────────────────────────────
     ("ETH/USDT", "SOL/USDT"): 0.80,
     ("ETH/USDT", "BNB/USDT"): 0.75,
     ("ETH/USDT", "ADA/USDT"): 0.78,
-    ("ETH/USDT", "XRP/USDT"): 0.70,   # previously missing — fell back to 0.50
+    ("ETH/USDT", "XRP/USDT"): 0.70,
+    ("ETH/USDT", "LINK/USDT"): 0.80,
+    ("ETH/USDT", "AVAX/USDT"): 0.78,
+    ("ETH/USDT", "NEAR/USDT"): 0.76,
+    ("ETH/USDT", "SUI/USDT"): 0.75,
+    ("ETH/USDT", "RENDER/USDT"): 0.74,
+    ("ETH/USDT", "ICP/USDT"): 0.72,
+    ("ETH/USDT", "ALGO/USDT"): 0.70,
+    # ── SOL pairs ───────────────────────────────────────────────
     ("SOL/USDT", "BNB/USDT"): 0.72,
     ("SOL/USDT", "ADA/USDT"): 0.74,
-    ("SOL/USDT", "XRP/USDT"): 0.65,   # previously missing — fell back to 0.50
+    ("SOL/USDT", "XRP/USDT"): 0.65,
+    ("SOL/USDT", "SUI/USDT"): 0.78,
+    ("SOL/USDT", "NEAR/USDT"): 0.76,
+    ("SOL/USDT", "AVAX/USDT"): 0.75,
+    ("SOL/USDT", "RENDER/USDT"): 0.74,
+    # ── Other high-correlation pairs ────────────────────────────
     ("BNB/USDT", "ADA/USDT"): 0.70,
-    ("BNB/USDT", "XRP/USDT"): 0.65,   # previously missing — fell back to 0.50
+    ("BNB/USDT", "XRP/USDT"): 0.65,
+    ("LINK/USDT", "AVAX/USDT"): 0.75,
+    ("LINK/USDT", "NEAR/USDT"): 0.72,
+    ("SUI/USDT", "NEAR/USDT"): 0.76,
+    ("SUI/USDT", "AVAX/USDT"): 0.73,
+    ("ALGO/USDT", "XLM/USDT"): 0.72,
+    ("XRP/USDT", "XLM/USDT"): 0.74,
+    ("BCH/USDT", "TRX/USDT"): 0.60,
+    ("ICP/USDT", "NEAR/USDT"): 0.70,
+    ("RENDER/USDT", "NEAR/USDT"): 0.72,
 }
 
 
@@ -54,7 +91,7 @@ def get_pair_correlation(sym_a: str, sym_b: str) -> float:
         return 1.0
     key1 = (sym_a, sym_b)
     key2 = (sym_b, sym_a)
-    return _BASE_CORRELATION.get(key1, _BASE_CORRELATION.get(key2, 0.50))
+    return _BASE_CORRELATION.get(key1, _BASE_CORRELATION.get(key2, 0.65))
 
 
 def update_correlation(sym_a: str, sym_b: str, correlation: float) -> None:

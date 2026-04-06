@@ -5,13 +5,9 @@ export interface DashboardSummary {
   pnl: number;
   drawdown: number;
   positions: number;
+  total_trades: number;
+  avg_r: number;
   crash_tier: string;
-  recent_trades: Array<{
-    symbol: string;
-    side: string;
-    pnl_usdt: number;
-    closed_at: string;
-  }>;
   win_rate: number;
   profit_factor: number;
 }
@@ -42,8 +38,9 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     pnl: p.session_pnl_usdt ?? p.total_pnl_usdt ?? 0,
     drawdown: p.drawdown_pct ?? 0,
     positions: p.open_positions ?? 0,
+    total_trades: p.total_trades ?? 0,
+    avg_r: p.avg_r ?? 0,
     crash_tier: cd.tier ?? 'NORMAL',
-    recent_trades: d.recent_trades || [],
     win_rate: p.win_rate ?? 0,
     profit_factor: p.profit_factor ?? 0,
   };

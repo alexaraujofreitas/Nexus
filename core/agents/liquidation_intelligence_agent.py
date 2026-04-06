@@ -326,10 +326,10 @@ class LiquidationIntelligenceAgent:
         # Check for cross-exchange divergence
         try:
             if self.exchange and hasattr(self.exchange, 'fetch_ticker'):
-                # Fetch Binance price as benchmark
-                binance_ticker = self.exchange.fetch_ticker("BTC/USDT")
-                binance_price = float(binance_ticker.get("last", close))
-                divergence_pct = abs(close - binance_price) / binance_price * 100.0
+                # Fetch exchange price as benchmark
+                exchange_ticker = self.exchange.fetch_ticker(symbol)
+                exchange_price = float(exchange_ticker.get("last", close))
+                divergence_pct = abs(close - exchange_price) / exchange_price * 100.0
                 if divergence_pct > 0.5:
                     cascade_risk = min(1.0, cascade_risk + 0.1)
         except Exception:

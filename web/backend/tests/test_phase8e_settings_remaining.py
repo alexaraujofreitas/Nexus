@@ -249,10 +249,15 @@ class TestAgentsTabParity:
 class TestPortfolioAllocationParity:
     """All desktop Portfolio Allocation tab fields."""
 
-    SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+    SYMBOLS = [
+        "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
+        "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
+        "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
+        "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+    ]
 
     def test_symbol_count(self):
-        assert len(self.SYMBOLS) == 5
+        assert len(self.SYMBOLS) == 20
 
     def test_mode_options(self):
         modes = ["STATIC", "DYNAMIC"]
@@ -260,7 +265,7 @@ class TestPortfolioAllocationParity:
 
     def test_static_weight_fields(self):
         fields = [f"symbol_allocation.static_weights.{s}" for s in self.SYMBOLS]
-        assert len(fields) == 5
+        assert len(fields) == 20
 
     def test_btc_dominance_fields(self):
         fields = [
@@ -276,12 +281,12 @@ class TestPortfolioAllocationParity:
         for p in profiles:
             for s in self.SYMBOLS:
                 total += 1
-        assert total == 15  # 3 profiles × 5 symbols
+        assert total == 60  # 3 profiles × 20 symbols
 
     def test_total_portfolio_fields(self):
-        """1 mode + 5 static + 3 thresholds + 15 dynamic = 24 fields total."""
-        total = 1 + 5 + 3 + 15
-        assert total == 24
+        """1 mode + 20 static + 3 thresholds + 60 dynamic = 84 fields total."""
+        total = 1 + 20 + 3 + 60
+        assert total == 84
 
 
 # ── 8. Full Settings Tab Count ──────────────────────────────

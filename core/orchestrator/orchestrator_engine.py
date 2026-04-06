@@ -520,6 +520,7 @@ class OrchestratorEngine(QObject):
             sig   = float(cached.get("signal",     0.0))
             conf  = float(cached.get("confidence", 0.0))
             stale = bool(cached.get("stale",       True))
+            has_data = bool(cached.get("has_data",  False))
             updated_at_iso = cached.get("updated_at", None)
 
             # Compute effective confidence with staleness decay
@@ -530,10 +531,14 @@ class OrchestratorEngine(QObject):
                 "confidence": round(conf, 4),
                 "effective_confidence": round(effective_conf, 4),
                 "stale":      stale,
+                "has_data":   has_data,
             }
 
-            # Include in weighted meta-signal if not stale and meets minimum confidence
-            if not stale and effective_conf >= _MIN_CONFIDENCE:
+            # Include in weighted meta-signal ONLY if agent has real data
+            # Session 51v2: replaced confidence threshold gate with has_data gate.
+            # Agents without real data return has_data=False and are excluded entirely.
+            # This eliminates artificial signal pollution from empty-data fallbacks.
+            if has_data and not stale and effective_conf > 0.0:
                 weight = regime_weights.get(agent_name, DEFAULT_WEIGHTS[agent_name])
 
                 # Apply HMM confidence multiplier to effective confidence
@@ -542,20 +547,31 @@ class OrchestratorEngine(QObject):
                 weighted_parts.append((agent_name, sig, hmm_adjusted_conf, weight))
                 effective_agent_count += 1
 
-        # ── Meta-signal calculation ────────────────────────────
+        # ── Meta-signal calculation (dynamic weight normalization) ──
+        # Session 51v2: weights are normalized to sum to 1.0 based on
+        # which agents actually have data. This ensures the meta-signal
+        # reflects only real intelligence, not artificial padding.
+        norm_parts = []
         if not weighted_parts:
             meta_sig  = 0.0
             meta_conf = 0.0
             total_wc  = 0.0
         else:
-            total_wc = sum(w * c for _, _, c, w in weighted_parts)
+            # Normalize weights so participating agents' weights sum to 1.0
+            raw_weight_sum = sum(w for _, _, _, w in weighted_parts)
+            if raw_weight_sum > 0:
+                norm_parts = [(n, s, c, w / raw_weight_sum) for n, s, c, w in weighted_parts]
+            else:
+                norm_parts = weighted_parts
+
+            total_wc = sum(w * c for _, _, c, w in norm_parts)
             meta_sig = (
-                sum(s * c * w for _, s, c, w in weighted_parts) / total_wc
+                sum(s * c * w for _, s, c, w in norm_parts) / total_wc
                 if total_wc > 0 else 0.0
             )
             meta_conf = (
-                sum(c * w for _, _, c, w in weighted_parts) /
-                sum(w for _, _, _, w in weighted_parts)
+                sum(c * w for _, _, c, w in norm_parts) /
+                sum(w for _, _, _, w in norm_parts)
             )
 
         # ── Per-agent contribution breakdown (Phase S2 diagnostics) ────
@@ -563,11 +579,11 @@ class OrchestratorEngine(QObject):
         # magnitude_share: |contribution_i| / Σ|contribution_j| — sums to 1.0
         # Computed BEFORE post-processing (consensus, divergence, VIX, veto).
         _agent_contributions: dict[str, dict] = {}
-        if total_wc > 0 and weighted_parts:
+        if total_wc > 0 and norm_parts:
             _abs_sum = sum(
-                abs(s * c * w / total_wc) for _, s, c, w in weighted_parts
+                abs(s * c * w / total_wc) for _, s, c, w in norm_parts
             )
-            for _name, _s, _c, _w in weighted_parts:
+            for _name, _s, _c, _w in norm_parts:
                 _sc = (_s * _c * _w) / total_wc
                 _ms = abs(_sc) / _abs_sum if _abs_sum > 1e-12 else 0.0
                 _agent_contributions[_name] = {
@@ -601,7 +617,7 @@ class OrchestratorEngine(QObject):
                   float(self._agent_cache.get(n, {}).get("confidence", 0.0)))
                  for n in DEFAULT_WEIGHTS.keys()
              ]
-             if eff_conf >= _MIN_CONFIDENCE and not self._agent_cache.get(agent_name, {}).get("stale", True)
+             if bool(self._agent_cache.get(agent_name, {}).get("has_data", False)) and not self._agent_cache.get(agent_name, {}).get("stale", True)
             ],
             key=lambda x: x[3], reverse=True
         )[:4]

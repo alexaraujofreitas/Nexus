@@ -14,9 +14,10 @@ import Settings from './pages/Settings';
 import Logs from './pages/Logs';
 import Analytics from './pages/Analytics';
 import MarketRegime from './pages/MarketRegime';
+import ConfluenceSignals from './pages/ConfluenceSignals';
+import Strategy from './pages/Strategy';
 import DemoMonitor from './pages/DemoMonitor';
-import Validation from './pages/Validation';
-import ExchangeManagement, { AssetManagementPage } from './pages/ExchangeManagement';
+import { AssetManagementPage } from './pages/ExchangeManagement';
 import Notifications from './pages/Notifications';
 import NotFound from './pages/NotFound';
 
@@ -56,6 +57,8 @@ export default function App() {
               <Route path="assets" element={<AssetManagementPage />} />
               <Route path="scanner" element={<Scanner />} />
               <Route path="regime" element={<MarketRegime />} />
+              <Route path="strategy" element={<Strategy />} />
+              <Route path="confluence" element={<ConfluenceSignals />} />
               <Route path="charts" element={<Suspense fallback={<LazyFallback />}><Charts /></Suspense>} />
               <Route path="intelligence" element={<Intelligence />} />
               <Route path="risk" element={<Risk />} />
@@ -63,8 +66,6 @@ export default function App() {
               <Route path="settings" element={<Settings />} />
               <Route path="logs" element={<Logs />} />
               <Route path="backtest" element={<Suspense fallback={<LazyFallback />}><Backtest /></Suspense>} />
-              <Route path="validation" element={<Validation />} />
-              <Route path="exchanges" element={<ExchangeManagement />} />
               <Route path="notifications" element={<Notifications />} />
             </Route>
             <Route path="*" element={<NotFound />} />

@@ -26,7 +26,7 @@ function MetricBadge({ label, value, threshold, format = 'num' }: {
 }
 
 export default function Backtest() {
-  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT']);
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>([...SYMBOLS]);
   const [startDate, setStartDate] = useState('2024-01-01');
   const [endDate, setEndDate] = useState('2026-03-01');
   const [timeframe, setTimeframe] = useState('30m');

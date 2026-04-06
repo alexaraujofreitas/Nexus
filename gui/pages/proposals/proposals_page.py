@@ -222,8 +222,13 @@ class ProposalsPage(QWidget):
         sym_lbl = QLabel("Symbol:")
         sym_lbl.setStyleSheet(f"color:{_CLR_DIM};")
         self._sym_combo = QComboBox()
-        self._sym_combo.addItems(["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"])
-        self._sym_combo.setFixedWidth(100)
+        self._sym_combo.addItems([
+            "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
+            "TRXUSDT", "DOGEUSDT", "ADAUSDT", "BCHUSDT", "HYPEUSDT",
+            "LINKUSDT", "XLMUSDT", "AVAXUSDT", "HBARUSDT", "SUIUSDT",
+            "NEARUSDT", "ICPUSDT", "ONDOUSDT", "ALGOUSDT", "RENDERUSDT",
+        ])
+        self._sym_combo.setFixedWidth(120)
 
         tf_lbl = QLabel("TF:")
         tf_lbl.setStyleSheet(f"color:{_CLR_DIM};")

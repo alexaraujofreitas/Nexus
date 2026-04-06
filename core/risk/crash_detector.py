@@ -266,8 +266,8 @@ class CrashDetector:
 
     def _compute_cross_asset_decline(self, df_by_symbol: dict[str, pd.DataFrame]) -> float:
         """
-        Cross-asset correlated decline: All 5 symbols declining simultaneously over 1 hour.
-        score = declining_count/5 * mean_decline_normalised
+        Cross-asset correlated decline: watchlist symbols declining simultaneously over 1 hour.
+        score = declining_count/total_symbols * mean_decline_normalised
         Mean decline normalised: min(1.0, mean_decline_pct / 3.0)
         """
         if not df_by_symbol or len(df_by_symbol) < 2:

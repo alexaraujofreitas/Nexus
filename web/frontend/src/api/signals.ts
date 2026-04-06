@@ -5,6 +5,7 @@ export interface AgentStatus {
   stale: boolean;
   signal: number;
   confidence: number;
+  has_data: boolean;
   updated_at: string;
   errors: number;
 }

@@ -83,7 +83,7 @@ class OrderBookAgent(BaseAgent):
 
     def process(self, raw: dict[str, dict]) -> dict:
         if not raw:
-            return {"signal": 0.0, "confidence": 0.0, "symbols": {}, "count": 0}
+            return {"signal": 0.0, "confidence": 0.0, "has_data": False, "symbols": {}, "count": 0}
 
         with self._lock:
             for symbol, ob in raw.items():
@@ -104,6 +104,7 @@ class OrderBookAgent(BaseAgent):
         return {
             "signal":     round(avg_signal, 4),
             "confidence": round(avg_conf,   4),
+            "has_data": True,
             "symbols":    cache_snapshot,
             "count":      len(cache_snapshot),
         }

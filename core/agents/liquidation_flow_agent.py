@@ -86,7 +86,7 @@ class LiquidationFlowAgent(BaseAgent):
         Returns aggregate signal across symbols.
         """
         if not raw:
-            return {"signal": 0.0, "confidence": 0.0, "symbols": {}, "count": 0}
+            return {"signal": 0.0, "confidence": 0.0, "has_data": False, "symbols": {}, "count": 0}
 
         symbols_result = {}
         for symbol, data in raw.items():
@@ -116,6 +116,7 @@ class LiquidationFlowAgent(BaseAgent):
         return {
             "signal": round(avg_signal, 4),
             "confidence": round(avg_conf, 4),
+            "has_data": True,
             "symbols": symbols_result,
             "count": len(symbols_result),
         }

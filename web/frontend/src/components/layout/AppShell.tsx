@@ -1,10 +1,16 @@
+import { useEffect } from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
+import { useWSStore } from '../../stores/wsStore';
 import Sidebar from './Sidebar';
 import Header from './Header';
 
 export default function AppShell() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const connect = useWSStore((s) => s.connect);
+
+  // Connect WebSocket once at the app shell level (all authenticated pages)
+  useEffect(() => { connect(); }, [connect]);
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;

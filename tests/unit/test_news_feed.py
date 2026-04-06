@@ -30,6 +30,13 @@ def _make_headline(title="BTC rallies 5%", source="TestSource",
     return {"title": title, "source": source, "url": url, "timestamp": ts}
 
 
+def _reset_shared_cache():
+    """Reset the shared raw cache between tests."""
+    import core.nlp.news_feed as nf_mod
+    nf_mod._shared_raw_cache = []
+    nf_mod._shared_raw_ts = None
+
+
 # ── NF-01: feedparser detection ──────────────────────────────
 
 class TestFeedparserDetection:
@@ -63,59 +70,45 @@ class TestFeedparserDetection:
                     assert len(result) == 1
 
 
-# ── NF-02: Per-asset CryptoPanic currencies ──────────────────
+# ── NF-02: Symbol filtering in RSS feed aggregation ────────────
 
-class TestCryptoPanicCurrencies:
-    def test_nf02a_btc_feed_sends_btc_currency(self):
-        """NF-02a: NewsFeed(['BTC', 'Bitcoin']) sends currencies=BTC."""
+class TestSymbolFiltering:
+    def test_nf02a_btc_symbols_match_headlines(self):
+        """NF-02a: NewsFeed(['BTC', 'Bitcoin']) filters RSS headlines by symbol."""
+        _reset_shared_cache()
         feed = NewsFeed(symbols=["BTC", "Bitcoin"])
-        with patch("requests.get") as mock_get:
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {"results": []}
-            mock_resp.raise_for_status = MagicMock()
-            mock_get.return_value = mock_resp
-            with patch("core.security.key_vault.key_vault") as kv:
-                kv.load.return_value = "fake_key"
-                # Patch settings import inside the method
-                with patch("config.settings.settings") as s:
-                    s.get.return_value = "__vault__"
-                    feed._fetch_cryptopanic()
-                    url_called = mock_get.call_args[0][0]
-                    assert "currencies=BTC" in url_called
+        headlines = [
+            _make_headline("BTC hits $80k", source="CoinDesk"),
+            _make_headline("Ethereum update", source="Decrypt"),
+        ]
+        result = feed._filter_by_symbol(headlines)
+        assert len(result) == 1
+        assert "BTC" in result[0]["title"]
 
-    def test_nf02b_eth_feed_sends_eth_currency(self):
-        """NF-02b: NewsFeed(['ETH', 'Ethereum']) sends currencies=ETH."""
+    def test_nf02b_eth_symbols_match_headlines(self):
+        """NF-02b: NewsFeed(['ETH', 'Ethereum']) filters RSS headlines by symbol."""
+        _reset_shared_cache()
         feed = NewsFeed(symbols=["ETH", "Ethereum"])
-        with patch("requests.get") as mock_get:
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {"results": []}
-            mock_resp.raise_for_status = MagicMock()
-            mock_get.return_value = mock_resp
-            with patch("core.security.key_vault.key_vault") as kv:
-                kv.load.return_value = "fake_key"
-                with patch("config.settings.settings") as s:
-                    s.get.return_value = "__vault__"
-                    feed._fetch_cryptopanic()
-                    url_called = mock_get.call_args[0][0]
-                    assert "currencies=ETH" in url_called
+        headlines = [
+            _make_headline("Ethereum update coming", source="CoinDesk"),
+            _make_headline("Bitcoin rally", source="Decrypt"),
+        ]
+        result = feed._filter_by_symbol(headlines)
+        assert len(result) >= 1
+        assert any("ETH" in h["title"] or "Ethereum" in h["title"] for h in result)
 
-    def test_nf02c_multi_ticker_currencies(self):
-        """NF-02c: Multiple tickers joined with commas."""
+    def test_nf02c_multi_symbol_matching(self):
+        """NF-02c: Multiple symbols are all checked in filter."""
+        _reset_shared_cache()
         feed = NewsFeed(symbols=["SOL", "Solana"])
-        with patch("requests.get") as mock_get:
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {"results": []}
-            mock_resp.raise_for_status = MagicMock()
-            mock_get.return_value = mock_resp
-            with patch("core.security.key_vault.key_vault") as kv:
-                kv.load.return_value = "fake_key"
-                with patch("config.settings.settings") as s:
-                    s.get.return_value = "__vault__"
-                    feed._fetch_cryptopanic()
-                    url_called = mock_get.call_args[0][0]
-                    assert "currencies=SOL" in url_called
-                    # "Solana" should NOT be in currencies (too long / not a ticker)
-                    assert "Solana" not in url_called
+        headlines = [
+            _make_headline("Solana SOL release", source="CoinDesk"),
+            _make_headline("Bitcoin news", source="Decrypt"),
+        ]
+        result = feed._filter_by_symbol(headlines)
+        assert len(result) >= 1
+        # At least one headline should match SOL/Solana
+        assert any("SOL" in h["title"] or "Solana" in h["title"] for h in result)
 
 
 # ── NF-03: User-Agent header ────────────────────────────────
@@ -126,21 +119,18 @@ class TestUserAgentHeader:
         assert "User-Agent" in _HEADERS
         assert "NexusTrader" in _HEADERS["User-Agent"]
 
-    def test_nf03b_cryptopanic_sends_headers(self):
-        """NF-03b: CryptoPanic request includes headers."""
+    def test_nf03b_rss_fetch_sends_headers(self):
+        """NF-03b: RSS feed requests include User-Agent header."""
+        _reset_shared_cache()
         feed = NewsFeed()
         with patch("requests.get") as mock_get:
             mock_resp = MagicMock()
-            mock_resp.json.return_value = {"results": []}
-            mock_resp.raise_for_status = MagicMock()
+            mock_resp.content = b'<?xml version="1.0"?><rss><channel><item><title>Test</title><link>http://test</link><pubDate>Mon, 16 Mar 2026 12:00:00 +0000</pubDate></item></channel></rss>'
             mock_get.return_value = mock_resp
-            with patch("core.security.key_vault.key_vault") as kv:
-                kv.load.return_value = "fake_key"
-                with patch("config.settings.settings") as s:
-                    s.get.return_value = "__vault__"
-                    feed._fetch_cryptopanic()
-                    _, kwargs = mock_get.call_args
-                    assert kwargs.get("headers") == _HEADERS
+            feed._fetch_rss_fallback("TestFeed", "https://example.com/rss")
+            _, kwargs = mock_get.call_args
+            assert "headers" in kwargs
+            assert kwargs["headers"].get("User-Agent") == _HEADERS["User-Agent"]
 
 
 # ── NF-04: RSS feed registry ────────────────────────────────
@@ -170,6 +160,7 @@ class TestRSSFeedRegistry:
 class TestSymbolFilterRelaxation:
     def test_nf05a_matching_headlines_returned(self):
         """NF-05a: Headlines matching symbols are returned normally."""
+        _reset_shared_cache()
         feed = NewsFeed(symbols=["BTC", "Bitcoin"])
         headlines = [
             _make_headline("BTC hits $80k"),
@@ -181,18 +172,18 @@ class TestSymbolFilterRelaxation:
 
     def test_nf05b_generic_fallback_when_zero_match(self):
         """NF-05b: When no headlines match symbols, all are kept with _generic flag."""
+        _reset_shared_cache()
         feed = NewsFeed(symbols=["XRP", "Ripple"])
         # Mock the internal fetchers to return generic headlines
         generic = [
             _make_headline("Crypto market rebounds"),
             _make_headline("Fed holds rates steady"),
         ]
-        with patch.object(feed, "_fetch_cryptopanic", side_effect=Exception("skip")):
-            with patch.object(feed, "_fetch_rss", return_value=list(generic)):
-                result = feed.fetch_headlines(max_age_minutes=240)
-                # Should have headlines even though none mention XRP
-                assert len(result) > 0
-                assert all(h.get("_generic", False) for h in result)
+        with patch.object(feed, "_fetch_all_sources", return_value=list(generic)):
+            result = feed.fetch_headlines(max_age_minutes=240)
+            # Should have headlines even though none mention XRP
+            assert len(result) > 0
+            assert all(h.get("_generic", False) for h in result)
 
 
 # ── NF-06: Deduplication ────────────────────────────────────
@@ -254,14 +245,14 @@ class TestTimestampParsing:
 class TestCaching:
     def test_nf08a_second_call_uses_cache(self):
         """NF-08a: Second call within TTL uses cache."""
+        _reset_shared_cache()
         feed = NewsFeed()
         hl = [_make_headline("BTC up")]
-        with patch.object(feed, "_fetch_cryptopanic", return_value=hl):
-            with patch.object(feed, "_fetch_rss", return_value=[]):
-                r1 = feed.fetch_headlines()
-                r2 = feed.fetch_headlines()
-                # fetch_cryptopanic called only once
-                assert feed._fetch_cryptopanic.call_count == 1
+        with patch.object(feed, "_fetch_all_sources", return_value=hl) as mock_fetch:
+            r1 = feed.fetch_headlines()
+            r2 = feed.fetch_headlines()
+            # _fetch_all_sources called only once (shared cache hit on second call)
+            assert mock_fetch.call_count == 1
 
 
 # ── NF-09: SentimentModel max_age_minutes ───────────────────

@@ -155,6 +155,13 @@ class ExchangeManager:
             if data.get("sandbox") and data["exchange_id"] in SANDBOX_SUPPORTED:
                 config["sandbox"] = True
 
+            # Bybit Demo only supports perpetual (swap) markets — spot
+            # symbols like "BCH/USDT" don't exist.  Setting defaultType
+            # to "swap" makes CCXT map standard symbols to their linear
+            # perpetual counterparts automatically.
+            if data.get("demo") and data["exchange_id"] == "bybit":
+                config.setdefault("options", {})["defaultType"] = "swap"
+
             # Build CCXT object outside the lock so a slow load_markets()
             # doesn't block other readers.
             exchange_obj = exchange_class(config)

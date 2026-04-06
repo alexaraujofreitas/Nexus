@@ -10,7 +10,6 @@ import {
   type MonitorPosition,
   type MonitorTrade,
 } from '../api/monitor';
-import { getCurrentRegime } from '../api/analytics';
 import { useWSStore } from '../stores/wsStore';
 import { formatUSD, formatPct, timeAgo, cn } from '../lib/utils';
 
@@ -191,7 +190,7 @@ function ActivePositionsTable({ positions }: { positions: MonitorPosition[] }) {
 }
 
 // ── Risk Panel ───────────────────────────────────────────
-function RiskPanel({ risk, regime }: { risk: any; regime: any }) {
+function RiskPanel({ risk }: { risk: any }) {
   if (!risk) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
@@ -209,29 +208,9 @@ function RiskPanel({ risk, regime }: { risk: any; regime: any }) {
     HIGH_ALERT: 'bg-orange-100 text-orange-700', EMERGENCY: 'bg-red-100 text-red-700',
     SYSTEMIC: 'bg-red-200 text-red-800',
   };
-  const regimeColors: Record<string, string> = {
-    bull_trend: '#16a34a', bear_trend: '#dc2626', ranging: '#ca8a04',
-    vol_expansion: '#7c3aed', uncertain: '#6b7280',
-  };
-  const regimeLabels: Record<string, string> = {
-    bull_trend: 'Bull Trend', bear_trend: 'Bear Trend', ranging: 'Ranging',
-    vol_expansion: 'Vol Expansion', uncertain: 'Uncertain',
-  };
 
   return (
     <div className="space-y-4">
-      {regime && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-3">Market Regime</p>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: regimeColors[regime.regime] || '#6b7280' }} />
-              <span className="font-semibold text-gray-900">{regimeLabels[regime.regime] || regime.regime}</span>
-            </div>
-            <span className="text-sm font-mono text-gray-500">{formatPct(regime.confidence)}</span>
-          </div>
-        </div>
-      )}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <p className="text-[11px] font-semibold text-gray-900 uppercase tracking-wider mb-4">Risk Status</p>
         <div className="mb-4">
@@ -355,15 +334,13 @@ function RecentTradesTable({ trades }: { trades: MonitorTrade[] }) {
 
 // ── Main Page ────────────────────────────────────────────
 export default function DemoMonitor() {
-  const { connect, subscribe, lastMessage, status } = useWSStore();
+  const { subscribe, lastMessage, status } = useWSStore();
 
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 10000);
     return () => clearInterval(id);
   }, []);
-
-  useEffect(() => { connect(); }, [connect]);
   useEffect(() => {
     if (status === 'connected') {
       subscribe('positions'); subscribe('dashboard');
@@ -376,15 +353,12 @@ export default function DemoMonitor() {
   const { data: pnlData } = useQuery({ queryKey: ['monitor-pnl'], queryFn: getMonitorPnL, refetchInterval: 30000 });
   const { data: riskData } = useQuery({ queryKey: ['monitor-risk'], queryFn: getMonitorRisk, refetchInterval: 30000 });
   const { data: tradesData } = useQuery({ queryKey: ['monitor-trades'], queryFn: getMonitorTrades, refetchInterval: 30000 });
-  const { data: regimeData } = useQuery({ queryKey: ['current-regime'], queryFn: getCurrentRegime, refetchInterval: 60000 });
 
   const positions = lastMessage['positions']?.positions || positionsData?.positions || [];
   const portfolio = lastMessage['dashboard'] || portfolioData?.portfolio;
   const pnl = lastMessage['monitor'] || pnlData?.pnl;
   const risk = lastMessage['risk'] || riskData?.risk;
   const trades = tradesData?.trades || [];
-  const regime = regimeData;
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -406,7 +380,7 @@ export default function DemoMonitor() {
         <div className="lg:col-span-2">
           <ActivePositionsTable positions={positions} />
         </div>
-        <RiskPanel risk={risk} regime={regime} />
+        <RiskPanel risk={risk} />
       </div>
 
       <RecentTradesTable trades={trades} />

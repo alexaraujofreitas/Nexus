@@ -1,10 +1,11 @@
 # ============================================================
 # NEXUS TRADER — News Fetcher
-# Source priority (first non-empty result wins):
-#   1. CryptoPanic API  — crypto-specific, free tier with registered key
-#   2. CryptoCompare    — free, no key required
-#   3. Messari          — free public endpoint, no key required
-#   4. NewsAPI.org      — general, requires valid paid/free-tier key
+# Source priority (free sources first, CryptoPanic optional):
+#   1. CryptoCompare    — free, no key required
+#   2. Messari          — free public endpoint, no key required
+#   3. NewsAPI.org      — general, requires valid paid/free-tier key
+#   4. RSS fallback     — 5 major crypto RSS sources, always available
+#   5. CryptoPanic API  — crypto-specific, optional bonus (registered key only)
 # ============================================================
 from __future__ import annotations
 
@@ -393,35 +394,22 @@ def fetch_crypto_news(
     language: str = "en",
 ) -> list[dict]:
     """
-    Fetch crypto news using a four-source fallback chain:
-      1. CryptoPanic   — crypto-specific; uses vault key or registered free key
-      2. CryptoCompare — free, no key required
-      3. Messari       — free public endpoint, no key required
-      4. NewsAPI.org   — general, requires a valid key
+    Fetch crypto news using a five-source fallback chain (free sources primary):
+      1. CryptoCompare — free, no key required
+      2. Messari       — free public endpoint, no key required
+      3. NewsAPI.org   — general, requires a valid key
+      4. RSS fallback  — 5 major crypto RSS sources, always available
+      5. CryptoPanic   — crypto-specific; optional bonus if vault key available
 
     `api_key` is the NewsAPI key (kept for backwards compatibility);
     a separate CryptoPanic key is loaded from the vault when available.
+
+    CryptoPanic is optional — the system functions perfectly without it.
+    Free sources are tried first to ensure reliable news delivery.
     """
-    # ── 1. CryptoPanic ─────────────────────────────────────
-    try:
-        from core.security.key_vault import key_vault
-        cp_key = key_vault.load("agents.cryptopanic_api_key") or ""
-    except Exception:
-        cp_key = ""
+    logger.info("CryptoPanic is optional; using free sources as primary")
 
-    # Only attempt CryptoPanic when a real registered key is present.
-    # The "free" public token was silently revoked by CryptoPanic and
-    # consistently returns 0 results or HTTP 401/403.
-    if cp_key and cp_key not in ("", "free", "__vault__"):
-        articles = _fetch_cryptopanic(api_key=cp_key, symbol=symbol, page_size=page_size)
-        if articles:
-            logger.info("News source: CryptoPanic (%d articles)", len(articles))
-            return articles
-        logger.info("CryptoPanic returned 0; trying free fallbacks")
-    else:
-        logger.debug("No CryptoPanic API key — skipping to free fallbacks")
-
-    # ── 2. CryptoCompare (free, no key) ────────────────────
+    # ── 1. CryptoCompare (free, no key) ────────────────────
     articles = _fetch_cryptocompare(symbol=symbol, page_size=page_size)
     if articles:
         logger.info("News source: CryptoCompare (%d articles)", len(articles))
@@ -429,7 +417,7 @@ def fetch_crypto_news(
 
     logger.info("CryptoCompare returned 0; trying Messari")
 
-    # ── 3. Messari (free, no key) ───────────────────────────
+    # ── 2. Messari (free, no key) ───────────────────────────
     articles = _fetch_messari(symbol=symbol, page_size=page_size)
     if articles:
         logger.info("News source: Messari (%d articles)", len(articles))
@@ -437,7 +425,7 @@ def fetch_crypto_news(
 
     logger.info("Messari returned 0; trying NewsAPI fallback")
 
-    # ── 4. NewsAPI (paid/free-tier, requires valid key) ─────
+    # ── 3. NewsAPI (paid/free-tier, requires valid key) ─────
     articles = _fetch_newsapi(
         api_key=api_key,
         query=query,
@@ -449,10 +437,33 @@ def fetch_crypto_news(
         logger.info("News source: NewsAPI (%d articles)", len(articles))
         return articles
 
-    # ── 5. RSS fallback (always available, no key required) ──
+    # ── 4. RSS fallback (always available, no key required) ──
     # Guarantees articles are shown even when all API keys are absent/invalid.
     logger.info("NewsAPI returned 0; falling back to RSS sources")
     articles = _fetch_rss_fallback(symbol=symbol, page_size=page_size)
     if articles:
         logger.info("News source: RSS fallback (%d articles)", len(articles))
-    return articles
+        return articles
+
+    # ── 5. CryptoPanic (optional bonus, if vault key available) ──────
+    # Only attempted after all free sources are exhausted.
+    # The "free" public token was silently revoked by CryptoPanic and
+    # consistently returns 0 results or HTTP 401/403.
+    try:
+        from core.security.key_vault import key_vault
+        cp_key = key_vault.load("agents.cryptopanic_api_key") or ""
+    except Exception:
+        cp_key = ""
+
+    if cp_key and cp_key not in ("", "free", "__vault__"):
+        logger.info("Attempting CryptoPanic (optional bonus source)")
+        articles = _fetch_cryptopanic(api_key=cp_key, symbol=symbol, page_size=page_size)
+        if articles:
+            logger.info("News source: CryptoPanic (%d articles)", len(articles))
+            return articles
+        logger.info("CryptoPanic returned 0")
+    else:
+        logger.debug("No CryptoPanic API key available (optional feature)")
+
+    logger.warning("No news articles found from any source")
+    return []

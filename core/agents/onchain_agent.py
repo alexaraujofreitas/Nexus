@@ -110,7 +110,7 @@ class OnChainAgent(BaseAgent):
         - Blockchain.info stats: 30%
         """
         if not raw:
-            return {"signal": 0.0, "confidence": 0.0, "symbols": {}, "count": 0}
+            return {"signal": 0.0, "confidence": 0.0, "has_data": False, "symbols": {}, "count": 0}
 
         symbols_result = {}
         for symbol, data in raw.items():
@@ -141,6 +141,7 @@ class OnChainAgent(BaseAgent):
         return {
             "signal": round(avg_signal, 4),
             "confidence": round(avg_conf, 4),
+            "has_data": True,
             "symbols": symbols_result,
             "count": len(symbols_result),
         }
@@ -208,10 +209,19 @@ class OnChainAgent(BaseAgent):
             metadata["reason"] = "Steady rise + low volume (weak momentum)"
 
         else:
-            coingecko_signal = 0.0
-            coingecko_conf = 0.30
-            direction = "neutral"
-            metadata["reason"] = "No significant CoinGecko pattern detected"
+            # Session 51 fix: derive micro-signal from price momentum even when
+            # no specific pattern matches, so the agent always contributes
+            if price_change_24h > 0:
+                coingecko_signal = min(0.15, price_change_24h * 0.03)
+                direction = "mildly bullish"
+            elif price_change_24h < 0:
+                coingecko_signal = max(-0.15, price_change_24h * 0.03)
+                direction = "mildly bearish"
+            else:
+                coingecko_signal = 0.05  # "no change" = mild stability positive
+                direction = "neutral"
+            coingecko_conf = 0.35
+            metadata["reason"] = f"On-chain micro-signal from price momentum ({price_change_24h:+.1f}%)"
 
         # ── Mempool signals (30% weight) ──
         mempool_signal = 0.0

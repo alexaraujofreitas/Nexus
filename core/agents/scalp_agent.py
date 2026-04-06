@@ -122,10 +122,10 @@ class ScalpingAgent(BaseAgent):
                 best_confidence = signal.get("confidence", 0)
 
         if not best_signal:
-            # Return neutral signal
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "symbol": None,
                 "obi": 0.0,
                 "taker_buy_ratio": 0.5,
@@ -211,7 +211,8 @@ class ScalpingAgent(BaseAgent):
 
         return {
             "signal": signal_value if direction > 0 else -signal_value,
-            "confidence": min(0.95, signal_value * 0.8),  # High confidence only for strong signals
+            "confidence": min(0.95, signal_value * 0.8),
+            "has_data": True,
             "symbol": symbol,
             "direction": direction,
             "obi": obi,

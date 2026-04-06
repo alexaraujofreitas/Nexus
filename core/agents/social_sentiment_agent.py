@@ -73,7 +73,7 @@ class SocialSentimentAgent(BaseAgent):
         """Lazy-load the social sentiment scorer from ModelRegistry."""
         if self._scorer is None:
             try:
-                from core.ml.model_registry import get_model_registry
+                from core.ai.model_registry import get_model_registry
                 registry = get_model_registry()
                 self._scorer = registry.get_scorer("social_sentiment")
             except Exception as exc:
@@ -122,22 +122,22 @@ class SocialSentimentAgent(BaseAgent):
         # Import signals from specialized social agents
         try:
             import core.agents.twitter_agent as _tw
-            if _tw.twitter_agent and hasattr(_tw.twitter_agent, 'last_signal'):
-                raw["twitter"] = _tw.twitter_agent.last_signal
+            if _tw.twitter_agent and hasattr(_tw.twitter_agent, '_last_signal'):
+                raw["twitter"] = _tw.twitter_agent._last_signal
         except Exception:
             pass
 
         try:
             import core.agents.reddit_agent as _rd
-            if _rd.reddit_agent and hasattr(_rd.reddit_agent, 'last_signal'):
-                raw["reddit"] = _rd.reddit_agent.last_signal
+            if _rd.reddit_agent and hasattr(_rd.reddit_agent, '_last_signal'):
+                raw["reddit"] = _rd.reddit_agent._last_signal
         except Exception:
             pass
 
         try:
             import core.agents.telegram_agent as _tg
-            if _tg.telegram_agent and hasattr(_tg.telegram_agent, 'last_signal'):
-                raw["telegram"] = _tg.telegram_agent.last_signal
+            if _tg.telegram_agent and hasattr(_tg.telegram_agent, '_last_signal'):
+                raw["telegram"] = _tg.telegram_agent._last_signal
         except Exception:
             pass
 
@@ -148,6 +148,7 @@ class SocialSentimentAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "sentiment_label": "neutral",
                 "components": {},
             }
@@ -270,6 +271,7 @@ class SocialSentimentAgent(BaseAgent):
         result = {
             "signal":          round(comb_sig, 4),
             "confidence":      round(comb_conf, 4),
+            "has_data": True,
             "sentiment_label": sentiment_label,
             "components":      components,
         }
@@ -392,7 +394,11 @@ class SocialSentimentAgent(BaseAgent):
     # ── Signal scorers ────────────────────────────────────────
 
     def _score_fng(self, value: int) -> tuple[float, float]:
-        """Directional sentiment (not purely contrarian — macro does contrarian)."""
+        """Directional sentiment (not purely contrarian — macro does contrarian).
+
+        Session 51 fix: neutral zone (36-64) produces proportional micro-signal
+        instead of flat 0.0.
+        """
         if value <= 15:
             return -0.70, 0.80   # Extreme fear = strong bearish sentiment
         elif value <= 35:
@@ -401,7 +407,15 @@ class SocialSentimentAgent(BaseAgent):
             return +0.70, 0.80   # Extreme greed = strong bullish sentiment
         elif value >= 65:
             return +0.35, 0.60
-        return 0.0, 0.30
+        # Neutral zone (36-64): directional micro-signal
+        # 36→slightly bearish, 50→neutral-ish, 64→slightly bullish
+        midpoint = 50.0
+        half_range = 15.0
+        offset = (value - midpoint) / half_range  # -1 to +1
+        micro_signal = round(offset * 0.18, 4)
+        if micro_signal == 0.0:
+            micro_signal = 0.02  # ensure non-zero
+        return micro_signal, 0.40
 
     def _score_trending(self, trending_coins: list[str]) -> tuple[float, float]:
         """More of our watchlist in trending = stronger bullish social momentum."""

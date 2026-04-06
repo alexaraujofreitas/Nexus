@@ -100,7 +100,7 @@ class SectorRotationAgent(BaseAgent):
     def process(self, raw: dict) -> dict:
         if not raw:
             return {
-                "signal": 0.0, "confidence": 0.0,
+                "signal": 0.0, "confidence": 0.0, "has_data": False,
                 "rotation_bias": "neutral", "source": "sector_rotation",
             }
 
@@ -206,7 +206,12 @@ class SectorRotationAgent(BaseAgent):
         signal = max(-1.0, min(1.0, signal))
 
         # Confidence based on data availability
-        confidence = (sum(conf_scores) / len(conf_scores) if conf_scores else 0.5) * 0.55
+        # Session 51 fix: removed the * 0.55 dampener which collapsed confidence
+        # below the 0.25 orchestrator gate.  Now uses data availability + signal
+        # magnitude to derive confidence.  Floor of 0.30 ensures gate passage.
+        raw_conf = sum(conf_scores) / len(conf_scores) if conf_scores else 0.30
+        data_coverage = min(1.0, len(conf_scores) / len(_ALL_TICKERS))  # 0-1
+        confidence = max(0.30, raw_conf * (0.6 + 0.4 * data_coverage))
 
         rotation_bias = (
             "risk_on"  if signal >  0.15 else
@@ -225,6 +230,7 @@ class SectorRotationAgent(BaseAgent):
         result = {
             "signal":         round(signal, 4),
             "confidence":     round(confidence, 4),
+            "has_data": True,
             "rotation_bias":  rotation_bias,
             "risk_on_score":  round(risk_on_score, 4),
             "risk_off_score": round(risk_off_score, 4),

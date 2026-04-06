@@ -1909,7 +1909,7 @@ class IDSSScannerTab(QWidget):
 
         This supersedes the old load_scan_results(candidates, sym_progress)
         approach.  We receive one dict per symbol including the rejection
-        reason, so the table always shows all 5 symbols with meaningful data.
+        reason, so the table always shows all watchlist symbols with meaningful data.
         """
         self._scan_all_results_received = True
         # Sort: approved first, then by symbol name

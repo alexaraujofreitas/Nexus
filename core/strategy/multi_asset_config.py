@@ -175,6 +175,38 @@ class MultiAssetConfig:
             ),
         }
 
+        # ── Mid-cap alt profiles (conservative defaults) ────────────────
+        _midcap_alts = {
+            "TRX/USDT":    ("Tron", 0.65),
+            "DOGE/USDT":   ("Dogecoin", 0.60),
+            "ADA/USDT":    ("Cardano", 0.65),
+            "BCH/USDT":    ("Bitcoin Cash", 0.70),
+            "HYPE/USDT":   ("Hyperliquid", 0.55),
+            "LINK/USDT":   ("Chainlink", 0.70),
+            "XLM/USDT":    ("Stellar", 0.60),
+            "AVAX/USDT":   ("Avalanche", 0.70),
+            "HBAR/USDT":   ("Hedera", 0.55),
+            "SUI/USDT":    ("Sui", 0.65),
+            "NEAR/USDT":   ("NEAR Protocol", 0.65),
+            "ICP/USDT":    ("Internet Computer", 0.60),
+            "ONDO/USDT":   ("Ondo Finance", 0.55),
+            "ALGO/USDT":   ("Algorand", 0.60),
+            "RENDER/USDT": ("Render", 0.65),
+        }
+        for sym, (name, risk_mult) in _midcap_alts.items():
+            defaults[sym] = AssetProfile(
+                symbol=sym,
+                active_strategies=["trend_following", "momentum"],
+                max_position_pct=0.05,
+                risk_multiplier=risk_mult,
+                min_confluence_score=0.60,
+                enable_rl=False,
+                enable_finbert=False,
+                enable_hmm=True,
+                enable_websocket=True,
+                notes=f"{name}: Mid-cap alt, conservative risk settings",
+            )
+
         for symbol, profile in defaults.items():
             if profile.validate():
                 self._profiles[symbol] = profile

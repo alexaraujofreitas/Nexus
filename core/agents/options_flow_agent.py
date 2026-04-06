@@ -94,7 +94,7 @@ class OptionsFlowAgent(BaseAgent):
 
     def process(self, raw: dict) -> dict:
         if not raw:
-            return {"signal": 0.0, "confidence": 0.0, "assets": {}, "count": 0}
+            return {"signal": 0.0, "confidence": 0.0, "has_data": False, "assets": {}, "count": 0}
 
         with self._lock:
             for base, options_data in raw.items():
@@ -118,6 +118,7 @@ class OptionsFlowAgent(BaseAgent):
         return {
             "signal":     round(avg_signal, 4),
             "confidence": round(avg_conf,   4),
+            "has_data": True,
             "assets":     cache_snapshot,
             "count":      len(cache_snapshot),
         }

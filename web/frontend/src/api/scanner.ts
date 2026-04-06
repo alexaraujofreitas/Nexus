@@ -149,6 +149,11 @@ export interface PhaseTiming {
   per_symbol_ms: Record<string, number>;
 }
 
+export interface RegimeSnapshot {
+  timestamp: string;
+  regimes: Record<string, string>;
+}
+
 export interface PipelineStatusResponse {
   status: string;
   pipeline: PipelineRow[];
@@ -157,6 +162,7 @@ export interface PipelineStatusResponse {
   last_scan_at: string;
   source: string;
   phase_timing?: PhaseTiming;
+  regime_snapshots?: RegimeSnapshot[];
 }
 
 // ── API functions ────────────────────────────────────────────

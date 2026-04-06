@@ -1541,6 +1541,10 @@ class PaperExecutor:
                     rr_list.append(reward / risk)
         avg_rr = sum(rr_list) / len(rr_list) if rr_list else 0.0
 
+        # Average realized R-multiple per trade
+        r_vals = [t.get("realized_r") for t in closed if t.get("realized_r") is not None]
+        avg_r  = sum(r_vals) / len(r_vals) if r_vals else 0.0
+
         # Trades per day / per week
         span_days = 0.0
         if n >= 2:
@@ -1584,6 +1588,7 @@ class PaperExecutor:
             "drawdown_pct":       round(self.drawdown_pct, 4),
             "available_capital":  round(self.available_capital, 2),
             # Extended stats
+            "avg_r":              round(avg_r, 3),
             "avg_rr":             round(avg_rr, 3),
             "gross_win_usdt":     round(gross_win, 2),
             "gross_loss_usdt":    round(gross_loss, 2),

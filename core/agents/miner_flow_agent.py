@@ -106,6 +106,7 @@ class MinerFlowAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "fee_revenue_btc": 0.0,
                 "avg_fee_btc": 0.0,
                 "fee_deviation_pct": 0.0,
@@ -124,6 +125,7 @@ class MinerFlowAgent(BaseAgent):
         self._cache = {
             "signal": signal,
             "confidence": confidence,
+            "has_data": True,
             "fee_revenue_btc": fee_data.get("fee_revenue_btc", 0.0),
             "avg_fee_btc": fee_data.get("avg_fee_btc", 0.0),
             "fee_deviation_pct": fee_data.get("fee_deviation_pct", 0.0),

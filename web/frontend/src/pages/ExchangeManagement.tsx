@@ -89,7 +89,7 @@ export function AssetManagementPage() {
 
 // ── Exchanges Tab ─────────────────────────────────────────
 
-function ExchangesTab() {
+export function ExchangesTab() {
   const queryClient = useQueryClient();
   const [showDialog, setShowDialog] = useState(false);
   const [editingExchange, setEditingExchange] = useState<ExchangeConfig | null>(null);

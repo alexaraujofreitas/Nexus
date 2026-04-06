@@ -1,9 +1,10 @@
 # ============================================================
 # NEXUS TRADER — FinBERT News NLP Pipeline: News Feed Aggregator
 #
-# Aggregates crypto news headlines from multiple free sources.
-# Sources: CryptoPanic API, CoinDesk RSS, Cointelegraph RSS,
-#          The Block RSS, Decrypt RSS, Bitcoin Magazine RSS
+# Aggregates crypto news headlines from multiple free RSS sources.
+# Sources: CoinDesk RSS, Cointelegraph RSS, Decrypt RSS,
+#          Bitcoin Magazine RSS, BeInCrypto RSS
+# CryptoPanic removed — RSS-only architecture (no API key required).
 # Returns cleaned headline list with timestamps.
 # ============================================================
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urljoin
@@ -20,6 +22,15 @@ logger = logging.getLogger(__name__)
 
 # ── Headline deduplication threshold ─────────────────────────
 _DUPLICATE_THRESHOLD = 0.80  # >80% similarity = duplicate
+
+# ── Shared raw headline cache ──────────────────────────────
+# All per-symbol NewsFeed instances share ONE pool of fetched headlines.
+# HTTP fetches (5 RSS feeds) happen ONCE per TTL window,
+# then each instance just filters by its keywords.
+_shared_raw_cache: list[dict] = []
+_shared_raw_ts: datetime | None = None
+_shared_raw_lock = threading.Lock()
+_SHARED_RAW_TTL_SECONDS = 300  # 5 minutes
 
 # ── Common request headers (avoids 403 from Cloudflare/WAFs) ─
 _HEADERS = {
@@ -33,24 +44,26 @@ _HEADERS = {
 _RSS_FEEDS = [
     ("CoinDesk",       "https://www.coindesk.com/arc/outboundfeeds/rss/",  True),
     ("Cointelegraph",  "https://cointelegraph.com/rss",                     True),
-    # The Block removed: theblock.co/rss.xml returns malformed XML on every request
-    # (not well-formed at offset 2:751). Removing saves ~1s of wasted fetch time per
-    # scan cycle. Re-add if The Block fixes their feed.
     ("Decrypt",        "https://decrypt.co/feed",                           True),
     ("Bitcoin Magazine","https://bitcoinmagazine.com/feed",                  True),
+    ("BeInCrypto",     "https://beincrypto.com/feed/",                      True),
 ]
 
 
 class NewsFeed:
     """
-    Aggregates crypto news headlines from multiple free sources.
+    Aggregates crypto news headlines from multiple free RSS sources.
 
-    Sources tried in order (fail silently if unavailable):
-    1. CryptoPanic API (requires auth_token from settings)
-    2. Multiple RSS feeds (CoinDesk, Cointelegraph, The Block, Decrypt, Bitcoin Magazine)
+    Sources (all free, no API keys required):
+    1. CoinDesk RSS
+    2. Cointelegraph RSS
+    3. Decrypt RSS
+    4. Bitcoin Magazine RSS
+    5. BeInCrypto RSS
 
     Returns deduplicated, symbol-filtered headlines with timestamps.
-    Caches results for 5 minutes to avoid hammering APIs.
+    Uses shared module-level cache so multiple per-symbol instances
+    only fetch RSS once per 5-minute window.
     """
 
     def __init__(self, symbols: list[str] | None = None):
@@ -70,7 +83,13 @@ class NewsFeed:
 
     def fetch_headlines(self, max_age_minutes: int = 480) -> list[dict]:
         """
-        Fetch and aggregate headlines from all available sources.
+        Fetch and aggregate headlines from all available RSS sources.
+
+        Uses a shared module-level cache so all per-symbol NewsFeed
+        instances share ONE pool of fetched headlines. HTTP requests
+        happen at most once per 5 minutes regardless of how many
+        symbols call this method. Per-symbol keyword filtering is
+        applied on top.
 
         Parameters
         ----------
@@ -86,44 +105,48 @@ class NewsFeed:
             - Sorted by timestamp descending (newest first)
             - Max 50 headlines returned
         """
-        # Check cache
+        global _shared_raw_cache, _shared_raw_ts
+
+        # Check per-instance cache first (already filtered)
         if self._cache and self._cache_ts:
             age = (datetime.now(timezone.utc) - self._cache_ts).total_seconds()
             if age < self._cache_ttl_seconds:
                 logger.debug(f"NewsFeed: using cached results (age={age:.0f}s)")
                 return self._cache.get("headlines", [])
 
-        headlines = []
+        # ── Shared raw fetch (ONE set of HTTP requests for ALL symbols) ──
+        need_fetch = True
+        if _shared_raw_ts is not None:
+            raw_age = (datetime.now(timezone.utc) - _shared_raw_ts).total_seconds()
+            if raw_age < _SHARED_RAW_TTL_SECONDS:
+                need_fetch = False
 
-        # Try CryptoPanic API first (asset-aware)
-        try:
-            cp_headlines = self._fetch_cryptopanic()
-            headlines.extend(cp_headlines)
-            logger.debug(f"NewsFeed: fetched {len(cp_headlines)} from CryptoPanic")
-        except Exception as e:
-            logger.debug(f"NewsFeed: CryptoPanic unavailable: {e}")
+        if need_fetch:
+            with _shared_raw_lock:
+                # Double-check after acquiring lock
+                if _shared_raw_ts is not None:
+                    raw_age = (datetime.now(timezone.utc) - _shared_raw_ts).total_seconds()
+                    if raw_age < _SHARED_RAW_TTL_SECONDS:
+                        need_fetch = False
 
-        # Try all RSS feeds
-        for feed_name, feed_url, _is_general in _RSS_FEEDS:
-            try:
-                rss_headlines = self._fetch_rss(feed_name, feed_url)
-                headlines.extend(rss_headlines)
-                logger.debug(f"NewsFeed: fetched {len(rss_headlines)} from {feed_name}")
-            except Exception as e:
-                logger.debug(f"NewsFeed: {feed_name} unavailable: {e}")
+                if need_fetch:
+                    raw = self._fetch_all_sources()
+                    raw = self._deduplicate(raw)
+                    _shared_raw_cache = raw
+                    _shared_raw_ts = datetime.now(timezone.utc)
+                    logger.info(
+                        "NewsFeed: shared fetch — %d deduplicated headlines from %d sources",
+                        len(raw), len(set(h["source"] for h in raw)) if raw else 0,
+                    )
 
-        # Deduplicate by title similarity
-        headlines = self._deduplicate(headlines)
+        # ── Per-symbol filtering on the shared pool ──
+        headlines = [dict(h) for h in _shared_raw_cache]
 
         # Filter by symbol (relaxed: if zero pass, return all with a flag)
         filtered = self._filter_by_symbol(headlines)
         if filtered:
             headlines = filtered
         else:
-            # If no headlines match the specific asset keywords, keep all
-            # headlines anyway — general crypto news still has value for
-            # overall market sentiment. Tag them so callers can weight
-            # them lower if desired.
             for h in headlines:
                 h["_generic"] = True
 
@@ -137,10 +160,7 @@ class NewsFeed:
         if recent:
             headlines = recent
         else:
-            # Primary window (default 8h) is empty — common during the US
-            # business-hours gap (~20:00–08:00 UTC) when crypto outlets publish
-            # fewer articles.  Fall back to a 24h window and tag articles as
-            # stale so callers can weight them lower if desired.
+            # Primary window empty — fall back to 24h window
             extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
             stale = [h for h in headlines if h["timestamp"] >= extended_cutoff]
             for h in stale:
@@ -157,77 +177,23 @@ class NewsFeed:
         # Limit to 50
         headlines = headlines[:50]
 
-        # Cache results
+        # Cache filtered results per instance
         self._cache = {"headlines": headlines}
         self._cache_ts = datetime.now(timezone.utc)
 
-        logger.info(
-            f"NewsFeed: aggregated {len(headlines)} headlines from "
-            f"{len(set(h['source'] for h in headlines))} sources"
-        )
-
         return headlines
 
-    def _fetch_cryptopanic(self) -> list[dict]:
-        """Fetch headlines from CryptoPanic API."""
-        try:
-            import requests
-        except ImportError:
-            raise ImportError("requests library required for CryptoPanic API")
-
-        # Get API key from settings
-        try:
-            from config.settings import settings
-            api_key = settings.get("agents.cryptopanic_api_key", "")
-            # If the settings value is the vault placeholder, resolve it from the vault.
-            if not api_key or api_key == "__vault__":
-                try:
-                    from core.security.key_vault import key_vault
-                    api_key = key_vault.load("agents.cryptopanic_api_key") or ""
-                except Exception:
-                    api_key = ""
-        except Exception:
-            api_key = ""
-
-        if not api_key or api_key == "__vault__":
-            raise ValueError("No CryptoPanic API key configured")
-
-        # Build the currencies parameter from the symbols list.
-        # CryptoPanic expects ticker symbols like BTC,ETH,SOL.
-        # Extract just the ticker from the keywords list (first item is usually the ticker).
-        currencies = []
-        for sym in self.symbols:
-            # Only add short tickers (not full names like "Bitcoin")
-            if len(sym) <= 5 and sym.isalpha() and sym.isupper():
-                currencies.append(sym)
-        currencies_param = ",".join(currencies) if currencies else "BTC"
-
-        # CryptoPanic API v2 — base endpoint changed from /api/v1/ to /api/developer/v2/
-        # The `kind` parameter filters by content type (news/media/all).
-        # The `filter` parameter now filters by sentiment (rising/hot/bullish/bearish/…).
-        # `public=true` requests non-personalised posts (no user-specific sources).
-        url = (
-            f"https://cryptopanic.com/api/developer/v2/posts/"
-            f"?auth_token={api_key}"
-            f"&kind=news"
-            f"&public=true"
-            f"&currencies={currencies_param}"
-        )
-        response = requests.get(url, timeout=10, headers=_HEADERS)
-        response.raise_for_status()
-
-        data = response.json()
+    def _fetch_all_sources(self) -> list[dict]:
+        """Fetch raw headlines from all RSS feed sources."""
         headlines = []
 
-        for item in data.get("results", []):
-            headline = {
-                "title": item.get("title", ""),
-                "source": "CryptoPanic",
-                "url": item.get("url", ""),
-                "timestamp": self._parse_timestamp(item.get("published_at")),
-            }
-            if headline["title"] and headline["timestamp"]:
-                headlines.append(headline)
+        for feed_name, feed_url, _is_general in _RSS_FEEDS:
+            try:
+                rss_headlines = self._fetch_rss(feed_name, feed_url)
+                headlines.extend(rss_headlines)
+                logger.debug(f"NewsFeed: fetched {len(rss_headlines)} from {feed_name}")
+            except Exception as e:
+                logger.debug(f"NewsFeed: {feed_name} unavailable: {e}")
 
         return headlines
 

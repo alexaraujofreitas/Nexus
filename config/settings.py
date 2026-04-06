@@ -224,6 +224,14 @@ DEFAULT_CONFIG = {
         "orderbook_enabled": True,
         "options_enabled": True,
         "options_max_days_expiry": 35,
+        "social_sentiment_enabled": True,
+        "sector_rotation_enabled": True,
+        "miner_flow_enabled": True,
+        "narrative_enabled": True,
+        "liquidity_vacuum_enabled": True,
+        "twitter_enabled": True,
+        "reddit_enabled": True,
+        "scalp_enabled": True,
         "onchain": {"enabled": True, "symbols": ["bitcoin", "ethereum"]},
         "volatility_surface": {"enabled": True},
         "liquidation_flow": {"enabled": True},
@@ -289,6 +297,9 @@ DEFAULT_CONFIG = {
         # Default is True — NexusTrader should auto-execute on every restart.
         "auto_execute": True,
         "auto_execute_cooldown_seconds": 30,
+        # Minimum 24h quote volume (USDT) to pass the UniverseFilter.
+        # Bybit Demo has lower volumes than live — 500K covers all 20 watchlist symbols.
+        "min_volume_usdt": 500_000,
     },
     # Phase 2 settings
     "regime": {
@@ -367,27 +378,36 @@ DEFAULT_CONFIG = {
         "profiles": {
             # BTC dominance > high_threshold: favour BTC/ETH over alts
             "btc_dominant": {
-                "BTC/USDT": 1.4,
-                "ETH/USDT": 1.1,
-                "SOL/USDT": 0.9,
-                "BNB/USDT": 0.7,
-                "XRP/USDT": 0.7,
+                "BTC/USDT": 1.4, "ETH/USDT": 1.1,
+                "SOL/USDT": 0.9, "BNB/USDT": 0.7, "XRP/USDT": 0.7,
+                "TRX/USDT": 0.6, "DOGE/USDT": 0.6, "ADA/USDT": 0.6,
+                "BCH/USDT": 0.7, "HYPE/USDT": 0.5,
+                "LINK/USDT": 0.7, "XLM/USDT": 0.6, "AVAX/USDT": 0.7,
+                "HBAR/USDT": 0.5, "SUI/USDT": 0.6, "NEAR/USDT": 0.6,
+                "ICP/USDT": 0.5, "ONDO/USDT": 0.5, "ALGO/USDT": 0.5,
+                "RENDER/USDT": 0.6,
             },
             # btc_dominance_low ≤ dominance ≤ btc_dominance_high: balanced
             "neutral": {
-                "BTC/USDT": 1.0,
-                "ETH/USDT": 1.2,
-                "SOL/USDT": 1.3,
-                "BNB/USDT": 0.8,
-                "XRP/USDT": 0.8,
+                "BTC/USDT": 1.0, "ETH/USDT": 1.2,
+                "SOL/USDT": 1.3, "BNB/USDT": 0.8, "XRP/USDT": 0.8,
+                "TRX/USDT": 0.7, "DOGE/USDT": 0.8, "ADA/USDT": 0.8,
+                "BCH/USDT": 0.8, "HYPE/USDT": 0.7,
+                "LINK/USDT": 0.9, "XLM/USDT": 0.7, "AVAX/USDT": 0.8,
+                "HBAR/USDT": 0.7, "SUI/USDT": 0.8, "NEAR/USDT": 0.8,
+                "ICP/USDT": 0.7, "ONDO/USDT": 0.7, "ALGO/USDT": 0.7,
+                "RENDER/USDT": 0.8,
             },
             # BTC dominance < low_threshold: alt season, favour alts
             "alt_season": {
-                "BTC/USDT": 0.7,
-                "ETH/USDT": 1.2,
-                "SOL/USDT": 1.5,
-                "BNB/USDT": 1.0,
-                "XRP/USDT": 1.0,
+                "BTC/USDT": 0.7, "ETH/USDT": 1.2,
+                "SOL/USDT": 1.5, "BNB/USDT": 1.0, "XRP/USDT": 1.0,
+                "TRX/USDT": 0.9, "DOGE/USDT": 1.1, "ADA/USDT": 1.0,
+                "BCH/USDT": 0.9, "HYPE/USDT": 1.2,
+                "LINK/USDT": 1.1, "XLM/USDT": 1.0, "AVAX/USDT": 1.1,
+                "HBAR/USDT": 1.0, "SUI/USDT": 1.2, "NEAR/USDT": 1.1,
+                "ICP/USDT": 1.0, "ONDO/USDT": 1.0, "ALGO/USDT": 0.9,
+                "RENDER/USDT": 1.1,
             },
         },
     },
@@ -784,15 +804,12 @@ class AppSettings:
         return self._config.get(section, {})
 
     def _deep_merge(self, base: dict, override: dict) -> dict:
-        import copy
-        result = {}
-        for k, v in base.items():
-            result[k] = copy.deepcopy(v) if isinstance(v, (dict, list)) else v
+        result = base.copy()
         for k, v in override.items():
             if k in result and isinstance(result[k], dict) and isinstance(v, dict):
                 result[k] = self._deep_merge(result[k], v)
             else:
-                result[k] = copy.deepcopy(v) if isinstance(v, (dict, list)) else v
+                result[k] = v
         return result
 
 

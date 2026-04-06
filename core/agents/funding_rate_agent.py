@@ -114,7 +114,7 @@ class FundingRateAgent(BaseAgent):
         Returns a summary dict (aggregate snapshot for the event).
         """
         if not raw:
-            return {"signal": 0.0, "confidence": 0.0, "symbols": {}, "count": 0}
+            return {"signal": 0.0, "confidence": 0.0, "has_data": False, "symbols": {}, "count": 0}
 
         with self._lock:
             now_ts = time.time()
@@ -188,6 +188,7 @@ class FundingRateAgent(BaseAgent):
         return {
             "signal":     round(avg_signal, 4),
             "confidence": round(avg_conf,   4),
+            "has_data": True,
             "symbols":    cache_snapshot,
             "count":      len(cache_snapshot),
             "mil_active": mil_active,
@@ -229,10 +230,17 @@ class FundingRateAgent(BaseAgent):
             direction   = "bullish"
             explanation = f"Negative funding ({rate_pct:.3f}%/8h) — shorts dominant"
         else:
-            base_signal = 0.0
-            confidence  = 0.30
+            # Session 51 fix: produce proportional micro-signal in neutral zone
+            # so the orchestrator always gets non-zero input from funding data.
+            # Positive funding (even small) is slightly bearish (longs paying),
+            # negative funding is slightly bullish (shorts paying).
+            base_signal = round(-rate_pct * 5.0, 4)  # e.g. 0.01% → -0.05
+            base_signal = max(-0.20, min(0.20, base_signal))
+            if base_signal == 0.0:
+                base_signal = 0.02  # ensure non-zero
+            confidence  = 0.35
             direction   = "neutral"
-            explanation = f"Neutral funding ({rate_pct:.3f}%/8h)"
+            explanation = f"Neutral funding ({rate_pct:.3f}%/8h) — mild directional lean"
 
         # Sustained signal amplification: if current rate > 1.5× 24h average,
         # the positioning is unusually extreme → amplify signal by 20%

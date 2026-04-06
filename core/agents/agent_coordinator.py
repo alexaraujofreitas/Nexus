@@ -232,6 +232,7 @@ class AgentCoordinator(QObject):
                     "stale":        agent.is_stale,
                     "signal":       round(sig.get("signal", 0.0), 4),
                     "confidence":   round(sig.get("confidence", 0.0), 4),
+                    "has_data":     bool(sig.get("has_data", False)),
                     "updated_at":   sig.get("updated_at", "never"),
                     "errors":       agent._consecutive_errors,
                 }
@@ -271,7 +272,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: FundingRateAgent started")
 
     def _start_order_book_agent(self) -> None:
-        if not self._is_agent_enabled("agents.orderbook_enabled", default=False):
+        if not self._is_agent_enabled("agents.orderbook_enabled", default=True):
             logger.info("AgentCoordinator: OrderBookAgent DISABLED (agents.orderbook_enabled=false)")
             return
         import core.agents.order_book_agent as _mod
@@ -283,7 +284,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: OrderBookAgent started")
 
     def _start_options_flow_agent(self) -> None:
-        if not self._is_agent_enabled("agents.options_enabled", default=False):
+        if not self._is_agent_enabled("agents.options_enabled", default=True):
             logger.info("AgentCoordinator: OptionsFlowAgent DISABLED (agents.options_enabled=false)")
             return
         import core.agents.options_flow_agent as _mod
@@ -304,7 +305,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: MacroAgent started")
 
     def _start_social_sentiment_agent(self) -> None:
-        if not self._is_agent_enabled("agents.social_sentiment_enabled", default=False):
+        if not self._is_agent_enabled("agents.social_sentiment_enabled", default=True):
             logger.info("AgentCoordinator: SocialSentimentAgent DISABLED (agents.social_sentiment_enabled=false)")
             return
         import core.agents.social_sentiment_agent as _mod
@@ -334,7 +335,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: GeopoliticalAgent started")
 
     def _start_sector_rotation_agent(self) -> None:
-        if not self._is_agent_enabled("agents.sector_rotation_enabled", default=False):
+        if not self._is_agent_enabled("agents.sector_rotation_enabled", default=True):
             logger.info("AgentCoordinator: SectorRotationAgent DISABLED (agents.sector_rotation_enabled=false)")
             return
         import core.agents.sector_rotation_agent as _mod
@@ -354,7 +355,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: OnChainAgent started")
 
     def _start_volatility_surface_agent(self) -> None:
-        if not self._is_agent_enabled("agents.volatility_surface.enabled", default=False):
+        if not self._is_agent_enabled("agents.volatility_surface.enabled", default=True):
             logger.info("AgentCoordinator: VolatilitySurfaceAgent DISABLED (agents.volatility_surface.enabled=false)")
             return
         import core.agents.volatility_surface_agent as _mod
@@ -399,7 +400,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: StablecoinLiquidityAgent started")
 
     def _start_miner_flow_agent(self) -> None:
-        if not self._is_agent_enabled("agents.miner_flow_enabled", default=False):
+        if not self._is_agent_enabled("agents.miner_flow_enabled", default=True):
             logger.info("AgentCoordinator: MinerFlowAgent DISABLED (agents.miner_flow_enabled=false)")
             return
         import core.agents.miner_flow_agent as _mod
@@ -420,7 +421,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: SqueezeDetectionAgent started")
 
     def _start_narrative_shift_agent(self) -> None:
-        if not self._is_agent_enabled("agents.narrative_enabled", default=False):
+        if not self._is_agent_enabled("agents.narrative_enabled", default=True):
             logger.info("AgentCoordinator: NarrativeShiftAgent DISABLED (agents.narrative_enabled=false)")
             return
         import core.agents.narrative_agent as _mod
@@ -432,7 +433,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: NarrativeShiftAgent started")
 
     def _start_liquidity_vacuum_agent(self) -> None:
-        if not self._is_agent_enabled("agents.liquidity_vacuum_enabled", default=False):
+        if not self._is_agent_enabled("agents.liquidity_vacuum_enabled", default=True):
             logger.info("AgentCoordinator: LiquidityVacuumAgent DISABLED (agents.liquidity_vacuum_enabled=false)")
             return
         import core.agents.liquidity_vacuum_agent as _mod
@@ -444,7 +445,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: LiquidityVacuumAgent started")
 
     def _start_twitter_agent(self) -> None:
-        if not self._is_agent_enabled("agents.twitter_enabled", default=False):
+        if not self._is_agent_enabled("agents.twitter_enabled", default=True):
             logger.info("AgentCoordinator: TwitterSentimentAgent DISABLED (agents.twitter_enabled=false)")
             return
         import core.agents.twitter_agent as _mod
@@ -456,7 +457,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: TwitterSentimentAgent started")
 
     def _start_reddit_agent(self) -> None:
-        if not self._is_agent_enabled("agents.reddit_enabled", default=False):
+        if not self._is_agent_enabled("agents.reddit_enabled", default=True):
             logger.info("AgentCoordinator: RedditSentimentAgent DISABLED (agents.reddit_enabled=false)")
             return
         import core.agents.reddit_agent as _mod
@@ -486,7 +487,7 @@ class AgentCoordinator(QObject):
         logger.info("AgentCoordinator: PositionMonitorAgent started")
 
     def _start_scalp_agent(self) -> None:
-        if not self._is_agent_enabled("agents.scalp_enabled", default=False):
+        if not self._is_agent_enabled("agents.scalp_enabled", default=True):
             logger.info("AgentCoordinator: ScalpingAgent DISABLED (agents.scalp_enabled=false)")
             return
         import core.agents.scalp_agent as _mod

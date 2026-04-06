@@ -3,7 +3,7 @@
 Fetch real historical OHLCV data from Bybit (public, no API key needed)
 for Phase 5b backtesting validation.
 
-Fetches 1H candles for 5 symbols covering ~6 months (Sep 2024 – Feb 2025).
+Fetches 1H candles for 20 symbols covering ~6 months (Sep 2024 – Feb 2025).
 This period covers:
   - Sep-Oct 2024: sideways / accumulation (BTC ~58-65k)
   - Nov 2024: strong bull trend (BTC 65k → 98k)
@@ -25,7 +25,7 @@ SYMBOLS = [
     "BTC/USDT", "ETH/USDT", "BNB/USDT", "XRP/USDT", "SOL/USDT",
     "TRX/USDT", "DOGE/USDT", "ADA/USDT", "BCH/USDT", "HYPE/USDT",
     "LINK/USDT", "XLM/USDT", "AVAX/USDT", "HBAR/USDT", "SUI/USDT",
-    "TAO/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
+    "NEAR/USDT", "ICP/USDT", "ONDO/USDT", "ALGO/USDT", "RENDER/USDT",
 ]
 TIMEFRAME = "1h"
 # Sep 1, 2024 to Feb 28, 2025 (~6 months, ~4320 1H bars per symbol)

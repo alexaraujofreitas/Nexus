@@ -6,14 +6,16 @@ import { testNotificationChannel, testAllNotificationChannels, type Notification
 import { useWSStore } from '../stores/wsStore';
 import { cn } from '../lib/utils';
 
-type Tab = 'risk' | 'strategy' | 'execution' | 'ai_ml' | 'data_sentiment' | 'notifications' | 'backtesting' | 'agents' | 'portfolio' | 'api_keys';
+import { ExchangesTab } from './ExchangeManagement';
+
+type Tab = 'risk' | 'strategy' | 'execution' | 'ai_ml' | 'data_sentiment' | 'notifications' | 'backtesting' | 'agents' | 'portfolio' | 'api_keys' | 'exchanges';
 
 function get(obj: Record<string, any>, path: string, def: any = ''): any {
   return path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : def), obj);
 }
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<Tab>('risk');
+  const [activeTab, setActiveTab] = useState<Tab>('exchanges');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [draft, setDraft] = useState<Record<string, any>>({});
@@ -62,16 +64,17 @@ export default function Settings() {
   };
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'risk', label: 'Risk' },
-    { key: 'strategy', label: 'Strategy' },
+    { key: 'exchanges', label: 'Exchanges' },
     { key: 'execution', label: 'Execution' },
-    { key: 'ai_ml', label: 'AI & ML' },
-    { key: 'data_sentiment', label: 'Data & Feeds' },
-    { key: 'notifications', label: 'Notifications' },
-    { key: 'backtesting', label: 'Backtesting' },
-    { key: 'agents', label: 'Agents' },
-    { key: 'portfolio', label: 'Portfolio' },
     { key: 'api_keys', label: 'API Keys' },
+    { key: 'agents', label: 'Agents' },
+    { key: 'data_sentiment', label: 'Data & Feeds' },
+    { key: 'ai_ml', label: 'AI & ML' },
+    { key: 'strategy', label: 'Strategy' },
+    { key: 'portfolio', label: 'Portfolio' },
+    { key: 'notifications', label: 'Notifications' },
+    { key: 'risk', label: 'Risk' },
+    { key: 'backtesting', label: 'Backtesting' },
   ];
 
   return (
@@ -110,6 +113,7 @@ export default function Settings() {
           {activeTab === 'agents' && <AgentsTab draft={draft} setVal={setVal} get={get} />}
           {activeTab === 'portfolio' && <PortfolioAllocationTab draft={draft} setVal={setVal} get={get} />}
           {activeTab === 'api_keys' && <APIKeysTab draft={draft} setVal={setVal} get={get} />}
+          {activeTab === 'exchanges' && <ExchangesTab />}
 
           <div className="pt-4 border-t border-gray-100 flex justify-end">
             <button
@@ -242,7 +246,7 @@ function ExecutionTab({ draft, setVal, get: g }: { draft: any; setVal: any; get:
       <div>
         <label className="block text-sm text-gray-600 mb-1">Default Timeframe</label>
         <div className="flex gap-2">
-          {['15m', '30m', '1h', '4h'].map((t) => (
+          {['5m', '15m', '30m', '1h', '4h'].map((t) => (
             <button key={t} onClick={() => setVal('data.default_timeframe', t)} className={cn(
               'px-4 py-2 rounded-lg text-sm font-medium min-h-[44px] transition-colors',
               tf === t ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200',

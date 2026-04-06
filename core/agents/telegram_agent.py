@@ -130,6 +130,7 @@ class TelegramSentimentAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "sentiment_label": "neutral",
                 "active_channels": 0,
                 "message_count_estimate": 0,
@@ -162,6 +163,7 @@ class TelegramSentimentAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "sentiment_label": "neutral",
                 "active_channels": len(active_channels),
                 "message_count_estimate": 0,
@@ -245,6 +247,7 @@ class TelegramSentimentAgent(BaseAgent):
         return {
             "signal": round(agg_sig, 4),
             "confidence": round(agg_conf, 4),
+            "has_data": True,
             "sentiment_label": sentiment_label,
             "active_channels": len(active_channels),
             "message_count_estimate": len(messages),

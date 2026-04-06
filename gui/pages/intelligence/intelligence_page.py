@@ -53,10 +53,10 @@ _AGENT_WEIGHTS_ALL = {
 # Config gate map: agent name → (settings_key, default_if_missing)
 # Agents not in this map are always shown (no disable gate in coordinator).
 _AGENT_GATE: dict[str, tuple[str, bool]] = {
-    "order_book":       ("agents.orderbook_enabled",        False),
-    "options_flow":     ("agents.options_enabled",          False),
-    "social_sentiment": ("agents.social_sentiment_enabled", False),
-    "sector_rotation":  ("agents.sector_rotation_enabled",  False),
+    "order_book":       ("agents.orderbook_enabled",        True),
+    "options_flow":     ("agents.options_enabled",          True),
+    "social_sentiment": ("agents.social_sentiment_enabled", True),
+    "sector_rotation":  ("agents.sector_rotation_enabled",  True),
     "funding_rate":     ("agents.funding_enabled",          True),
 }
 

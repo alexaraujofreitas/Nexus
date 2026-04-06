@@ -88,6 +88,7 @@ class RedditSentimentAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "sentiment_label": "neutral",
                 "post_count": 0,
                 "avg_upvotes": 0.0,
@@ -109,6 +110,7 @@ class RedditSentimentAgent(BaseAgent):
             return {
                 "signal": 0.0,
                 "confidence": 0.0,
+                "has_data": False,
                 "sentiment_label": "neutral",
                 "post_count": 0,
                 "avg_upvotes": 0.0,
@@ -216,6 +218,7 @@ class RedditSentimentAgent(BaseAgent):
         return {
             "signal": round(agg_sig, 4),
             "confidence": round(agg_conf, 4),
+            "has_data": True,
             "sentiment_label": sentiment_label,
             "post_count": len(all_posts),
             "avg_upvotes": round(avg_upvotes, 1),
@@ -267,21 +270,59 @@ class RedditSentimentAgent(BaseAgent):
     # ── Helpers ────────────────────────────────────────────
 
     def _score_text(self, text: str) -> tuple[float, float]:
-        """Score text sentiment using ModelRegistry scorer."""
+        """Score text sentiment using ModelRegistry scorer.
+
+        CRITICAL FIX (Session 51): Identical to TwitterAgent fix — the
+        bare `except: pass` silently returned (0.0, 0.0) for every post.
+        Now uses guaranteed VADER fallback with crypto-domain boosters.
+        """
+        if not text or not text.strip():
+            return 0.0, 0.0
+
+        # Ensure scorer is initialized
         if not self._scorer:
             try:
                 self._scorer = get_model_registry().get_scorer("reddit")
-            except Exception:
-                from core.ai.model_registry import _VaderScorer
-                self._scorer = _VaderScorer()
+            except Exception as exc:
+                logger.debug("RedditAgent: ModelRegistry scorer failed, using VADER — %s", exc)
+                try:
+                    from core.ai.model_registry import _VaderScorer
+                    self._scorer = _VaderScorer()
+                except Exception:
+                    self._scorer = None
 
+        # Primary scoring path
+        if self._scorer:
+            try:
+                results = self._scorer.score([text])
+                if results:
+                    sig, conf = results[0]
+                    sig, conf = float(sig), float(conf)
+                    if sig != 0.0 or conf != 0.0:
+                        return sig, conf
+            except Exception as exc:
+                logger.debug("RedditAgent: scorer.score() failed — %s", exc)
+
+        # Inline VADER fallback
         try:
-            results = self._scorer.score([text])
-            if results:
-                sig, conf = results[0]
-                return float(sig), float(conf)
-        except Exception:
-            pass
+            from nltk.sentiment.vader import SentimentIntensityAnalyzer
+            import nltk
+            try:
+                nltk.data.find("sentiment/vader_lexicon.zip")
+            except LookupError:
+                nltk.download("vader_lexicon", quiet=True)
+            sia = SentimentIntensityAnalyzer()
+            sia.lexicon.update({
+                "moon": 2.5, "mooning": 3.0, "bullish": 2.0, "bearish": -2.0,
+                "dump": -2.5, "rekt": -3.0, "pump": 1.5, "fud": -1.5,
+                "fomo": 1.5, "hodl": 1.0, "ath": 2.0, "crash": -3.0,
+                "breakout": 2.0, "liquidation": -2.5, "hack": -3.5,
+            })
+            scores = sia.polarity_scores(text)
+            compound = scores.get("compound", 0.0)
+            return compound, min(abs(compound) * 1.2, 1.0)
+        except Exception as exc:
+            logger.warning("RedditAgent: inline VADER also failed — %s", exc)
 
         return 0.0, 0.0
 
