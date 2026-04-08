@@ -578,7 +578,10 @@ class RegimePage(QWidget):
         data = event.data if hasattr(event, "data") else {}
         if not isinstance(data, dict):
             return
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, lambda d=data: self._apply_regime_changed(d))
 
+    def _apply_regime_changed(self, data: dict) -> None:
         regime     = data.get("new_regime", data.get("regime", "uncertain"))
         confidence = float(data.get("confidence", 0.0))
         probs      = data.get("regime_probs", {})
@@ -780,15 +783,20 @@ class RegimePage(QWidget):
             return
         regime = data.get("regime", "")
         if regime and not self._history:
-            # Populate with latest regime from orchestrator on first load
-            self._regime_name_lbl.setText(regime.replace("_", " ").title())
-            color = _REGIME_COLORS.get(regime, _GRAY)
-            self._regime_dot.setStyleSheet(f"color:{color}; font-size:32px;")
-            self._regime_name_lbl.setStyleSheet(
-                f"color:{color}; font-size:14px; font-weight:700;"
-            )
-            desc = _REGIME_DESCRIPTIONS.get(regime, "")
-            self._desc_lbl.setText(desc)
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda r=regime: self._apply_orchestrator_regime(r))
+
+    def _apply_orchestrator_regime(self, regime: str) -> None:
+        """Apply orchestrator regime info on main thread."""
+        # Populate with latest regime from orchestrator on first load
+        self._regime_name_lbl.setText(regime.replace("_", " ").title())
+        color = _REGIME_COLORS.get(regime, _GRAY)
+        self._regime_dot.setStyleSheet(f"color:{color}; font-size:32px;")
+        self._regime_name_lbl.setStyleSheet(
+            f"color:{color}; font-size:14px; font-weight:700;"
+        )
+        desc = _REGIME_DESCRIPTIONS.get(regime, "")
+        self._desc_lbl.setText(desc)
 
     def _update_history_table(self) -> None:
         items = list(reversed(list(self._history)))[:50]

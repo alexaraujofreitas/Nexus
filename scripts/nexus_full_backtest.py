@@ -641,16 +641,16 @@ def compute_full_metrics(trades: list, eq_curve: list, cap0: float) -> dict:
     # Duration
     try:
         start = pd.to_datetime(eq_curve[0]["ts"]).tz_localize(None) if pd.to_datetime(eq_curve[0]["ts"]).tzinfo is None else pd.to_datetime(eq_curve[0]["ts"]).tz_localize(None)
-    except:
+    except Exception:
         start = pd.to_datetime(eq_curve[0]["ts"])
     try:
         end = pd.to_datetime(eq_curve[-1]["ts"]).tz_localize(None) if pd.to_datetime(eq_curve[-1]["ts"]).tzinfo is None else pd.to_datetime(eq_curve[-1]["ts"]).tz_localize(None)
-    except:
+    except Exception:
         end = pd.to_datetime(eq_curve[-1]["ts"])
 
     try:
         yrs = max(0.01, (end - start).days / 365.25)
-    except:
+    except Exception:
         yrs = 4.0
 
     # CAGR
@@ -662,7 +662,7 @@ def compute_full_metrics(trades: list, eq_curve: list, cap0: float) -> dict:
         try:
             k = str(t["exit_ts"])[:7]  # "YYYY-MM"
             monthly[k] = monthly.get(k, 0.0) + t["pnl"]
-        except:
+        except Exception:
             pass
 
     # Yearly returns
@@ -676,7 +676,7 @@ def compute_full_metrics(trades: list, eq_curve: list, cap0: float) -> dict:
             yearly[y]["trades"] += 1
             if t["pnl"] > 0:
                 yearly[y]["wins"] += 1
-        except:
+        except Exception:
             pass
 
     # Regime breakdown

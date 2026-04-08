@@ -87,7 +87,7 @@ class Phase2cShadowTracker:
             with open(self._log_path, "a") as f:
                 f.write(json.dumps(record, default=str) + "\n")
         except Exception as exc:
-            logger.debug("Phase2cShadowTracker: write error: %s", exc)
+            logger.warning("Phase2cShadowTracker: write error: %s", exc)
 
     # ── Signal Recording (called from scanner) ───────────────────────────
 

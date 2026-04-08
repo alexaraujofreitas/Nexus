@@ -39,6 +39,7 @@ from typing import Optional
 
 from core.meta_decision.order_candidate import OrderCandidate
 from core.event_bus import bus, Topics
+from core.execution.exchange_call import exchange_call
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class LiveExecutor:
                     self.adjust_stop(symbol, new_stop)
 
         except Exception as exc:
-            logger.warning("LiveExecutor: position monitor handler error: %s", exc)
+            logger.error("LiveExecutor: position monitor handler error: %s", exc, exc_info=True)
 
     # ── Auto-execute mode control ─────────────────────────────
 
@@ -190,7 +191,8 @@ class LiveExecutor:
             if now - self._balance_cache["ts"] < _BALANCE_CACHE_TTL:
                 return self._balance_cache["usdt"]
         try:
-            bal = self._exchange().fetch_balance()
+            ex = self._exchange()
+            bal = exchange_call(ex.fetch_balance, timeout_key="data_timeout", label="fetch_balance")
             usdt = float(bal.get("USDT", {}).get("free", 0.0))
         except Exception as exc:
             logger.warning("LiveExecutor: balance fetch failed: %s", exc)
@@ -208,7 +210,8 @@ class LiveExecutor:
         """Free USDT balance on the exchange."""
         try:
             return self._fetch_usdt_balance()
-        except Exception:
+        except Exception as exc:
+            logger.error("LiveExecutor: available_capital fetch failed, returning 0.0: %s", exc)
             return 0.0
 
     @property
@@ -364,7 +367,11 @@ class LiveExecutor:
             candidate.score,
         )
         try:
-            order = ex.create_market_order(symbol, side, amount)
+            order = exchange_call(
+                ex.create_market_order, symbol, side, amount,
+                timeout_key="order_timeout",
+                label=f"create_market_order {symbol}",
+            )
         except Exception as exc:
             logger.error(
                 "LiveExecutor: CCXT order failed for %s: %s", symbol, exc
@@ -575,7 +582,11 @@ class LiveExecutor:
             symbol, reduce_pct * 100, close_qty
         )
         try:
-            order = ex.create_market_order(symbol_str, close_side, close_qty)
+            order = exchange_call(
+                ex.create_market_order, symbol_str, close_side, close_qty,
+                timeout_key="order_timeout",
+                label=f"create_market_order partial_close {symbol}",
+            )
             close_price = float(order.get("average") or order.get("price") or pos["current_price"])
         except Exception as exc:
             logger.error(
@@ -635,10 +646,11 @@ class LiveExecutor:
     def _close_position_on_exchange(self, symbol: str, exit_reason: str) -> bool:
         """
         Place a market close order and record the closed trade.
-        Returns True on success.
+        The position is kept in _positions until the close order succeeds.
+        Returns True on success, False if the close order fails (position retained).
         """
         with self._lock:
-            pos = self._positions.pop(symbol, None)
+            pos = self._positions.get(symbol)
         if pos is None:
             return False
 
@@ -652,24 +664,34 @@ class LiveExecutor:
 
         try:
             ex = self._exchange()
-            try:
-                order = ex.create_market_order(symbol, close_side, amount)
-                exit_price = (
-                    float(order.get("average") or order.get("price") or exit_price)
-                )
-                exit_order_id = order.get("id", "")
-            except Exception as exc:
-                logger.error(
-                    "LiveExecutor: close order failed for %s: %s", symbol, exc
-                )
-                bus.publish(
-                    Topics.EXCHANGE_ERROR,
-                    {"error": f"Close order failed for {symbol}: {exc}"},
-                    source="live_executor",
-                )
-
         except RuntimeError as exc:
-            logger.error("LiveExecutor._close: %s", exc)
+            logger.error("LiveExecutor._close: no exchange — position retained for %s: %s", symbol, exc)
+            return False
+
+        try:
+            order = exchange_call(
+                ex.create_market_order, symbol, close_side, amount,
+                timeout_key="order_timeout",
+                label=f"create_market_order close {symbol}",
+            )
+            exit_price = (
+                float(order.get("average") or order.get("price") or exit_price)
+            )
+            exit_order_id = order.get("id", "")
+        except Exception as exc:
+            logger.error(
+                "LiveExecutor: close order failed for %s — position retained: %s", symbol, exc
+            )
+            bus.publish(
+                Topics.EXCHANGE_ERROR,
+                {"error": f"Close order failed for {symbol}: {exc}"},
+                source="live_executor",
+            )
+            return False
+
+        # ── Close order succeeded — now remove from tracking ──
+        with self._lock:
+            self._positions.pop(symbol, None)
 
         # ── P&L calculation ───────────────────────────────────
         entry  = pos["entry_price"]
@@ -729,81 +751,93 @@ class LiveExecutor:
 
     def _save_open_to_db(self, position: dict, order_id: str):
         """Record entry in live_trades table (partial — will be completed on close)."""
-        try:
-            from core.database.engine import get_session
-            from core.database.models import LiveTrade
-            with get_session() as s:
-                s.add(LiveTrade(
-                    symbol          = position["symbol"],
-                    side            = position["side"],
-                    regime          = position.get("regime", ""),
-                    timeframe       = position.get("timeframe", ""),
-                    entry_price     = position["entry_price"],
-                    size_usdt       = position["size_usdt"],
-                    stop_loss       = position.get("stop_loss"),
-                    take_profit     = position.get("take_profit"),
-                    score           = position.get("score", 0.0),
-                    models_fired    = position.get("models_fired") or [],
-                    rationale       = position.get("rationale", ""),
-                    entry_order_id  = order_id,
-                    opened_at       = position.get("opened_at", ""),
-                    status          = "open",
-                ))
-        except Exception as exc:
-            logger.warning("LiveExecutor: DB entry write failed: %s", exc)
+        from core.database.engine import get_session
+        from core.database.models import LiveTrade
+        for attempt in range(2):
+            try:
+                with get_session() as s:
+                    s.add(LiveTrade(
+                        symbol          = position["symbol"],
+                        side            = position["side"],
+                        regime          = position.get("regime", ""),
+                        timeframe       = position.get("timeframe", ""),
+                        entry_price     = position["entry_price"],
+                        size_usdt       = position["size_usdt"],
+                        stop_loss       = position.get("stop_loss"),
+                        take_profit     = position.get("take_profit"),
+                        score           = position.get("score", 0.0),
+                        models_fired    = position.get("models_fired") or [],
+                        rationale       = position.get("rationale", ""),
+                        entry_order_id  = order_id,
+                        opened_at       = position.get("opened_at", ""),
+                        status          = "open",
+                    ))
+                return  # success
+            except Exception as exc:
+                if attempt == 0:
+                    logger.warning("LiveExecutor: DB entry write failed (attempt 1), retrying: %s", exc)
+                    time.sleep(0.5)
+                else:
+                    logger.error("LiveExecutor: DB entry write failed after retry: %s", exc)
 
     def _save_closed_to_db(self, trade: dict):
         """Update or insert completed trade in live_trades table."""
-        try:
-            from core.database.engine import get_session
-            from core.database.models import LiveTrade
-            with get_session() as s:
-                # Try to find existing open record to update
-                existing = (
-                    s.query(LiveTrade)
-                    .filter_by(
-                        symbol=trade["symbol"],
-                        entry_order_id=trade.get("entry_order_id", ""),
-                        status="open",
+        from core.database.engine import get_session
+        from core.database.models import LiveTrade
+        for attempt in range(2):
+            try:
+                with get_session() as s:
+                    # Try to find existing open record to update
+                    existing = (
+                        s.query(LiveTrade)
+                        .filter_by(
+                            symbol=trade["symbol"],
+                            entry_order_id=trade.get("entry_order_id", ""),
+                            status="open",
+                        )
+                        .first()
                     )
-                    .first()
-                )
-                if existing:
-                    existing.exit_price     = trade["exit_price"]
-                    existing.pnl_usdt       = trade["pnl_usdt"]
-                    existing.pnl_pct        = trade["pnl_pct"]
-                    existing.exit_reason    = trade["exit_reason"]
-                    existing.exit_order_id  = trade.get("exit_order_id", "")
-                    existing.duration_s     = trade.get("duration_s", 0)
-                    existing.closed_at      = trade["closed_at"]
-                    existing.status         = "closed"
+                    if existing:
+                        existing.exit_price     = trade["exit_price"]
+                        existing.pnl_usdt       = trade["pnl_usdt"]
+                        existing.pnl_pct        = trade["pnl_pct"]
+                        existing.exit_reason    = trade["exit_reason"]
+                        existing.exit_order_id  = trade.get("exit_order_id", "")
+                        existing.duration_s     = trade.get("duration_s", 0)
+                        existing.closed_at      = trade["closed_at"]
+                        existing.status         = "closed"
+                    else:
+                        # Insert full closed record (entry record may have been lost)
+                        s.add(LiveTrade(
+                            symbol          = trade["symbol"],
+                            side            = trade["side"],
+                            regime          = trade.get("regime", ""),
+                            timeframe       = trade.get("timeframe", ""),
+                            entry_price     = trade["entry_price"],
+                            exit_price      = trade.get("exit_price"),
+                            size_usdt       = trade["size_usdt"],
+                            pnl_usdt        = trade.get("pnl_usdt"),
+                            pnl_pct         = trade.get("pnl_pct"),
+                            stop_loss       = trade.get("stop_loss"),
+                            take_profit     = trade.get("take_profit"),
+                            score           = trade.get("score", 0.0),
+                            exit_reason     = trade.get("exit_reason", ""),
+                            models_fired    = trade.get("models_fired") or [],
+                            rationale       = trade.get("rationale", ""),
+                            entry_order_id  = trade.get("entry_order_id", ""),
+                            exit_order_id   = trade.get("exit_order_id", ""),
+                            duration_s      = trade.get("duration_s", 0),
+                            opened_at       = trade.get("opened_at", ""),
+                            closed_at       = trade.get("closed_at", ""),
+                            status          = "closed",
+                        ))
+                return  # success
+            except Exception as exc:
+                if attempt == 0:
+                    logger.warning("LiveExecutor: DB close write failed (attempt 1), retrying: %s", exc)
+                    time.sleep(0.5)
                 else:
-                    # Insert full closed record (entry record may have been lost)
-                    s.add(LiveTrade(
-                        symbol          = trade["symbol"],
-                        side            = trade["side"],
-                        regime          = trade.get("regime", ""),
-                        timeframe       = trade.get("timeframe", ""),
-                        entry_price     = trade["entry_price"],
-                        exit_price      = trade.get("exit_price"),
-                        size_usdt       = trade["size_usdt"],
-                        pnl_usdt        = trade.get("pnl_usdt"),
-                        pnl_pct         = trade.get("pnl_pct"),
-                        stop_loss       = trade.get("stop_loss"),
-                        take_profit     = trade.get("take_profit"),
-                        score           = trade.get("score", 0.0),
-                        exit_reason     = trade.get("exit_reason", ""),
-                        models_fired    = trade.get("models_fired") or [],
-                        rationale       = trade.get("rationale", ""),
-                        entry_order_id  = trade.get("entry_order_id", ""),
-                        exit_order_id   = trade.get("exit_order_id", ""),
-                        duration_s      = trade.get("duration_s", 0),
-                        opened_at       = trade.get("opened_at", ""),
-                        closed_at       = trade.get("closed_at", ""),
-                        status          = "closed",
-                    ))
-        except Exception as exc:
-            logger.warning("LiveExecutor: DB close write failed: %s", exc)
+                    logger.error("LiveExecutor: DB close write failed after retry: %s", exc)
 
 
 # Global singleton

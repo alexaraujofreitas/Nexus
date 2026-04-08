@@ -17,6 +17,8 @@ import logging
 import time
 from typing import Optional
 
+from core.execution.exchange_call import exchange_call
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +75,11 @@ class SmartOrderExecutor:
 
         # ── Step 1: Compute bid/ask and limit price ────────────────
         try:
-            ticker = exchange.fetch_ticker(symbol)
+            ticker = exchange_call(
+                exchange.fetch_ticker, symbol,
+                timeout_key="data_timeout",
+                label=f"fetch_ticker {symbol}",
+            )
             bid = float(ticker.get("bid", 0.0))
             ask = float(ticker.get("ask", 0.0))
 
@@ -104,7 +110,11 @@ class SmartOrderExecutor:
         # ── Step 2: Place limit order ──────────────────────────────
         order_id = None
         try:
-            order = exchange.create_limit_order(symbol, side.lower(), amount, limit_price)
+            order = exchange_call(
+                exchange.create_limit_order, symbol, side.lower(), amount, limit_price,
+                timeout_key="order_timeout",
+                label=f"create_limit_order {symbol}",
+            )
             order_id = order.get("id")
             logger.debug("SmartOrderExecutor: limit order placed | order_id=%s", order_id)
         except Exception as exc:
@@ -118,7 +128,11 @@ class SmartOrderExecutor:
 
         while time.time() - start_time < self.fill_timeout_seconds:
             try:
-                order_status = exchange.fetch_order(order_id, symbol)
+                order_status = exchange_call(
+                    exchange.fetch_order, order_id, symbol,
+                    timeout_key="data_timeout",
+                    label=f"fetch_order {order_id} {symbol}",
+                )
                 if order_status.get("status") == "closed":
                     # Order filled!
                     fill_price = float(order_status.get("average", limit_price))
@@ -151,19 +165,74 @@ class SmartOrderExecutor:
             )
 
             # Cancel the limit order first
+            cancel_ok = False
             try:
-                exchange.cancel_order(order_id, symbol)
+                exchange_call(
+                    exchange.cancel_order, order_id, symbol,
+                    timeout_key="order_timeout",
+                    label=f"cancel_order {order_id} {symbol}",
+                )
+                cancel_ok = True
                 logger.debug("SmartOrderExecutor: cancelled limit order %s", order_id)
             except Exception as exc:
                 logger.warning("SmartOrderExecutor: cancel failed (may be filled): %s", exc)
 
-            # Place market order
+            # ── C-3 fix: if cancel failed, check whether the limit order
+            # was already filled.  Only place a market order when we can
+            # confirm the limit was NOT filled — otherwise we create a
+            # duplicate position.
+            if not cancel_ok:
+                try:
+                    final_status = exchange_call(
+                        exchange.fetch_order, order_id, symbol,
+                        timeout_key="data_timeout",
+                        label=f"fetch_order (post-cancel) {order_id} {symbol}",
+                    )
+                    if final_status.get("status") == "closed":
+                        fill_price = float(final_status.get("average", limit_price))
+                        logger.info(
+                            "SmartOrderExecutor: limit order %s was already filled @ %.6g "
+                            "(cancel race); returning fill instead of placing duplicate market order",
+                            order_id, fill_price,
+                        )
+                        return {
+                            "filled": True,
+                            "order_id": order_id,
+                            "fill_price": fill_price,
+                            "fee_type": "maker",
+                        }
+                    # Not filled — safe to proceed with market order
+                    logger.info(
+                        "SmartOrderExecutor: limit order %s status=%s after cancel failure; "
+                        "proceeding with market order",
+                        order_id, final_status.get("status"),
+                    )
+                except Exception as status_exc:
+                    # Cannot determine order state — do NOT place a market
+                    # order to avoid potential duplicate.
+                    logger.error(
+                        "SmartOrderExecutor: cannot verify order %s status after cancel "
+                        "failure (%s); aborting to prevent duplicate position",
+                        order_id, status_exc,
+                    )
+                    return {
+                        "filled": False,
+                        "order_id": order_id,
+                        "reason": "cancel_failed_status_unknown",
+                    }
+
+            # Place market order (only reached when cancel succeeded or
+            # order confirmed NOT filled)
             try:
-                market_order = exchange.create_market_order(symbol, side.lower(), amount)
+                market_order = exchange_call(
+                    exchange.create_market_order, symbol, side.lower(), amount,
+                    timeout_key="order_timeout",
+                    label=f"create_market_order {symbol}",
+                )
                 market_fill_price = float(market_order.get("average", candidate.entry_price))
                 market_order_id = market_order.get("id")
                 logger.info(
-                    "SmartOrderExecutor: ✓ market order filled @ %.6g | order_id=%s",
+                    "SmartOrderExecutor: market order filled @ %.6g | order_id=%s",
                     market_fill_price, market_order_id
                 )
                 return {
@@ -183,7 +252,11 @@ class SmartOrderExecutor:
                 candidate.score, self.aggressive_score_threshold, symbol
             )
             try:
-                exchange.cancel_order(order_id, symbol)
+                exchange_call(
+                    exchange.cancel_order, order_id, symbol,
+                    timeout_key="order_timeout",
+                    label=f"cancel_order {order_id} {symbol}",
+                )
             except Exception as exc:
                 logger.debug("SmartOrderExecutor: cancel error: %s", exc)
 
@@ -209,13 +282,16 @@ class SmartOrderExecutor:
         """
         try:
             # Most exchanges use stop_market_order; fallback to create_order with params
-            order = exchange.create_order(
+            order = exchange_call(
+                exchange.create_order,
                 symbol,
                 "stop_market",
                 side.lower(),
                 amount,
                 None,
                 {"stopPrice": stop_price},
+                timeout_key="order_timeout",
+                label=f"create_stop_order {symbol}",
             )
             order_id = order.get("id")
             logger.info(

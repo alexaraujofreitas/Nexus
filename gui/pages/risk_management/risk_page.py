@@ -895,7 +895,7 @@ class RiskManagementPage(QWidget):
     # ── Apply risk parameters ─────────────────────────────
     @Slot()
     def _apply_risk_params(self) -> None:
-        """Apply spinner values to the live RiskGate and persist to settings.yaml."""
+        """Apply spinner values to the live RiskGate and persist to config.yaml."""
         from config.settings import settings
 
         max_pos     = self._spin_max_pos.value()
@@ -920,19 +920,17 @@ class RiskManagementPage(QWidget):
         except Exception as exc:
             logger.warning("RiskPage: could not update live RiskGate: %s", exc)
 
-        # ── Persist to settings.yaml ───────────────────────────
+        # ── Persist to config.yaml ────────────────────────────
         try:
-            risk_cfg = {
-                "max_concurrent_positions": max_pos,
-                "max_portfolio_drawdown_pct": max_dd,
-                "max_position_capital_pct": max_pp * 100.0,
-                "max_spread_pct": max_spread,
-                "max_capital_usdt": max_capital,
-            }
-            settings.set("risk", risk_cfg)
+            settings.set("risk.max_concurrent_positions", max_pos, auto_save=False)
+            settings.set("risk.max_portfolio_drawdown_pct", max_dd, auto_save=False)
+            settings.set("risk.max_position_capital_pct", max_pp * 100.0, auto_save=False)
+            settings.set("risk.max_spread_pct", max_spread, auto_save=False)
+            settings.set("risk.max_capital_usdt", max_capital, auto_save=False)
             # min_rr goes to expected_value section (actual enforcement point)
-            settings.set("expected_value.min_rr_floor", min_rr)
-            logger.info("RiskPage: Risk parameters saved to settings.yaml")
+            settings.set("expected_value.min_rr_floor", min_rr, auto_save=False)
+            settings.save()
+            logger.info("RiskPage: Risk parameters saved to config.yaml")
         except Exception as exc:
             logger.warning("RiskPage: could not persist risk params: %s", exc)
 

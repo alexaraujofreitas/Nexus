@@ -12,6 +12,33 @@ from typing import Dict, Any, Optional, List, Tuple
 from collections import deque, namedtuple
 from datetime import datetime
 
+
+class _RestrictedUnpickler(pickle.Unpickler):
+    """Only allow safe standard library, numpy, and torch types."""
+
+    _SAFE_MODULES = frozenset({
+        'builtins', 'collections', 'collections.OrderedDict', '_codecs',
+        'numpy', 'numpy.core', 'numpy.core.multiarray',
+        'numpy.core.numeric', 'numpy.core._multiarray_umath',
+        'numpy._core', 'numpy._core.multiarray',
+        'torch', 'torch._utils', 'torch.nn', 'torch.nn.modules',
+        'torch.nn.modules.linear', 'torch.nn.modules.activation',
+        'torch.nn.modules.container', 'torch.nn.modules.loss',
+        'torch.nn.modules.batchnorm', 'torch.nn.modules.dropout',
+        'torch._C',
+    })
+
+    def find_class(self, module: str, name: str) -> type:
+        top = module.split('.')[0]
+        if top in self._SAFE_MODULES or module in self._SAFE_MODULES:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(f"Blocked: {module}.{name}")
+
+
+def _safe_pickle_load(f):
+    """Load a pickle file using a restricted unpickler that only allows safe types."""
+    return _RestrictedUnpickler(f).load()
+
 from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger(__name__)
@@ -418,7 +445,7 @@ class OnlineRLTrainer(QObject):
 
         try:
             with open(buffer_path, 'rb') as f:
-                experiences = pickle.load(f)
+                experiences = _safe_pickle_load(f)
 
             if isinstance(experiences, list):
                 # Restore to deque

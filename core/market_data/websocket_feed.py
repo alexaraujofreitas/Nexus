@@ -189,6 +189,9 @@ class WebSocketCandleFeed(QObject):
         """
         Get or create a CCXT Pro exchange instance.
 
+        Prefers the authenticated WS exchange from ExchangeManager.
+        Falls back to an unauthenticated instance with a warning.
+
         Args:
             ccxtpro: The ccxtpro module
 
@@ -196,8 +199,14 @@ class WebSocketCandleFeed(QObject):
             Exchange instance or None on failure
         """
         try:
-            # Prefer the active exchange from ExchangeManager; fall back to settings key
             from core.market_data.exchange_manager import exchange_manager as _em
+            if _em and hasattr(_em, 'get_ws_exchange'):
+                ws_ex = _em.get_ws_exchange()
+                if ws_ex is not None:
+                    return ws_ex
+
+            # Fallback: create unauthenticated instance
+            logger.warning("WebSocketCandleFeed: falling back to unauthenticated exchange instance")
             active_ex = _em.get_exchange()
             if active_ex:
                 exchange_id = active_ex.id
@@ -217,5 +226,5 @@ class WebSocketCandleFeed(QObject):
             return exchange_class()
 
         except Exception as exc:
-            logger.warning("WebSocketCandleFeed: exchange instance creation failed: %s", exc)
+            logger.error("WebSocketCandleFeed: failed to get exchange: %s", exc)
             return None

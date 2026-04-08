@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
+import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -93,6 +96,10 @@ class PaperPosition:
             breakeven moves, time exits, and auto-partial — exactly matching
             BacktestRunner._run_scenario() which uses static SL/TP only.
         """
+        # H-15: guard against division by zero entry_price
+        if self.entry_price <= 0:
+            return None
+
         self.current_price = current_price
         self.bars_held += 1
 
@@ -185,6 +192,12 @@ class PaperPosition:
             "opened_at":               self.opened_at.isoformat(),
             "_auto_partial_applied":   self._auto_partial_applied,
             "_breakeven_applied":      self._breakeven_applied,
+            "_initial_risk":           self._initial_risk,
+            "highest_price":           self.highest_price,
+            "lowest_price":            self.lowest_price,
+            "bars_held":               self.bars_held,
+            "trailing_stop_pct":       self.trailing_stop_pct,
+            "max_hold_bars":           self.max_hold_bars,
         }
 
 
@@ -204,6 +217,7 @@ class PaperExecutor:
     _SPREAD_HALF  = 0.0002   # 0.02% half-spread (4bps total spread)
 
     def __init__(self, initial_capital_usdt: float = 100_000.0):
+        self._lock            = threading.RLock()
         self._initial_capital = initial_capital_usdt
         self._capital         = initial_capital_usdt
         self._positions:      dict[str, list[PaperPosition]] = {}  # symbol → list of positions
@@ -241,15 +255,32 @@ class PaperExecutor:
     # ── Open-position persistence ───────────────────────────────
 
     def _save_open_positions(self) -> None:
-        """Write current open positions to JSON so they survive restarts."""
+        """Write current open positions to JSON so they survive restarts.
+
+        Uses write-to-temp-then-rename for atomic file writes (M-4).
+        """
         try:
-            _OPEN_POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                "capital":      self._capital,
-                "peak_capital": self._peak_capital,
-                "positions":    [p.to_dict() for pos_list in self._positions.values() for p in pos_list],
-            }
-            _OPEN_POSITIONS_FILE.write_text(json.dumps(data, default=str), encoding="utf-8")
+            with self._lock:
+                _OPEN_POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                data = {
+                    "capital":      self._capital,
+                    "peak_capital": self._peak_capital,
+                    "positions":    [p.to_dict() for pos_list in self._positions.values() for p in pos_list],
+                }
+            # Write to temp file, then atomically replace (M-4)
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=_OPEN_POSITIONS_FILE.parent, suffix=".tmp",
+            )
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, default=str)
+                os.replace(tmp_path, str(_OPEN_POSITIONS_FILE))
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except Exception as exc:
             logger.warning("PaperExecutor: could not save open positions: %s", exc)
 
@@ -260,56 +291,69 @@ class PaperExecutor:
         try:
             data = json.loads(_OPEN_POSITIONS_FILE.read_text(encoding="utf-8"))
             restored = 0
-            for pd in data.get("positions", []):
-                symbol = pd.get("symbol")
-                if not symbol:
-                    continue
-                # Allow multiple positions per symbol (up to _max_positions_per_symbol)
-                existing = self._positions.get(symbol, [])
-                if len(existing) >= self._max_positions_per_symbol:
-                    logger.warning("PaperExecutor: max positions (%d) reached for %s during restore",
-                                   self._max_positions_per_symbol, symbol)
-                    continue
-                opened_at_raw = pd.get("opened_at", "")
-                try:
-                    opened_at_dt = datetime.fromisoformat(opened_at_raw) if opened_at_raw else datetime.utcnow()
-                except (ValueError, TypeError):
-                    opened_at_dt = datetime.utcnow()
-                pos = PaperPosition(
-                    symbol       = symbol,
-                    side         = pd.get("side", "buy"),
-                    entry_price  = float(pd.get("entry_price", 0)),
-                    quantity     = float(pd.get("quantity", 0)),
-                    stop_loss    = float(pd.get("stop_loss", 0)),
-                    take_profit  = float(pd.get("take_profit", 0)),
-                    size_usdt    = float(pd.get("size_usdt", 0)),
-                    score        = float(pd.get("score", 0)),
-                    rationale    = pd.get("rationale", ""),
-                    regime       = pd.get("regime", ""),
-                    models_fired = pd.get("models_fired", []),
-                    timeframe    = pd.get("timeframe", ""),
-                    opened_at    = opened_at_dt,
-                )
-                pos.unrealized_pnl   = float(pd.get("unrealized_pnl", 0))
-                # Restore entry_size_usdt — fall back to size_usdt for positions
-                # saved before this field was added (backward compatible).
-                pos.entry_size_usdt  = float(
-                    pd.get("entry_size_usdt") or pd.get("size_usdt", pos.size_usdt)
-                )
-                # v1.2 — restore auto-partial flag so restarts don't trigger a
-                # duplicate partial close on positions that already had one.
-                pos._auto_partial_applied = bool(pd.get("_auto_partial_applied", False))
-                # v1.2 Section-1 — restore breakeven-applied flag so update() doesn't
-                # re-run the SL move on a position that already had it applied.
-                pos._breakeven_applied    = bool(pd.get("_breakeven_applied", False))
-                self._positions.setdefault(symbol, []).append(pos)
-                restored += 1
-            # Always restore capital from the JSON file — it is the authoritative
-            # record of the account balance at last shutdown (regardless of whether
-            # there are open positions to restore).
-            if "capital" in data:
-                self._capital      = float(data["capital"])
-                self._peak_capital = float(data.get("peak_capital", data["capital"]))
+            with self._lock:
+                for pd in data.get("positions", []):
+                    try:
+                        symbol = pd.get("symbol")
+                        if not symbol:
+                            continue
+                        # Allow multiple positions per symbol (up to _max_positions_per_symbol)
+                        existing = self._positions.get(symbol, [])
+                        if len(existing) >= self._max_positions_per_symbol:
+                            logger.warning("PaperExecutor: max positions (%d) reached for %s during restore",
+                                           self._max_positions_per_symbol, symbol)
+                            continue
+                        opened_at_raw = pd.get("opened_at", "")
+                        try:
+                            opened_at_dt = datetime.fromisoformat(opened_at_raw) if opened_at_raw else datetime.utcnow()
+                        except (ValueError, TypeError):
+                            opened_at_dt = datetime.utcnow()
+                        pos = PaperPosition(
+                            symbol       = symbol,
+                            side         = pd.get("side", "buy"),
+                            entry_price  = float(pd.get("entry_price", 0)),
+                            quantity     = float(pd.get("quantity", 0)),
+                            stop_loss    = float(pd.get("stop_loss", 0)),
+                            take_profit  = float(pd.get("take_profit", 0)),
+                            size_usdt    = float(pd.get("size_usdt", 0)),
+                            score        = float(pd.get("score", 0)),
+                            rationale    = pd.get("rationale", ""),
+                            regime       = pd.get("regime", ""),
+                            models_fired = pd.get("models_fired", []),
+                            timeframe    = pd.get("timeframe", ""),
+                            opened_at    = opened_at_dt,
+                        )
+                        pos.unrealized_pnl   = float(pd.get("unrealized_pnl", 0))
+                        # Restore entry_size_usdt — fall back to size_usdt for positions
+                        # saved before this field was added (backward compatible).
+                        pos.entry_size_usdt  = float(
+                            pd.get("entry_size_usdt") or pd.get("size_usdt", pos.size_usdt)
+                        )
+                        # v1.2 — restore auto-partial flag so restarts don't trigger a
+                        # duplicate partial close on positions that already had one.
+                        pos._auto_partial_applied = bool(pd.get("_auto_partial_applied", False))
+                        # v1.2 Section-1 — restore breakeven-applied flag so update() doesn't
+                        # re-run the SL move on a position that already had it applied.
+                        pos._breakeven_applied    = bool(pd.get("_breakeven_applied", False))
+                        # C-5 / M-21 — restore fields that were previously not deserialized
+                        pos._initial_risk     = float(pd.get("_initial_risk", abs(pos.entry_price - pos.stop_loss)))
+                        pos.highest_price     = float(pd.get("highest_price", pos.entry_price))
+                        pos.lowest_price      = float(pd.get("lowest_price", pos.entry_price))
+                        pos.bars_held         = int(pd.get("bars_held", 0))
+                        pos.trailing_stop_pct = float(pd.get("trailing_stop_pct", 0.0))
+                        pos.max_hold_bars     = int(pd.get("max_hold_bars", 0))
+                        self._positions.setdefault(symbol, []).append(pos)
+                        restored += 1
+                    except Exception as exc:
+                        logger.warning("PaperExecutor: failed to restore position %s: %s",
+                                       pd.get("symbol", "?"), exc)
+                        continue
+                # Always restore capital from the JSON file — it is the authoritative
+                # record of the account balance at last shutdown (regardless of whether
+                # there are open positions to restore).
+                if "capital" in data:
+                    self._capital      = float(data["capital"])
+                    self._peak_capital = float(data.get("peak_capital", data["capital"]))
             if restored:
                 logger.info("PaperExecutor: restored %d open position(s) from disk", restored)
         except Exception as exc:
@@ -529,7 +573,8 @@ class PaperExecutor:
         return 0.0
 
     def get_open_positions(self) -> list[dict]:
-        return [p.to_dict() for pos_list in self._positions.values() for p in pos_list]
+        with self._lock:
+            return [p.to_dict() for pos_list in self._positions.values() for p in pos_list]
 
     @staticmethod
     def _condition_fingerprint(side: str, models_fired: list, regime: str) -> tuple:
@@ -967,7 +1012,8 @@ class PaperExecutor:
                 pos.expected_rr = round(_reward / _risk, 4)
         # ────────────────────────────────────────────────────────────────────
 
-        self._positions.setdefault(candidate.symbol, []).append(pos)
+        with self._lock:
+            self._positions.setdefault(candidate.symbol, []).append(pos)
         logger.info(
             "PaperExecutor: OPENED %s %s @ %.4f (fill) | SL=%.4f TP=%.4f | "
             "size=%.2f USDT | risk=%.2f USDT | expRR=%.2f | "
@@ -985,14 +1031,15 @@ class PaperExecutor:
 
     def on_tick(self, symbol: str, price: float) -> None:
         """Update position mark-to-market and check stops."""
-        if symbol not in self._positions:
-            return
+        with self._lock:
+            if symbol not in self._positions:
+                return
 
-        # ── Parity mode check (cached per tick batch for performance) ────
-        _parity = self._is_parity_mode()
+            # ── Parity mode check (cached per tick batch for performance) ────
+            _parity = self._is_parity_mode()
 
-        # Iterate over a copy — positions may be closed during iteration
-        for pos in list(self._positions.get(symbol, [])):
+            # Iterate over a copy — positions may be closed during iteration
+            for pos in list(self._positions.get(symbol, [])):
             exit_reason = pos.update(price, parity_mode=_parity)
 
             # ── v1.2: Auto-partial-exit at +1R (Phase 5 winning config) ──────

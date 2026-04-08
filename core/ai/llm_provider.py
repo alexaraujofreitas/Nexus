@@ -287,8 +287,8 @@ def get_provider() -> Optional[LLMProvider]:
             vk = key_vault.load(setting_key).strip()
             if vk:
                 return vk
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Key vault load failed: %s", exc)
         # Fallback: plain-text YAML (pre-D3 installs or vault unavailable)
         raw = settings.get(setting_key, "").strip()
         return raw if raw not in ("__vault__", "") else ""

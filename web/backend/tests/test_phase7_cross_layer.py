@@ -67,16 +67,16 @@ class TestMiddlewareStackOrder:
 
 
 class TestConfigValidation:
-    def test_catches_placeholder_jwt(self):
+    def test_catches_empty_jwt(self):
         from app.config import Settings, validate_settings
         s = Settings(
-            jwt_secret="CHANGE-ME-IN-PRODUCTION-32chars!",
+            jwt_secret="",
             database_url="postgresql+asyncpg://x:x@localhost/db",
             redis_url="redis://localhost:6379/0",
         )
         with patch.dict(os.environ, {"NEXUS_DEBUG": "false"}):
             errors = validate_settings(s)
-        assert any("placeholder" in e.lower() or "change" in e.lower() for e in errors)
+        assert any("empty" in e.lower() or "jwt" in e.lower() for e in errors)
 
     def test_catches_short_jwt(self):
         from app.config import Settings, validate_settings

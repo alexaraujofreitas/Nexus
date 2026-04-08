@@ -489,6 +489,16 @@ class PaperTrade(Base):
     closed_at:   Mapped[str]            = mapped_column(String(40), nullable=False)   # ISO string
     created_at:  Mapped[datetime]       = mapped_column(DateTime, default=datetime.utcnow)
 
+    # ── Audit / enrichment columns (migration-aligned) ─────────
+    strategy_class:           Mapped[Optional[str]]   = mapped_column(String(20), default="")
+    tqs_score:                Mapped[Optional[float]]  = mapped_column(Float, default=0.0)
+    capital_weight:           Mapped[Optional[float]]  = mapped_column(Float, default=0.0)
+    signal_age_ms:            Mapped[Optional[float]]  = mapped_column(Float, default=0.0)
+    setup_bar_ts:             Mapped[Optional[str]]    = mapped_column(String(40), default="")
+    trigger_bar_ts:           Mapped[Optional[str]]    = mapped_column(String(40), default="")
+    gtf_passed:               Mapped[Optional[bool]]   = mapped_column(Boolean, default=False)
+    execution_quality_score:  Mapped[Optional[float]]  = mapped_column(Float, default=0.0)
+
     __table_args__ = (
         Index("idx_paper_trades_symbol", "symbol"),
         Index("idx_paper_trades_closed_at", "closed_at"),
@@ -521,6 +531,15 @@ class PaperTrade(Base):
             "duration_s":       self.duration_s,
             "opened_at":        self.opened_at,
             "closed_at":        self.closed_at,
+            # Audit / enrichment columns
+            "strategy_class":           self.strategy_class or "",
+            "tqs_score":                self.tqs_score or 0.0,
+            "capital_weight":           self.capital_weight or 0.0,
+            "signal_age_ms":            self.signal_age_ms or 0.0,
+            "setup_bar_ts":             self.setup_bar_ts or "",
+            "trigger_bar_ts":           self.trigger_bar_ts or "",
+            "gtf_passed":               bool(self.gtf_passed),
+            "execution_quality_score":  self.execution_quality_score or 0.0,
         }
 
 

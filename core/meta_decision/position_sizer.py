@@ -5,7 +5,7 @@
 #   risk_usdt  = risk_pct% × capital
 #   qty        = risk_usdt / stop_distance
 #   size_usdt  = qty × entry_price
-#   Capped at 25% of capital, floored at min_size_usdt.
+#   Capped at max_capital_pct (default 4%) of capital, floored at min_size_usdt.
 #   Controlled by config: risk_engine.sizing_mode = "risk_based"
 #
 # LEGACY MODE: Quarter-Kelly Criterion (disabled in production)

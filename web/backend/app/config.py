@@ -63,9 +63,7 @@ class Settings(BaseModel):
                 "postgresql://nexus:nexus@localhost:5432/nexustrader",
             ),
             "redis_url": os.getenv("NEXUS_REDIS_URL", "redis://localhost:6379/0"),
-            "jwt_secret": os.getenv(
-                "NEXUS_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION-32chars!",
-            ),
+            "jwt_secret": os.getenv("NEXUS_JWT_SECRET", ""),
             "cors_origins": os.getenv(
                 "NEXUS_CORS_ORIGINS",
                 "http://localhost:3000,http://localhost:5173",
@@ -93,20 +91,17 @@ class ConfigurationError(RuntimeError):
     """Raised when critical configuration is missing or insecure."""
 
 
-_PLACEHOLDER_JWT = "CHANGE-ME-IN-PRODUCTION-32chars!"
-
-
 def validate_settings(s: Settings) -> list[str]:
     """
     Validate critical configuration values. Returns list of error messages.
-    In production (debug=False), placeholder JWT secret is fatal.
+    In production (debug=False), empty or short JWT secret is fatal.
     """
     errors: list[str] = []
 
-    # JWT secret must not be the placeholder in production
-    if not s.debug and s.jwt_secret == _PLACEHOLDER_JWT:
+    # JWT secret must not be empty in production
+    if not s.debug and not s.jwt_secret:
         errors.append(
-            "NEXUS_JWT_SECRET is set to the default placeholder. "
+            "NEXUS_JWT_SECRET is empty. "
             "Set a secure 32+ character secret via environment variable."
         )
 

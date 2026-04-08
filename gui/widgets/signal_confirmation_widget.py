@@ -206,7 +206,8 @@ class SignalConfirmationWidget(QWidget):
         if isinstance(data, dict):
             cid = data.get("candidate_id", "")
             if cid and cid not in self._cards:
-                self._add_card(data)
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda d=data: self._add_card(d))
 
     @Slot(object)
     def _on_mode_changed(self, event):

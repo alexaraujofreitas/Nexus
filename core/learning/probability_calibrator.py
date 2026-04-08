@@ -48,6 +48,7 @@ min_confidence parameter in get_win_prob():
   prior during early training phases with insufficient data.
 """
 from __future__ import annotations
+import io
 import json
 import logging
 import math
@@ -56,6 +57,33 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+
+class _RestrictedUnpickler(pickle.Unpickler):
+    """Only allow safe standard library and scientific computing types."""
+
+    _SAFE_MODULES = frozenset({
+        'builtins', 'collections', '_codecs',
+        'numpy', 'numpy.core', 'numpy.core.multiarray',
+        'numpy.core.numeric', 'numpy.core._multiarray_umath',
+        'numpy._core', 'numpy._core.multiarray',
+        'sklearn', 'sklearn.calibration', 'sklearn.isotonic',
+        'sklearn.linear_model', 'sklearn.linear_model._logistic',
+        'sklearn.preprocessing', 'sklearn.preprocessing._data',
+        'sklearn.pipeline', 'sklearn.utils', 'sklearn.utils._tags',
+        'sklearn.base',
+    })
+
+    def find_class(self, module: str, name: str) -> type:
+        top = module.split('.')[0]
+        if top in self._SAFE_MODULES or module in self._SAFE_MODULES:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(f"Blocked: {module}.{name}")
+
+
+def _safe_pickle_load(f):
+    """Load a pickle file using a restricted unpickler that only allows safe types."""
+    return _RestrictedUnpickler(f).load()
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +117,7 @@ class ProbabilityCalibrator:
         if _MODEL_PATH.exists():
             try:
                 with _MODEL_PATH.open("rb") as f:
-                    saved = pickle.load(f)
+                    saved = _safe_pickle_load(f)
                 self._model = saved.get("model")
                 self._feature_names = saved.get("feature_names")
                 self._trained_on = saved.get("trained_on", 0)
@@ -358,8 +386,8 @@ class ProbabilityCalibrator:
             try:
                 _CALIBRATION_PATH.parent.mkdir(parents=True, exist_ok=True)
                 _CALIBRATION_PATH.write_text(json.dumps(result, indent=2))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Calibration data save failed: %s", exc)
         return result
 
 

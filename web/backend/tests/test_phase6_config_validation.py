@@ -2,12 +2,12 @@
 # Phase 6B Tests — Configuration Validation
 #
 # Validates:
-#   - Placeholder JWT secret detected in production mode
+#   - Empty JWT secret detected in production mode
 #   - Short JWT secret rejected
 #   - Empty database URL rejected
 #   - Empty Redis URL rejected
 #   - Missing encryption key warning in production
-#   - Debug mode allows placeholder JWT
+#   - Debug mode allows empty JWT
 # ============================================================
 from __future__ import annotations
 
@@ -37,19 +37,19 @@ class TestValidateSettings:
         errors = validate_settings(s)
         assert errors == []
 
-    def test_placeholder_jwt_in_production(self):
-        from app.config import validate_settings, _PLACEHOLDER_JWT
-        s = self._make_settings(jwt_secret=_PLACEHOLDER_JWT, debug=False)
+    def test_empty_jwt_in_production(self):
+        from app.config import validate_settings
+        s = self._make_settings(jwt_secret="", debug=False)
         errors = validate_settings(s)
-        assert any("placeholder" in e.lower() for e in errors)
+        assert any("empty" in e.lower() or "jwt" in e.lower() for e in errors)
 
-    def test_placeholder_jwt_allowed_in_debug(self):
-        from app.config import validate_settings, _PLACEHOLDER_JWT
-        s = self._make_settings(jwt_secret=_PLACEHOLDER_JWT, debug=True)
+    def test_empty_jwt_allowed_in_debug(self):
+        from app.config import validate_settings
+        s = self._make_settings(jwt_secret="", debug=True)
         errors = validate_settings(s)
-        # In debug mode, placeholder is not a fatal error (but short-length is)
-        fatal_placeholder = [e for e in errors if "placeholder" in e.lower()]
-        assert len(fatal_placeholder) == 0
+        # In debug mode, empty JWT is not a fatal error (but short-length still is)
+        fatal_empty = [e for e in errors if "empty" in e.lower() and "jwt" in e.lower()]
+        assert len(fatal_empty) == 0
 
     def test_short_jwt_secret_rejected(self):
         from app.config import validate_settings

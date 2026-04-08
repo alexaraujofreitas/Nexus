@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nexus}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       POSTGRES_DB: ${POSTGRES_DB:-nexustrader}
     volumes:
       - nexus_pgdata:/var/lib/postgresql/data
@@ -50,10 +50,11 @@ services:
     image: redis:7-alpine
     container_name: nexus-redis
     restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
       - nexus_redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -73,9 +74,9 @@ services:
       redis:
         condition: service_healthy
     environment:
-      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexustrader}
-      NEXUS_REDIS_URL: redis://redis:6379/0
-      NEXUS_JWT_SECRET: ${NEXUS_JWT_SECRET:-CHANGE-ME-IN-PRODUCTION-32chars!}
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-nexustrader}
+      NEXUS_REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      NEXUS_JWT_SECRET: ${NEXUS_JWT_SECRET:?NEXUS_JWT_SECRET must be set}
       NEXUS_DEBUG: ${NEXUS_DEBUG:-false}
       NEXUS_CORS_ORIGINS: ${NEXUS_CORS_ORIGINS:-https://www.kivikdg.com,https://kivikdg.com,http://nexustrader:5173}
       NEXUS_ENCRYPTION_KEY: ${NEXUS_ENCRYPTION_KEY:-}
@@ -103,8 +104,8 @@ services:
       redis:
         condition: service_healthy
     environment:
-      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexustrader}
-      NEXUS_REDIS_URL: redis://redis:6379/0
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-nexustrader}
+      NEXUS_REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
       NEXUS_CONFIG_PATH: /app/nexustrader/config.yaml
       NEXUS_ROOT_DIR: /app/nexustrader
       NEXUS_SERVICE_NAME: engine

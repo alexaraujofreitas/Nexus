@@ -4,6 +4,7 @@
 
 import yaml
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Optional
 from config.constants import CONFIG_PATH
@@ -646,6 +647,7 @@ class AppSettings:
     """Manages application configuration with YAML file persistence."""
 
     def __init__(self):
+        self._lock = threading.RLock()
         self._config: dict = {}
         self.load()
 
@@ -695,33 +697,34 @@ class AppSettings:
         config.yaml corruption bug (Session 50 post-restart: WinError 5/32 storm
         → truncated YAML at line 587).
         """
-        import multiprocessing
-        if multiprocessing.current_process().name != "MainProcess":
-            logger.debug(
-                "settings.save(): skipped — worker process '%s' must not write config.yaml",
-                multiprocessing.current_process().name,
-            )
-            return
-        try:
-            import os
-            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            yaml_bytes = yaml.dump(
-                self._config, default_flow_style=False, indent=2,
-            ).encode("utf-8")
-            tmp_path = CONFIG_PATH.with_suffix(".yaml.tmp")
-            fd = os.open(
-                str(tmp_path),
-                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-                0o600,
-            )
+        with self._lock:
+            import multiprocessing
+            if multiprocessing.current_process().name != "MainProcess":
+                logger.debug(
+                    "settings.save(): skipped — worker process '%s' must not write config.yaml",
+                    multiprocessing.current_process().name,
+                )
+                return
             try:
-                os.write(fd, yaml_bytes)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            os.replace(str(tmp_path), str(CONFIG_PATH))
-        except Exception as e:
-            logger.error("Could not save config: %s", e)
+                import os
+                CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+                yaml_bytes = yaml.dump(
+                    self._config, default_flow_style=False, indent=2,
+                ).encode("utf-8")
+                tmp_path = CONFIG_PATH.with_suffix(".yaml.tmp")
+                fd = os.open(
+                    str(tmp_path),
+                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                    0o600,
+                )
+                try:
+                    os.write(fd, yaml_bytes)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.replace(str(tmp_path), str(CONFIG_PATH))
+            except Exception as e:
+                logger.error("Could not save config: %s", e)
 
     def get(self, key_path: str, default: Any = None) -> Any:
         """Get a config value using dot notation (e.g., 'risk.max_position_pct')."""
@@ -758,46 +761,47 @@ class AppSettings:
         DEMO MODE LOCK: When demo_mode.locked=True, any attempt to mutate
         PBL params, disabled_models, or demo_mode keys is blocked and logged.
         """
-        # ── Demo-mode immutability guard ─────────────────────────────────
-        if self._is_demo_locked(key_path):
-            logger.error(
-                "settings.set(%r): BLOCKED — demo_mode is locked. "
-                "PBL params and disabled_models are immutable during demo phase. "
-                "To override, set demo_mode.locked=False in config.yaml manually.",
-                key_path,
-            )
-            return
-        if isinstance(key_path, str) and "." not in key_path and isinstance(value, dict):
-            # Setting entire section
-            self._config[key_path] = value
-        else:
-            # Setting nested key with dot notation
-            keys = key_path.split(".")
-            d = self._config
-            for k in keys[:-1]:
-                # Guard: if the current traversal node is not a dict (e.g. a string
-                # was stored where a dict is expected), replace it with an empty dict
-                # so the navigation can continue.  This prevents the
-                # 'str' object does not support item assignment error.
-                existing = d.get(k) if isinstance(d, dict) else None
-                if not isinstance(existing, dict):
-                    if not isinstance(d, dict):
-                        logger.error(
-                            "settings.set(%r): cannot navigate through non-dict "
-                            "node at key %r (type=%s) — aborting set",
-                            key_path, k, type(d).__name__,
+        with self._lock:
+            # ── Demo-mode immutability guard ─────────────────────────────────
+            if self._is_demo_locked(key_path):
+                logger.error(
+                    "settings.set(%r): BLOCKED — demo_mode is locked. "
+                    "PBL params and disabled_models are immutable during demo phase. "
+                    "To override, set demo_mode.locked=False in config.yaml manually.",
+                    key_path,
+                )
+                return
+            if isinstance(key_path, str) and "." not in key_path and isinstance(value, dict):
+                # Setting entire section
+                self._config[key_path] = value
+            else:
+                # Setting nested key with dot notation
+                keys = key_path.split(".")
+                d = self._config
+                for k in keys[:-1]:
+                    # Guard: if the current traversal node is not a dict (e.g. a string
+                    # was stored where a dict is expected), replace it with an empty dict
+                    # so the navigation can continue.  This prevents the
+                    # 'str' object does not support item assignment error.
+                    existing = d.get(k) if isinstance(d, dict) else None
+                    if not isinstance(existing, dict):
+                        if not isinstance(d, dict):
+                            logger.error(
+                                "settings.set(%r): cannot navigate through non-dict "
+                                "node at key %r (type=%s) — aborting set",
+                                key_path, k, type(d).__name__,
+                            )
+                            return
+                        logger.warning(
+                            "settings.set(%r): intermediate key %r held %s=%r "
+                            "instead of dict — replacing with empty dict",
+                            key_path, k, type(existing).__name__, existing,
                         )
-                        return
-                    logger.warning(
-                        "settings.set(%r): intermediate key %r held %s=%r "
-                        "instead of dict — replacing with empty dict",
-                        key_path, k, type(existing).__name__, existing,
-                    )
-                    d[k] = {}
-                d = d[k]
-            d[keys[-1]] = value
-        if auto_save:
-            self.save()
+                        d[k] = {}
+                    d = d[k]
+                d[keys[-1]] = value
+            if auto_save:
+                self.save()
 
     def get_section(self, section: str) -> dict:
         """Return an entire config section as a dict."""

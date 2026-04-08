@@ -1,3 +1,4 @@
+# NOTE: exec() used here with hardcoded strings only — never with user input
 checks = [
     ('PyTorch', 'import torch; print(torch.__version__)'),
     ('Transformers', 'import transformers; print(transformers.__version__)'),

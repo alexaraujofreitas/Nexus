@@ -163,7 +163,7 @@ class KeyVault:
 
     def migrate_from_settings(self):
         """
-        One-time migration: if AI / sentiment keys are found in settings.yaml
+        One-time migration: if AI / sentiment keys are found in config.yaml
         (pre-D3 installation), move them to the vault and clear them from YAML.
         Called at startup from AppSettings.load().
         """

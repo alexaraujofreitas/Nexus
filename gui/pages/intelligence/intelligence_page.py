@@ -495,22 +495,33 @@ class IntelligencePage(QWidget):
     def _on_orchestrator(self, event) -> None:
         data = event.data if hasattr(event, "data") else event
         if data:
-            self._last_orch = data
-            self._update_meta_bar(data)
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda d=data: self._apply_orchestrator(d))
+
+    def _apply_orchestrator(self, data) -> None:
+        self._last_orch = data
+        self._update_meta_bar(data)
 
     def _on_veto(self, event) -> None:
         data = event.data if hasattr(event, "data") else {}
         active = data.get("veto", False) if isinstance(data, dict) else False
-        self._veto_lbl.setText("⊘  MACRO VETO — ALL TRADES BLOCKED" if active else "")
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, lambda a=active: self._veto_lbl.setText(
+            "⊘  MACRO VETO — ALL TRADES BLOCKED" if a else ""
+        ))
 
     def _on_regime_changed(self, event) -> None:
         data = event.data if hasattr(event, "data") else {}
         if isinstance(data, dict):
-            regime = data.get("new_regime", data.get("regime", "—"))
-            regime_str = _REGIME_EMOJIS.get(regime, regime)
-            self._regime_lbl.setText(regime_str)
-            conf = data.get("confidence", 0.0)
-            self._regime_conf_lbl.setText(f"{conf:.0%}")
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda d=data: self._apply_regime_changed(d))
+
+    def _apply_regime_changed(self, data: dict) -> None:
+        regime = data.get("new_regime", data.get("regime", "—"))
+        regime_str = _REGIME_EMOJIS.get(regime, regime)
+        self._regime_lbl.setText(regime_str)
+        conf = data.get("confidence", 0.0)
+        self._regime_conf_lbl.setText(f"{conf:.0%}")
 
     # ── Update methods ────────────────────────────────────────
 

@@ -4,11 +4,16 @@
 # ============================================================
 
 import logging
+import re
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
 from sqlalchemy.pool import StaticPool
 from contextlib import contextmanager
 from config.constants import DB_PATH
+
+# Whitelist pattern for SQL identifiers used in schema migrations.
+# Only allows simple alphanumeric names with underscores — blocks injection.
+_SAFE_IDENTIFIER = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +173,11 @@ def _migrate_schema():
     ]
     with engine.connect() as conn:
         for table, column, definition in migrations:
+            if not _SAFE_IDENTIFIER.match(table) or not _SAFE_IDENTIFIER.match(column):
+                logger.error(
+                    "Invalid identifier in migration: table=%s column=%s", table, column
+                )
+                continue
             try:
                 conn.execute(text(f"SELECT {column} FROM {table} LIMIT 1"))
             except Exception:
@@ -236,5 +246,15 @@ def get_session() -> Session:
 
 
 def get_db() -> Session:
-    """Dependency-injection style session getter."""
+    """Dependency-injection style session getter.
+
+    DEPRECATED: Prefer get_session() context manager which auto-closes.
+    Callers MUST call session.close() when done.
+    """
+    import warnings
+    warnings.warn(
+        "get_db() returns an unmanaged session. Use get_session() context manager instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return SessionLocal()

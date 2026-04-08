@@ -206,7 +206,14 @@ class CrashDefenseController:
         if self._auto_execute_enabled and self._executor is not None:
             try:
                 count = 0
-                for symbol, pos_list in list(self._executor._positions.items()):
+                # Snapshot positions under lock to avoid concurrent modification
+                lock = getattr(self._executor, '_lock', None)
+                if lock:
+                    with lock:
+                        positions_snapshot = {k: list(v) for k, v in self._executor._positions.items()}
+                else:
+                    positions_snapshot = {k: list(v) for k, v in self._executor._positions.items()}
+                for symbol, pos_list in positions_snapshot.items():
                     for pos in pos_list:
                         if pos.side == "buy":
                             ok = self._executor.partial_close(symbol, 0.50)
