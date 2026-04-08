@@ -1254,27 +1254,23 @@ class PaperExecutor:
         Returns True on success, False otherwise.
         """
         with self._lock:
-            return self._partial_close_inner(symbol, reduce_pct)
+            pos_list = self._positions.get(symbol, [])
+            pos = pos_list[0] if pos_list else None
+            if pos is None:
+                logger.warning("PaperExecutor: partial_close — position not found for %s", symbol)
+                return False
 
-    def _partial_close_inner(self, symbol: str, reduce_pct: float) -> bool:
-        """Inner implementation of partial_close (caller must hold self._lock)."""
-        pos_list = self._positions.get(symbol, [])
-        pos = pos_list[0] if pos_list else None
-        if pos is None:
-            logger.warning("PaperExecutor: partial_close — position not found for %s", symbol)
-            return False
+            # Validate reduce_pct
+            if reduce_pct <= 0.0 or reduce_pct > 1.0:
+                logger.warning(
+                    "PaperExecutor: partial_close — invalid reduce_pct %.2f for %s",
+                    reduce_pct, symbol
+                )
+                return False
 
-        # Validate reduce_pct
-        if reduce_pct <= 0.0 or reduce_pct > 1.0:
-            logger.warning(
-                "PaperExecutor: partial_close — invalid reduce_pct %.2f for %s",
-                reduce_pct, symbol
-            )
-            return False
-
-        # If nearly 100%, just do full close
-        if reduce_pct >= 0.99:
-            return self.close_position(symbol)
+            # If nearly 100%, just do full close
+            if reduce_pct >= 0.99:
+                return self.close_position(symbol)
 
         # Calculate partial quantity
         original_qty  = pos.quantity
