@@ -160,3 +160,5 @@ test-results/
 
 # ── Web frontend runtime data ─────────────────────────────
 data/web_assets.json
+
+logs/web_engine.log
