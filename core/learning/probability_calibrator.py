@@ -129,8 +129,8 @@ class ProbabilityCalibrator:
         if _CALIBRATION_PATH.exists():
             try:
                 self._score_calibration = json.loads(_CALIBRATION_PATH.read_text())
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("ProbabilityCalibrator: score calibration load failed: %s", exc)
 
     def is_trained(self) -> bool:
         return self._model is not None and self._trained_on >= MIN_TRAINING_TRADES
@@ -295,8 +295,8 @@ class ProbabilityCalibrator:
         try:
             from core.learning.calibrator_monitor import get_calibrator_monitor
             _drift_fallback = get_calibrator_monitor().should_fallback_to_sigmoid()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("ProbabilityCalibrator: drift fallback check failed: %s", exc)
 
         if self.is_trained() and not _drift_fallback:
             try:

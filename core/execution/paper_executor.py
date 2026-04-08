@@ -1744,140 +1744,144 @@ class PaperExecutor:
             if not pos_list and symbol in self._positions:
                 del self._positions[symbol]
 
-        # Apply exit slippage
-        exit_side = "sell" if pos.side == "buy" else "buy"
-        exit_fill = self._apply_slippage(exit_price, exit_side)
-        # H-15: guard against division by zero entry_price
-        if pos.entry_price > 0:
-            pnl_pct = ((exit_fill - pos.entry_price) / pos.entry_price * 100) if pos.side == "buy" else ((pos.entry_price - exit_fill) / pos.entry_price * 100)
-        else:
-            pnl_pct = 0.0
-        pnl_usdt = pos.size_usdt * pnl_pct / 100
-
-        # Calculate actual duration in seconds
-        duration_s = (datetime.utcnow() - pos.opened_at).total_seconds()
-
-        # Pre-compute R metrics so they're available both in the trade dict
-        # and in the learning / monitor blocks below.
-        _entry_p  = pos.entry_price or 0.0
-        _sl_p     = pos.stop_loss   or 0.0
-        _tp_p     = pos.take_profit or 0.0
-        _sz       = pos.size_usdt   or 0.0
-        _risk_usdt_pre = getattr(pos, "risk_amount_usdt", 0.0) or 0.0
-        _exp_rr_pre    = getattr(pos, "expected_rr",      0.0) or 0.0
-        # If stored values aren't available, recompute from close-time data
-        if _risk_usdt_pre <= 0 and _entry_p > 0 and _sl_p > 0 and _sz > 0:
-            _risk_usdt_pre = round(abs(_entry_p - _sl_p) / _entry_p * _sz, 4)
-        if _exp_rr_pre <= 0 and _entry_p > 0 and _sl_p > 0 and _tp_p > 0:
-            _r = abs(_entry_p - _sl_p); _rw = abs(_tp_p - _entry_p)
-            if _r > 0: _exp_rr_pre = round(_rw / _r, 4)
-
-        # entry_size_usdt: original capital deployed when this position was opened.
-        # For full closes it equals pos.size_usdt; for positions that had a prior
-        # partial_close() call it will be larger (the original full size).
-        _entry_sz = float(getattr(pos, "entry_size_usdt", None) or pos.size_usdt)
-        # exit_size_usdt: the portion of the position actually closed in this call.
-        # For a normal full close this equals pos.size_usdt.
-        # For the "remainder" leg after a prior partial close it will be smaller
-        # than entry_size_usdt.
-        _exit_sz  = pos.size_usdt
-
-        trade = {
-            "symbol":           symbol,
-            "side":             pos.side,
-            "entry_price":      pos.entry_price,
-            "exit_price":       exit_fill,
-            "stop_loss":        pos.stop_loss,
-            "take_profit":      pos.take_profit,
-            "size_usdt":        pos.size_usdt,
-            "entry_size_usdt":  round(_entry_sz, 2),
-            "exit_size_usdt":   round(_exit_sz,  2),
-            "pnl_pct":          round(pnl_pct, 4),
-            "pnl_usdt":         round(pnl_usdt, 2),
-            "exit_reason":      reason,
-            "score":            pos.score,
-            "rationale":        pos.rationale,
-            "regime":           pos.regime,
-            "models_fired":     pos.models_fired,
-            "timeframe":        pos.timeframe,
-            "duration_s":       int(duration_s),
-            "opened_at":        pos.opened_at.isoformat(),
-            "closed_at":        datetime.utcnow().isoformat(),
-            # Enriched fields for Level-2 learning
-            "entry_expected":   getattr(pos, "entry_expected", None),
-            "expected_value":   getattr(pos, "expected_value", None),
-            # Trade execution verification fields (Session 26)
-            "risk_amount_usdt": _risk_usdt_pre,
-            "expected_rr":      _exp_rr_pre,
-            "symbol_weight":    float(getattr(pos, "symbol_weight",  1.0) or 1.0),
-            "adjusted_score":   float(getattr(pos, "adjusted_score", pos.score or 0.0) or 0.0),
-        }
-        with self._lock:
-            self._closed_trades.append(trade)
-            self._capital      += pnl_usdt   # realize P&L
-            self._peak_capital  = max(self._peak_capital, self._capital)
-
-        # ── Feed outcome to adaptive learning loop (Level 1 + Level 2) ────
-        # Level-1: global per-model win-rate (TradeOutcomeTracker).
-        # Level-2: contextual win-rates by (model×regime) and (model×asset).
-        # Both are non-fatal; a failure here must never block trade recording.
-        _won        = pnl_pct > 0
-        _models     = pos.models_fired or []
-        _regime_str = pos.regime or "unknown"
+        # Position already removed from self._positions above.
+        # Wrap the rest in try/finally so _save_open_positions() always runs,
+        # even if any downstream consumer (learning, monitoring, DB write) fails.
         try:
-            from core.meta_decision.confluence_scorer import get_outcome_tracker
-            if _models:
-                get_outcome_tracker().record(_models, won=_won)
-        except Exception as _lp_exc:
-            logger.debug("PaperExecutor: L1 learning record failed (non-fatal): %s", _lp_exc)
-        try:
-            from core.learning.level2_tracker import get_level2_tracker as _get_l2
-            from core.learning.trade_outcome_store import get_outcome_store as _get_store
-            # Use pre-computed risk values from the trade dict (calculated above)
-            _pnl_u      = trade.get("pnl_usdt", 0.0) or 0.0
-            _risk_usdt  = trade.get("risk_amount_usdt", 0.0) or 0.0
-            _realized_r  = round(_pnl_u / _risk_usdt, 4) if _risk_usdt > 0 else None
-            _expected_rr = trade.get("expected_rr") or None
-            # Stamp realized_r back into trade dict for all downstream consumers
-            trade["realized_r"] = _realized_r
-            _get_l2().record(
-                models      = _models,
-                won         = _won,
-                regime      = _regime_str,
-                symbol      = symbol,
-                score       = trade.get("score", 0.0),
-                exit_reason = reason,
-                realized_r  = _realized_r,
-                expected_rr = _expected_rr,
-            )
-            _get_store().record(trade)
-        except Exception as _l2_exc:
-            logger.debug("PaperExecutor: L2 learning record failed (non-fatal): %s", _l2_exc)
+            # Apply exit slippage
+            exit_side = "sell" if pos.side == "buy" else "buy"
+            exit_fill = self._apply_slippage(exit_price, exit_side)
+            # H-15: guard against division by zero entry_price
+            if pos.entry_price > 0:
+                pnl_pct = ((exit_fill - pos.entry_price) / pos.entry_price * 100) if pos.side == "buy" else ((pos.entry_price - exit_fill) / pos.entry_price * 100)
+            else:
+                pnl_pct = 0.0
+            pnl_usdt = pos.size_usdt * pnl_pct / 100
 
-        # ── Phase 2c shadow tracker outcome recording ────────────────────
-        _p2c_models = {"pullback_long", "swing_low_continuation", "range_breakout"}
-        if _models and any(m in _p2c_models for m in _models):
+            # Calculate actual duration in seconds
+            duration_s = (datetime.utcnow() - pos.opened_at).total_seconds()
+
+            # Pre-compute R metrics so they're available both in the trade dict
+            # and in the learning / monitor blocks below.
+            _entry_p  = pos.entry_price or 0.0
+            _sl_p     = pos.stop_loss   or 0.0
+            _tp_p     = pos.take_profit or 0.0
+            _sz       = pos.size_usdt   or 0.0
+            _risk_usdt_pre = getattr(pos, "risk_amount_usdt", 0.0) or 0.0
+            _exp_rr_pre    = getattr(pos, "expected_rr",      0.0) or 0.0
+            # If stored values aren't available, recompute from close-time data
+            if _risk_usdt_pre <= 0 and _entry_p > 0 and _sl_p > 0 and _sz > 0:
+                _risk_usdt_pre = round(abs(_entry_p - _sl_p) / _entry_p * _sz, 4)
+            if _exp_rr_pre <= 0 and _entry_p > 0 and _sl_p > 0 and _tp_p > 0:
+                _r = abs(_entry_p - _sl_p); _rw = abs(_tp_p - _entry_p)
+                if _r > 0: _exp_rr_pre = round(_rw / _r, 4)
+
+            # entry_size_usdt: original capital deployed when this position was opened.
+            # For full closes it equals pos.size_usdt; for positions that had a prior
+            # partial_close() call it will be larger (the original full size).
+            _entry_sz = float(getattr(pos, "entry_size_usdt", None) or pos.size_usdt)
+            # exit_size_usdt: the portion of the position actually closed in this call.
+            # For a normal full close this equals pos.size_usdt.
+            # For the "remainder" leg after a prior partial close it will be smaller
+            # than entry_size_usdt.
+            _exit_sz  = pos.size_usdt
+
+            trade = {
+                "symbol":           symbol,
+                "side":             pos.side,
+                "entry_price":      pos.entry_price,
+                "exit_price":       exit_fill,
+                "stop_loss":        pos.stop_loss,
+                "take_profit":      pos.take_profit,
+                "size_usdt":        pos.size_usdt,
+                "entry_size_usdt":  round(_entry_sz, 2),
+                "exit_size_usdt":   round(_exit_sz,  2),
+                "pnl_pct":          round(pnl_pct, 4),
+                "pnl_usdt":         round(pnl_usdt, 2),
+                "exit_reason":      reason,
+                "score":            pos.score,
+                "rationale":        pos.rationale,
+                "regime":           pos.regime,
+                "models_fired":     pos.models_fired,
+                "timeframe":        pos.timeframe,
+                "duration_s":       int(duration_s),
+                "opened_at":        pos.opened_at.isoformat(),
+                "closed_at":        datetime.utcnow().isoformat(),
+                # Enriched fields for Level-2 learning
+                "entry_expected":   getattr(pos, "entry_expected", None),
+                "expected_value":   getattr(pos, "expected_value", None),
+                # Trade execution verification fields (Session 26)
+                "risk_amount_usdt": _risk_usdt_pre,
+                "expected_rr":      _exp_rr_pre,
+                "symbol_weight":    float(getattr(pos, "symbol_weight",  1.0) or 1.0),
+                "adjusted_score":   float(getattr(pos, "adjusted_score", pos.score or 0.0) or 0.0),
+            }
+            with self._lock:
+                self._closed_trades.append(trade)
+                self._capital      += pnl_usdt   # realize P&L
+                self._peak_capital  = max(self._peak_capital, self._capital)
+
+            # ── Feed outcome to adaptive learning loop (Level 1 + Level 2) ────
+            # Level-1: global per-model win-rate (TradeOutcomeTracker).
+            # Level-2: contextual win-rates by (model×regime) and (model×asset).
+            # Both are non-fatal; a failure here must never block trade recording.
+            _won        = pnl_pct > 0
+            _models     = pos.models_fired or []
+            _regime_str = pos.regime or "unknown"
             try:
-                from core.scanning.shadow_tracker import shadow_tracker as _st
-                _p2c_model = next((m for m in _models if m in _p2c_models), _models[0])
-                _st.record_outcome(
-                    symbol=symbol,
-                    model=_p2c_model,
-                    direction=pos.side,
-                    entry_price=pos.entry_price,
-                    exit_price=exit_fill,
-                    stop_loss=pos.stop_loss or 0.0,
-                    take_profit=pos.take_profit or 0.0,
-                    pnl_usdt=round(pnl_usdt, 4),
-                    r_value=_realized_r if _realized_r is not None else 0.0,
-                    exit_reason=reason,
-                    duration_s=duration_s,
-                    size_usdt=pos.size_usdt,
-                    was_boosted="Phase2c ModeA" in (pos.rationale or ""),
-                    was_relaxed="ModeA+B" in (pos.rationale or ""),
+                from core.meta_decision.confluence_scorer import get_outcome_tracker
+                if _models:
+                    get_outcome_tracker().record(_models, won=_won)
+            except Exception as _lp_exc:
+                logger.debug("PaperExecutor: L1 learning record failed (non-fatal): %s", _lp_exc)
+            try:
+                from core.learning.level2_tracker import get_level2_tracker as _get_l2
+                from core.learning.trade_outcome_store import get_outcome_store as _get_store
+                # Use pre-computed risk values from the trade dict (calculated above)
+                _pnl_u      = trade.get("pnl_usdt", 0.0) or 0.0
+                _risk_usdt  = trade.get("risk_amount_usdt", 0.0) or 0.0
+                _realized_r  = round(_pnl_u / _risk_usdt, 4) if _risk_usdt > 0 else None
+                _expected_rr = trade.get("expected_rr") or None
+                # Stamp realized_r back into trade dict for all downstream consumers
+                trade["realized_r"] = _realized_r
+                _get_l2().record(
+                    models      = _models,
+                    won         = _won,
+                    regime      = _regime_str,
+                    symbol      = symbol,
+                    score       = trade.get("score", 0.0),
+                    exit_reason = reason,
+                    realized_r  = _realized_r,
+                    expected_rr = _expected_rr,
                 )
-            except Exception as _st_exc:
-                logger.debug("PaperExecutor: shadow tracker outcome error (non-fatal): %s", _st_exc)
+                _get_store().record(trade)
+            except Exception as _l2_exc:
+                logger.debug("PaperExecutor: L2 learning record failed (non-fatal): %s", _l2_exc)
+
+            # ── Phase 2c shadow tracker outcome recording ────────────────────
+            _p2c_models = {"pullback_long", "swing_low_continuation", "range_breakout"}
+            if _models and any(m in _p2c_models for m in _models):
+                try:
+                    from core.scanning.shadow_tracker import shadow_tracker as _st
+                    _p2c_model = next((m for m in _models if m in _p2c_models), _models[0])
+                    _st.record_outcome(
+                        symbol=symbol,
+                        model=_p2c_model,
+                        direction=pos.side,
+                        entry_price=pos.entry_price,
+                        exit_price=exit_fill,
+                        stop_loss=pos.stop_loss or 0.0,
+                        take_profit=pos.take_profit or 0.0,
+                        pnl_usdt=round(pnl_usdt, 4),
+                        r_value=_realized_r if _realized_r is not None else 0.0,
+                        exit_reason=reason,
+                        duration_s=duration_s,
+                        size_usdt=pos.size_usdt,
+                        was_boosted="Phase2c ModeA" in (pos.rationale or ""),
+                        was_relaxed="ModeA+B" in (pos.rationale or ""),
+                    )
+                except Exception as _st_exc:
+                    logger.debug("PaperExecutor: shadow tracker outcome error (non-fatal): %s", _st_exc)
 
         # ── Feed CalibratorMonitor (Session 23) ──────────────────────────
         # Record the prediction that was made at entry time vs the actual outcome.

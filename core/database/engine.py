@@ -95,6 +95,15 @@ def _migrate_schema():
         # Both nullable — pre-Session-30 rows fall back to size_usdt in to_dict().
         ("paper_trades",  "entry_size_usdt", "REAL"),
         ("paper_trades",  "exit_size_usdt",  "REAL"),
+        # Audit / enrichment columns for PaperTrade (H-5).
+        ("paper_trades",  "strategy_class",          "VARCHAR(20) DEFAULT ''"),
+        ("paper_trades",  "tqs_score",               "REAL DEFAULT 0.0"),
+        ("paper_trades",  "capital_weight",           "REAL DEFAULT 0.0"),
+        ("paper_trades",  "signal_age_ms",            "REAL DEFAULT 0.0"),
+        ("paper_trades",  "setup_bar_ts",             "VARCHAR(40) DEFAULT ''"),
+        ("paper_trades",  "trigger_bar_ts",           "VARCHAR(40) DEFAULT ''"),
+        ("paper_trades",  "gtf_passed",               "BOOLEAN DEFAULT 0"),
+        ("paper_trades",  "execution_quality_score",  "REAL DEFAULT 0.0"),
         # Session 35: trade_feedback table columns (full table created by
         # create_all() on first run; only the individual column migrations
         # are needed for upgrading existing DBs that already have the table
