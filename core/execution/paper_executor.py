@@ -1143,24 +1143,25 @@ class PaperExecutor:
         Used by CrashDefenseController DEFENSIVE tier to protect profits without closing.
         Returns the number of positions updated.
         """
-        count = 0
-        for symbol, pos_list in self._positions.items():
-            for pos in pos_list:
-                if pos.side == "buy" and not pos._breakeven_applied:
-                    old_sl = pos.stop_loss
-                    pos.stop_loss = pos.entry_price
-                    pos._breakeven_applied = True
-                    count += 1
-                    logger.info(
-                        "PaperExecutor.move_all_longs_to_breakeven: %s SL %.6g → %.6g (entry)",
-                        symbol, old_sl, pos.entry_price,
-                    )
-        if count:
-            self._save_open_positions()
-        logger.warning(
-            "PaperExecutor.move_all_longs_to_breakeven(): updated %d position(s)", count,
-        )
-        return count
+        with self._lock:
+            count = 0
+            for symbol, pos_list in self._positions.items():
+                for pos in pos_list:
+                    if pos.side == "buy" and not pos._breakeven_applied:
+                        old_sl = pos.stop_loss
+                        pos.stop_loss = pos.entry_price
+                        pos._breakeven_applied = True
+                        count += 1
+                        logger.info(
+                            "PaperExecutor.move_all_longs_to_breakeven: %s SL %.6g → %.6g (entry)",
+                            symbol, old_sl, pos.entry_price,
+                        )
+            if count:
+                self._save_open_positions()
+            logger.warning(
+                "PaperExecutor.move_all_longs_to_breakeven(): updated %d position(s)", count,
+            )
+            return count
 
     # ── Dynamic stop adjustment ────────────────────────────────
 
@@ -1252,6 +1253,11 @@ class PaperExecutor:
         If reduce_pct >= 0.99, calls full close instead.
         Returns True on success, False otherwise.
         """
+        with self._lock:
+            return self._partial_close_inner(symbol, reduce_pct)
+
+    def _partial_close_inner(self, symbol: str, reduce_pct: float) -> bool:
+        """Inner implementation of partial_close (caller must hold self._lock)."""
         pos_list = self._positions.get(symbol, [])
         pos = pos_list[0] if pos_list else None
         if pos is None:
