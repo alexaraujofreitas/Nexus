@@ -21,7 +21,6 @@ import {
 import { getSnapshots } from '../api/marketData';
 import { cn, formatUSD } from '../lib/utils';
 
-type Tab = 'exchanges' | 'assets';
 type Mode = 'live' | 'sandbox' | 'demo';
 
 // ── Shared Components ─────────────────────────────────────

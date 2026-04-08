@@ -7,7 +7,7 @@ import {
 import { getPipelineStatus, triggerScan } from '../api/scanner';
 import type { PipelineRow, PipelineStatus, PipelineDiagnostics, MILBreakdown, PhaseTiming } from '../api/scanner';
 import { useWSStore } from '../stores/wsStore';
-import { cn, timeAgo, formatUSD } from '../lib/utils';
+import { cn, formatUSD } from '../lib/utils';
 
 // ── Status configuration ──────────────────────────────────────
 const STATUS_CONFIG: Record<PipelineStatus, { color: string; icon: typeof CheckCircle2; label: string }> = {

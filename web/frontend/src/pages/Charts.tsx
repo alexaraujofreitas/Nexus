@@ -1,15 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BarChart3, ChevronDown, Info } from 'lucide-react';
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, CandlestickData, HistogramData, LineData, Time } from 'lightweight-charts';
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { getOHLCV } from '../api/charts';
-import type { OHLCVBar } from '../api/charts';
 import { getExchanges, getTradableAssets } from '../api/exchanges';
 import { cn } from '../lib/utils';
 import {
   calcSMA, calcRSI, calcMACD, calcBollingerBands, calcSupportResistance,
-  type Bar, type Point, type SRLevel,
+  type Bar, type Point,
 } from '../lib/indicators';
 
 // ── Constants ─────────────────────────────────────────────────
@@ -72,8 +71,8 @@ export default function Charts() {
   const rsiRef = useRef<HTMLDivElement>(null);
   const macdRef = useRef<HTMLDivElement>(null);
   const mainChart = useRef<IChartApi | null>(null);
-  const rsiChart = useRef<IChartApi | null>(null);
-  const macdChart = useRef<IChartApi | null>(null);
+  // RSI and MACD charts are created locally in their useLayoutEffect blocks
+  // (not stored in refs since they're cleaned up within the same effect).
 
   // Series refs for cleanup
   const seriesRefs = useRef<Record<string, ISeriesApi<any> | ISeriesApi<any>[]>>({});
@@ -245,7 +244,7 @@ export default function Charts() {
 
     const rsiData = dedup(calcRSI(bars, 14));
     if (rsiData.length > 0) {
-      const s = rc.addSeries(LineSeries, { color: '#8b5cf6', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
+      const s = rc.addSeries(LineSeries, { color: '#8b5cf6', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
       s.setData(rsiData.map((p) => ({ time: toTime(p.time), value: p.value })));
       s.createPriceLine({ price: 70, color: '#ef4444', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' });
       s.createPriceLine({ price: 50, color: '#94a3b8', lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: '' });
@@ -265,11 +264,11 @@ export default function Charts() {
 
     const macd = calcMACD(bars, 12, 26, 9);
     if (macd.macdLine.length > 0) {
-      const sLine = mc.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
+      const sLine = mc.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
       sLine.setData(dedup(macd.macdLine).map((p) => ({ time: toTime(p.time), value: p.value })));
 
       if (macd.signalLine.length > 0) {
-        const sSig = mc.addSeries(LineSeries, { color: '#f97316', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
+        const sSig = mc.addSeries(LineSeries, { color: '#f97316', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
         sSig.setData(dedup(macd.signalLine).map((p) => ({ time: toTime(p.time), value: p.value })));
       }
 

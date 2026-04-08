@@ -10,7 +10,7 @@ interface SidebarItemProps {
 
 export default function SidebarItem({ item, onClick, collapsed }: SidebarItemProps) {
   // DEV guard: fail loudly if someone bypasses the TypeScript interface
-  if (process.env.NODE_ENV !== 'production' && !item.icon) {
+  if (import.meta.env.DEV && !item.icon) {
     throw new Error(
       `[SidebarItem] Menu item "${item.label}" is missing an icon. ` +
       'All menu items MUST include an icon — see menuConfig.ts.',

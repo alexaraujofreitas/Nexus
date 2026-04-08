@@ -91,13 +91,16 @@ function PortfolioSummary({ portfolio, pnl }: { portfolio: any; pnl: any }) {
     );
   }
 
-  const stats = [
-    { label: 'Equity',         value: formatUSD(portfolio.equity),             color: 'default' as const },
-    { label: 'Daily PnL',      value: formatUSD(pnl.daily_pnl),               color: (pnl.daily_pnl >= 0 ? 'green' : 'red') as const },
-    { label: 'Unrealized PnL', value: formatUSD(pnl.total_unrealized),         color: (pnl.total_unrealized >= 0 ? 'green' : 'red') as const },
-    { label: 'Realized PnL',   value: formatUSD(pnl.total_realized),           color: (pnl.total_realized >= 0 ? 'green' : 'red') as const },
-    { label: 'Portfolio Heat',  value: formatPct(portfolio.portfolio_heat_pct), color: (portfolio.portfolio_heat_pct > 5 ? 'red' : portfolio.portfolio_heat_pct > 3 ? 'yellow' : 'green') as const },
-    { label: 'Fees Paid',      value: formatUSD(pnl.fees_paid),                color: 'default' as const },
+  type StatColor = 'green' | 'red' | 'yellow' | 'default';
+  const pnlColor = (v: number): StatColor => v >= 0 ? 'green' : 'red';
+  const heatColor = (v: number): StatColor => v > 5 ? 'red' : v > 3 ? 'yellow' : 'green';
+  const stats: { label: string; value: string; color: StatColor }[] = [
+    { label: 'Equity',         value: formatUSD(portfolio.equity),             color: 'default' },
+    { label: 'Daily PnL',      value: formatUSD(pnl.daily_pnl),               color: pnlColor(pnl.daily_pnl) },
+    { label: 'Unrealized PnL', value: formatUSD(pnl.total_unrealized),         color: pnlColor(pnl.total_unrealized) },
+    { label: 'Realized PnL',   value: formatUSD(pnl.total_realized),           color: pnlColor(pnl.total_realized) },
+    { label: 'Portfolio Heat',  value: formatPct(portfolio.portfolio_heat_pct), color: heatColor(portfolio.portfolio_heat_pct) },
+    { label: 'Fees Paid',      value: formatUSD(pnl.fees_paid),                color: 'default' },
   ];
   const colorMap = { green: 'text-green-600', red: 'text-red-600', yellow: 'text-yellow-600', default: 'text-gray-900' };
 

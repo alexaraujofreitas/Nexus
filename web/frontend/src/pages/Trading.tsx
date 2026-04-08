@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Wallet, X, XCircle, Search, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getPositions, closePosition, closeAllPositions, getTradeHistory } from '../api/trading';
-import type { PaperPosition, ClosedTrade } from '../api/trading';
+import type { PaperPosition } from '../api/trading';
 import { useWSStore } from '../stores/wsStore';
-import { cn, formatUSD, formatPct } from '../lib/utils';
+import { cn, formatUSD } from '../lib/utils';
 
 const PER_PAGE = 50;
 

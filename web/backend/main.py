@@ -98,10 +98,22 @@ async def lifespan(app: FastAPI):
     # Connect to PostgreSQL
     await init_async_engine()
 
-    # Create tables if they don't exist (E2E / first-run)
+    # Run Alembic migrations to keep schema up-to-date, then ensure tables
     from app.database import get_async_engine, Base
-    # Import all models so Base.metadata is populated
     import app.models.auth  # noqa: F401
+    try:
+        from alembic.config import Config as AlembicConfig
+        from alembic import command as alembic_command
+        import os
+        alembic_cfg = AlembicConfig(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+        alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url.replace("+asyncpg", ""))
+        alembic_cfg.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "alembic"))
+        alembic_command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic migrations applied")
+    except Exception as mig_exc:
+        logger.warning("Alembic migration skipped (non-fatal): %s", mig_exc)
+
+    # Ensure all tables exist (fallback for first-run without migrations)
     engine = get_async_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -67,6 +67,7 @@ export async function getAgentStatuses(): Promise<AgentStatusMap> {
               stale: false,
               signal: Math.round((asset.score || 0) * 10000) / 10000,
               confidence: Math.round(regimeConf * 10000) / 10000,
+              has_data: true,
               updated_at: scannedAt,
               errors: 0,
             };
@@ -79,6 +80,7 @@ export async function getAgentStatuses(): Promise<AgentStatusMap> {
               stale: false,
               signal: 0,
               confidence: Math.round(regimeConf * 10000) / 10000,
+              has_data: false,
               updated_at: scannedAt,
               errors: 0,
             };
