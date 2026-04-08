@@ -1747,7 +1747,7 @@ class PaperExecutor:
         # Position already removed from self._positions above.
         # Wrap the rest in try/finally so _save_open_positions() always runs,
         # even if any downstream consumer (learning, monitoring, DB write) fails.
-        try:
+        try:  # M-7: finally block at end guarantees _save_open_positions()
             # Apply exit slippage
             exit_side = "sell" if pos.side == "buy" else "buy"
             exit_fill = self._apply_slippage(exit_price, exit_side)
@@ -1979,6 +1979,9 @@ class PaperExecutor:
         except Exception as _rl_exc:
             logger.debug("PaperExecutor: rolling metrics log failed: %s", _rl_exc)
         finally:
+            # M-7: ensure open-positions snapshot is always persisted even if
+            # any downstream consumer (learning, monitoring, DB write) failed
+            # inside the outer try block.
             self._save_open_positions()
 
     def _log_rolling_demo_metrics(self) -> None:
