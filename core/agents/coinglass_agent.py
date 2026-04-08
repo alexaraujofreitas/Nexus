@@ -70,6 +70,8 @@ class CoinglassAgent:
         self._api_key: Optional[str] = None
         self._api_key_loaded = False
         self._warned_no_key = False
+        # Reuse HTTP session for connection pooling (M-22)
+        self._session = requests.Session()
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -136,7 +138,7 @@ class CoinglassAgent:
         params = {"symbol": cg_sym}
 
         try:
-            resp = requests.get(
+            resp = self._session.get(
                 _BASE_URL, headers=headers, params=params,
                 timeout=_REQUEST_TIMEOUT
             )

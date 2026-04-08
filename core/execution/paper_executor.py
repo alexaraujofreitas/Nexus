@@ -1972,13 +1972,14 @@ class PaperExecutor:
         )
         bus.publish(Topics.TRADE_CLOSED, data=trade, source="paper_executor")
         self._save_trade_to_db(trade)
-        self._save_open_positions()
 
         # ── Rolling demo telemetry ────────────────────────────────────────────
         try:
             self._log_rolling_demo_metrics()
         except Exception as _rl_exc:
             logger.debug("PaperExecutor: rolling metrics log failed: %s", _rl_exc)
+        finally:
+            self._save_open_positions()
 
     def _log_rolling_demo_metrics(self) -> None:
         """Log rolling PF / WR / avg-R after every trade close for demo monitoring."""
