@@ -40,7 +40,8 @@ def _load_cfg() -> dict[str, Any]:
             "order_timeout": float(settings.get("exchange.order_timeout_seconds", 20)),
             "data_timeout": float(settings.get("exchange.data_timeout_seconds", 10)),
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("exchange_call: config load failed, using defaults: %s", exc)
         _cfg_cache = {"order_timeout": 20.0, "data_timeout": 10.0}
     _cfg_ts = now
     return _cfg_cache
@@ -98,6 +99,11 @@ def exchange_call(
             raise TimeoutError(
                 f"Exchange call '{label}' timed out after {timeout_s:.1f}s"
             )
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            if any(k in exc_str for k in ("dns", "gaierror", "name resolution", "ssl", "certificate")):
+                logger.error("exchange_call DNS/TLS FAILURE: %s — %s", label, exc)
+            raise
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 

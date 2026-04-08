@@ -210,7 +210,8 @@ class ProbabilityCalibrator:
         try:
             from sklearn.metrics import roc_auc_score
             test_auc = float(roc_auc_score(y_test, pipe.predict_proba(X_test)[:, 1]))
-        except Exception:
+        except Exception as exc:
+            logger.warning("ProbabilityCalibrator: AUC computation failed: %s", exc)
             test_auc = None
 
         with _lock:
