@@ -1272,117 +1272,117 @@ class PaperExecutor:
             if reduce_pct >= 0.99:
                 return self.close_position(symbol)
 
-        # Calculate partial quantity
-        original_qty  = pos.quantity
-        close_qty     = original_qty * reduce_pct
-        close_price   = pos.current_price
-        new_qty       = original_qty - close_qty
+            # Calculate partial quantity
+            original_qty  = pos.quantity
+            close_qty     = original_qty * reduce_pct
+            close_price   = pos.current_price
+            new_qty       = original_qty - close_qty
 
-        # Calculate P&L for closed fraction
-        if pos.side == "buy":
-            pnl_usdt = (close_price - pos.entry_price) * close_qty
-        else:
-            pnl_usdt = (pos.entry_price - close_price) * close_qty
+            # Calculate P&L for closed fraction
+            if pos.side == "buy":
+                pnl_usdt = (close_price - pos.entry_price) * close_qty
+            else:
+                pnl_usdt = (pos.entry_price - close_price) * close_qty
 
-        # Capture sizing info BEFORE modifying the position
-        _orig_entry_sz = float(getattr(pos, "entry_size_usdt", None) or pos.size_usdt)
-        _close_sz_usdt = round(pos.size_usdt * reduce_pct, 2)   # USDT portion being closed
+            # Capture sizing info BEFORE modifying the position
+            _orig_entry_sz = float(getattr(pos, "entry_size_usdt", None) or pos.size_usdt)
+            _close_sz_usdt = round(pos.size_usdt * reduce_pct, 2)   # USDT portion being closed
 
-        # ── Update position: reduce quantity AND size_usdt proportionally ──
-        # size_usdt must shrink so that available_capital, portfolio heat, and
-        # drawdown_pct all reflect the smaller remaining position correctly.
-        pos.quantity  = new_qty
-        pos.size_usdt = pos.size_usdt * (1.0 - reduce_pct)
+            # ── Update position: reduce quantity AND size_usdt proportionally ──
+            # size_usdt must shrink so that available_capital, portfolio heat, and
+            # drawdown_pct all reflect the smaller remaining position correctly.
+            pos.quantity  = new_qty
+            pos.size_usdt = pos.size_usdt * (1.0 - reduce_pct)
 
-        # ── Move stop-loss to breakeven immediately (v1.2 Section-1 fix) ────
-        # PaperPosition.update() carries a _breakeven_applied flag that also
-        # moves the SL, but only on the NEXT tick.  Setting it here closes the
-        # 1-tick gap AND makes the change restart-safe (serialised via to_dict).
-        pos.stop_loss = pos.entry_price
-        pos._breakeven_applied = True
+            # ── Move stop-loss to breakeven immediately (v1.2 Section-1 fix) ────
+            # PaperPosition.update() carries a _breakeven_applied flag that also
+            # moves the SL, but only on the NEXT tick.  Setting it here closes the
+            # 1-tick gap AND makes the change restart-safe (serialised via to_dict).
+            pos.stop_loss = pos.entry_price
+            pos._breakeven_applied = True
 
-        # ── Realise P&L into capital ────────────────────────────────────────
-        # Full closes (close_position) already do this via _close_position().
-        # Partial closes must do it here so equity curve stays accurate.
-        self._capital += pnl_usdt
-        if self._capital > self._peak_capital:
-            self._peak_capital = self._capital
+            # ── Realise P&L into capital ────────────────────────────────────────
+            # Full closes (close_position) already do this via _close_position().
+            # Partial closes must do it here so equity curve stays accurate.
+            self._capital += pnl_usdt
+            if self._capital > self._peak_capital:
+                self._peak_capital = self._capital
 
-        # ── Record partial-close trade for full Trade History transparency ──
-        # pnl_pct is expressed relative to the CLOSED fraction only.
-        _partial_pnl_pct = round(
-            pnl_usdt / _close_sz_usdt * 100 if _close_sz_usdt > 0 else 0.0, 4
-        )
-        _partial_duration_s = int(
-            (datetime.utcnow() - pos.opened_at).total_seconds()
-        ) if pos.opened_at else 0
-
-        partial_trade = {
-            "symbol":           symbol,
-            "side":             pos.side,
-            "entry_price":      pos.entry_price,
-            "exit_price":       close_price,
-            "stop_loss":        pos.stop_loss,
-            "take_profit":      pos.take_profit,
-            "size_usdt":        _close_sz_usdt,     # size of this partial close
-            "entry_size_usdt":  round(_orig_entry_sz, 2),  # full original position
-            "exit_size_usdt":   _close_sz_usdt,            # portion closed now
-            "pnl_pct":          _partial_pnl_pct,
-            "pnl_usdt":         round(pnl_usdt, 2),
-            "exit_reason":      "partial_close",
-            "score":            pos.score,
-            "rationale":        pos.rationale,
-            "regime":           pos.regime,
-            "models_fired":     pos.models_fired,
-            "timeframe":        pos.timeframe,
-            "duration_s":       _partial_duration_s,
-            "opened_at":        pos.opened_at.isoformat() if pos.opened_at else "",
-            "closed_at":        datetime.utcnow().isoformat(),
-            "entry_expected":   getattr(pos, "entry_expected", None),
-            "expected_value":   getattr(pos, "expected_value", None),
-            "risk_amount_usdt": 0.0,
-            "expected_rr":      0.0,
-            "symbol_weight":    float(getattr(pos, "symbol_weight",  1.0) or 1.0),
-            "adjusted_score":   float(getattr(pos, "adjusted_score", pos.score or 0.0) or 0.0),
-        }
-        self._closed_trades.append(partial_trade)
-        self._save_trade_to_db(partial_trade)
-
-        # Persist updated state so restart sees correct position size
-        self._save_open_positions()
-
-        # ── Filter stats outcome enrichment (Phase 5) ──────────────────────
-        # Record realized R for this partial close so FilterStatsTracker builds
-        # an accurate quality proxy.  R = pnl / (initial_risk_per_unit * qty).
-        # Each partial close is an independent observation; the final close will
-        # record its own R for the remaining portion — no double counting.
-        _initial_risk_pc = getattr(pos, "_initial_risk", 0.0)
-        _risk_usdt_pc    = _initial_risk_pc * close_qty
-        _partial_r       = round(pnl_usdt / _risk_usdt_pc, 4) if _risk_usdt_pc > 0 else 0.0
-        try:
-            from core.analytics.filter_stats import get_filter_stats_tracker
-            _fst_pc = get_filter_stats_tracker()
-            for _fn_pc in ("time_of_day", "volatility"):
-                _fst_pc.record_trade_outcome(_fn_pc, _partial_r)
-        except Exception as _fst_pc_exc:
-            logger.debug(
-                "PaperExecutor: partial_close filter stats record failed (non-fatal): %s",
-                _fst_pc_exc,
+            # ── Record partial-close trade for full Trade History transparency ──
+            # pnl_pct is expressed relative to the CLOSED fraction only.
+            _partial_pnl_pct = round(
+                pnl_usdt / _close_sz_usdt * 100 if _close_sz_usdt > 0 else 0.0, 4
             )
+            _partial_duration_s = int(
+                (datetime.utcnow() - pos.opened_at).total_seconds()
+            ) if pos.opened_at else 0
 
-        logger.info(
-            "PaperExecutor: partial close for %s | closed %.2f%% (%.2f USDT) @ %.4f | "
-            "remaining qty=%.8f | P&L=%.2f USDT | R=%.2f | capital=%.2f",
-            symbol, reduce_pct * 100, _close_sz_usdt, close_price, new_qty,
-            pnl_usdt, _partial_r, self._capital,
-        )
-        bus.publish(Topics.TRADE_CLOSED, data=partial_trade, source="paper_executor")
-        bus.publish(
-            Topics.POSITION_UPDATED,
-            data=pos.to_dict(),
-            source="paper_executor",
-        )
-        return True
+            partial_trade = {
+                "symbol":           symbol,
+                "side":             pos.side,
+                "entry_price":      pos.entry_price,
+                "exit_price":       close_price,
+                "stop_loss":        pos.stop_loss,
+                "take_profit":      pos.take_profit,
+                "size_usdt":        _close_sz_usdt,     # size of this partial close
+                "entry_size_usdt":  round(_orig_entry_sz, 2),  # full original position
+                "exit_size_usdt":   _close_sz_usdt,            # portion closed now
+                "pnl_pct":          _partial_pnl_pct,
+                "pnl_usdt":         round(pnl_usdt, 2),
+                "exit_reason":      "partial_close",
+                "score":            pos.score,
+                "rationale":        pos.rationale,
+                "regime":           pos.regime,
+                "models_fired":     pos.models_fired,
+                "timeframe":        pos.timeframe,
+                "duration_s":       _partial_duration_s,
+                "opened_at":        pos.opened_at.isoformat() if pos.opened_at else "",
+                "closed_at":        datetime.utcnow().isoformat(),
+                "entry_expected":   getattr(pos, "entry_expected", None),
+                "expected_value":   getattr(pos, "expected_value", None),
+                "risk_amount_usdt": 0.0,
+                "expected_rr":      0.0,
+                "symbol_weight":    float(getattr(pos, "symbol_weight",  1.0) or 1.0),
+                "adjusted_score":   float(getattr(pos, "adjusted_score", pos.score or 0.0) or 0.0),
+            }
+            self._closed_trades.append(partial_trade)
+            self._save_trade_to_db(partial_trade)
+
+            # Persist updated state so restart sees correct position size
+            self._save_open_positions()
+
+            # ── Filter stats outcome enrichment (Phase 5) ──────────────────────
+            # Record realized R for this partial close so FilterStatsTracker builds
+            # an accurate quality proxy.  R = pnl / (initial_risk_per_unit * qty).
+            # Each partial close is an independent observation; the final close will
+            # record its own R for the remaining portion — no double counting.
+            _initial_risk_pc = getattr(pos, "_initial_risk", 0.0)
+            _risk_usdt_pc    = _initial_risk_pc * close_qty
+            _partial_r       = round(pnl_usdt / _risk_usdt_pc, 4) if _risk_usdt_pc > 0 else 0.0
+            try:
+                from core.analytics.filter_stats import get_filter_stats_tracker
+                _fst_pc = get_filter_stats_tracker()
+                for _fn_pc in ("time_of_day", "volatility"):
+                    _fst_pc.record_trade_outcome(_fn_pc, _partial_r)
+            except Exception as _fst_pc_exc:
+                logger.debug(
+                    "PaperExecutor: partial_close filter stats record failed (non-fatal): %s",
+                    _fst_pc_exc,
+                )
+
+            logger.info(
+                "PaperExecutor: partial close for %s | closed %.2f%% (%.2f USDT) @ %.4f | "
+                "remaining qty=%.8f | P&L=%.2f USDT | R=%.2f | capital=%.2f",
+                symbol, reduce_pct * 100, _close_sz_usdt, close_price, new_qty,
+                pnl_usdt, _partial_r, self._capital,
+            )
+            bus.publish(Topics.TRADE_CLOSED, data=partial_trade, source="paper_executor")
+            bus.publish(
+                Topics.POSITION_UPDATED,
+                data=pos.to_dict(),
+                source="paper_executor",
+            )
+            return True
 
     def reset(self, initial_capital: float = 100_000.0) -> None:
         """
@@ -1390,13 +1390,14 @@ class PaperExecutor:
         and all persistent data stores.  Restores initial capital.
         After reset + restart, the system starts completely clean.
         """
-        self._positions.clear()
-        self._closed_trades.clear()
-        self._initial_capital = initial_capital
-        self._capital         = initial_capital
-        self._peak_capital    = initial_capital
-        # Persist the empty positions to disk so they survive restarts
-        self._save_open_positions()
+        with self._lock:
+            self._positions.clear()
+            self._closed_trades.clear()
+            self._initial_capital = initial_capital
+            self._capital         = initial_capital
+            self._peak_capital    = initial_capital
+            # Persist the empty positions to disk so they survive restarts
+            self._save_open_positions()
 
         # ── 1. Wipe SQLite paper_trades table ────────────────────
         try:
@@ -1556,11 +1557,13 @@ class PaperExecutor:
 
     def get_closed_trades(self) -> list[dict]:
         """Return a copy of the closed-trade history list."""
-        return list(self._closed_trades)
+        with self._lock:
+            return list(self._closed_trades)
 
     def get_stats(self) -> dict:
         """Return a comprehensive stats dict for display in the UI."""
-        closed = self._closed_trades
+        with self._lock:
+            closed = list(self._closed_trades)
         n      = len(closed)
         wins   = sum(1 for t in closed if (t.get("pnl_pct") or 0) > 0)
         losses = n - wins
@@ -1678,66 +1681,69 @@ class PaperExecutor:
           total_trades         : int   — all-time closed trades
           session_pnl_usdt     : float — P&L since startup
         """
-        closed = self._closed_trades
-        n = len(closed)
+        with self._lock:
+            closed = list(self._closed_trades)
+            n = len(closed)
 
-        # Portfolio heat: sum of (risk per open trade) as % of capital
-        heat = 0.0
-        if self._capital > 0:
-            for pos_list in self._positions.values():
-                for p in pos_list:
-                    if p.stop_loss and p.stop_loss > 0 and p.entry_price > 0:
-                        stop_dist = abs(p.entry_price - p.stop_loss)
-                        qty = p.size_usdt / p.entry_price if p.entry_price > 0 else 0
-                        heat += (qty * stop_dist) / self._capital * 100
-                    else:
-                        # Fallback: assume 1% risk
-                        heat += (p.size_usdt / self._capital) * 0.01 * 100
+            # Portfolio heat: sum of (risk per open trade) as % of capital
+            heat = 0.0
+            if self._capital > 0:
+                for pos_list in self._positions.values():
+                    for p in pos_list:
+                        if p.stop_loss and p.stop_loss > 0 and p.entry_price > 0:
+                            stop_dist = abs(p.entry_price - p.stop_loss)
+                            qty = p.size_usdt / p.entry_price if p.entry_price > 0 else 0
+                            heat += (qty * stop_dist) / self._capital * 100
+                        else:
+                            # Fallback: assume 1% risk
+                            heat += (p.size_usdt / self._capital) * 0.01 * 100
 
-        # Last 10 outcomes
-        last10 = []
-        streak = 0
-        for t in reversed(closed[-10:]):
-            won = (t.get("pnl_usdt") or 0) > 0
-            last10.insert(0, "W" if won else "L")
+            # Last 10 outcomes
+            last10 = []
+            streak = 0
+            for t in reversed(closed[-10:]):
+                won = (t.get("pnl_usdt") or 0) > 0
+                last10.insert(0, "W" if won else "L")
 
-        # Losing streak (from most recent)
-        for t in reversed(closed):
-            won = (t.get("pnl_usdt") or 0) > 0
-            if not won:
-                streak += 1
-            else:
-                break
+            # Losing streak (from most recent)
+            for t in reversed(closed):
+                won = (t.get("pnl_usdt") or 0) > 0
+                if not won:
+                    streak += 1
+                else:
+                    break
 
-        dd = self.drawdown_pct
+            dd = self.drawdown_pct
 
-        return {
-            "capital_usdt":          round(self._capital, 2),
-            "peak_capital_usdt":     round(self._peak_capital, 2),
-            "total_return_pct":      round((self._capital / self._initial_capital - 1) * 100, 2) if self._initial_capital > 0 else 0.0,
-            "drawdown_pct":          round(dd, 2),
-            "circuit_breaker_on":    dd >= self._dd_circuit_breaker_pct,
-            "portfolio_heat_pct":    round(heat, 2),
-            "open_positions":        sum(len(v) for v in self._positions.values()),
-            "open_symbols":          list(self._positions.keys()),
-            "last_10_outcomes":      last10,
-            "current_losing_streak": streak,
-            "total_trades":          n,
-            "session_pnl_usdt":      round(self._capital - self._initial_capital, 2),
-        }
+            return {
+                "capital_usdt":          round(self._capital, 2),
+                "peak_capital_usdt":     round(self._peak_capital, 2),
+                "total_return_pct":      round((self._capital / self._initial_capital - 1) * 100, 2) if self._initial_capital > 0 else 0.0,
+                "drawdown_pct":          round(dd, 2),
+                "circuit_breaker_on":    dd >= self._dd_circuit_breaker_pct,
+                "portfolio_heat_pct":    round(heat, 2),
+                "open_positions":        sum(len(v) for v in self._positions.values()),
+                "open_symbols":          list(self._positions.keys()),
+                "last_10_outcomes":      last10,
+                "current_losing_streak": streak,
+                "total_trades":          n,
+                "session_pnl_usdt":      round(self._capital - self._initial_capital, 2),
+            }
 
     def _close_position(self, symbol: str, exit_price: float, reason: str, pos: Optional[PaperPosition] = None) -> None:
-        if pos is None:
+        with self._lock:
+            if pos is None:
+                pos_list = self._positions.get(symbol, [])
+                if not pos_list:
+                    return
+                pos = pos_list[0]
+            # Remove THIS specific position from the list
             pos_list = self._positions.get(symbol, [])
-            if not pos_list:
-                return
-            pos = pos_list[0]
-        # Remove THIS specific position from the list
-        pos_list = self._positions.get(symbol, [])
-        if pos in pos_list:
-            pos_list.remove(pos)
-        if not pos_list and symbol in self._positions:
-            del self._positions[symbol]
+            if pos in pos_list:
+                pos_list.remove(pos)
+            if not pos_list and symbol in self._positions:
+                del self._positions[symbol]
+
         # Apply exit slippage
         exit_side = "sell" if pos.side == "buy" else "buy"
         exit_fill = self._apply_slippage(exit_price, exit_side)
@@ -1806,9 +1812,10 @@ class PaperExecutor:
             "symbol_weight":    float(getattr(pos, "symbol_weight",  1.0) or 1.0),
             "adjusted_score":   float(getattr(pos, "adjusted_score", pos.score or 0.0) or 0.0),
         }
-        self._closed_trades.append(trade)
-        self._capital      += pnl_usdt   # realize P&L
-        self._peak_capital  = max(self._peak_capital, self._capital)
+        with self._lock:
+            self._closed_trades.append(trade)
+            self._capital      += pnl_usdt   # realize P&L
+            self._peak_capital  = max(self._peak_capital, self._capital)
 
         # ── Feed outcome to adaptive learning loop (Level 1 + Level 2) ────
         # Level-1: global per-model win-rate (TradeOutcomeTracker).
