@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nexus}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
       POSTGRES_DB: ${POSTGRES_DB:-nexustrader}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -66,9 +66,9 @@ services:
       redis:
         condition: service_healthy
     environment:
-      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-nexustrader}
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexustrader}
       NEXUS_REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
-      NEXUS_JWT_SECRET: ${NEXUS_JWT_SECRET:?NEXUS_JWT_SECRET must be set}
+      NEXUS_JWT_SECRET: ${NEXUS_JWT_SECRET:-dev-only-insecure-secret-do-not-use-in-prod!!}
       NEXUS_DEBUG: ${NEXUS_DEBUG:-true}
       NEXUS_CORS_ORIGINS: ${NEXUS_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
       NEXUS_SERVICE_NAME: api
@@ -93,7 +93,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-nexustrader}
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexustrader}
       NEXUS_REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
       NEXUS_CONFIG_PATH: /app/nexustrader/config.yaml
       NEXUS_ROOT_DIR: /app/nexustrader

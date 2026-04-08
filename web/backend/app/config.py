@@ -105,8 +105,8 @@ def validate_settings(s: Settings) -> list[str]:
             "Set a secure 32+ character secret via environment variable."
         )
 
-    # JWT secret minimum length
-    if len(s.jwt_secret) < 32:
+    # JWT secret minimum length (production only — dev mode uses any non-empty secret)
+    if not s.debug and s.jwt_secret and len(s.jwt_secret) < 32:
         errors.append(
             f"NEXUS_JWT_SECRET is only {len(s.jwt_secret)} characters. "
             "Minimum 32 characters required."
