@@ -514,10 +514,10 @@ class ConfluenceScorer:
         for s in active_signals:
             w = _get_adaptive_weight(s.model_name, _get_model_weight(s.model_name))
             w *= _damp_factors.get(s.model_name, 1.0)          # apply dampening
-            if w == 0.0 and s.model_name not in MODEL_WEIGHTS:
+            if w < 1e-9 and s.model_name not in MODEL_WEIGHTS:
                 logger.debug("ConfluenceScorer: unknown model '%s' excluded from scoring", s.model_name)
             total_weight += w
-        if total_weight == 0:
+        if total_weight < 1e-9:
             return None
 
         weighted_score = sum(

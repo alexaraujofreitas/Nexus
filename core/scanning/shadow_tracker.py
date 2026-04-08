@@ -387,6 +387,7 @@ def _parse_ts(ts_str: str) -> float:
         dt = datetime.fromisoformat(ts_str)
         return dt.timestamp()
     except Exception:
+        logging.getLogger(__name__).warning("_parse_ts: invalid timestamp %r, defaulting to 0.0", ts_str)
         return 0.0
 
 

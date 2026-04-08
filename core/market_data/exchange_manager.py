@@ -316,13 +316,13 @@ class ExchangeManager:
             ticker = ex.fetch_ticker(symbol)
             return {
                 "symbol": symbol,
-                "last":   ticker.get("last", 0),
-                "bid":    ticker.get("bid", 0),
-                "ask":    ticker.get("ask", 0),
-                "change": ticker.get("percentage", 0),
-                "volume": ticker.get("baseVolume", 0),
-                "high":   ticker.get("high", 0),
-                "low":    ticker.get("low", 0),
+                "last":   ticker.get("last") or 0,
+                "bid":    ticker.get("bid") or 0,
+                "ask":    ticker.get("ask") or 0,
+                "change": ticker.get("percentage") or 0,
+                "volume": ticker.get("baseVolume") or 0,
+                "high":   ticker.get("high") or 0,
+                "low":    ticker.get("low") or 0,
             }
         except Exception as e:
             logger.warning("fetch_ticker(%s) failed: %s", symbol, e)
@@ -342,13 +342,13 @@ class ExchangeManager:
             for sym, t in raw.items():
                 result[sym] = {
                     "symbol": sym,
-                    "last":   t.get("last", 0),
-                    "bid":    t.get("bid", 0),
-                    "ask":    t.get("ask", 0),
-                    "change": t.get("percentage", 0),
-                    "volume": t.get("baseVolume", 0),
-                    "high":   t.get("high", 0),
-                    "low":    t.get("low", 0),
+                    "last":   t.get("last") or 0,
+                    "bid":    t.get("bid") or 0,
+                    "ask":    t.get("ask") or 0,
+                    "change": t.get("percentage") or 0,
+                    "volume": t.get("baseVolume") or 0,
+                    "high":   t.get("high") or 0,
+                    "low":    t.get("low") or 0,
                 }
             return result
         except Exception as e:

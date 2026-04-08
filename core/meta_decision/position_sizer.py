@@ -170,7 +170,7 @@ class PositionSizer:
             return 0.0
 
         # Halt regime check
-        if self.REGIME_RISK_MULTIPLIERS.get(regime, 0.4) == 0.0:
+        if self.REGIME_RISK_MULTIPLIERS.get(regime, 0.4) < 1e-9:
             logger.debug("PositionSizer: halt regime '%s' — size=0", regime)
             return 0.0
 
@@ -314,7 +314,7 @@ class PositionSizer:
 
         # 3. Regime multiplier
         regime_mult = self.REGIME_RISK_MULTIPLIERS.get(regime, 0.4)
-        if regime_mult == 0.0:
+        if regime_mult < 1e-9:
             return 0.0  # Halt regime
 
         # 4. Score multiplier (confidence bonus)
@@ -331,7 +331,7 @@ class PositionSizer:
 
         # 5. Drawdown scalar (linear interpolation with halts)
         drawdown_scalar = self._interpolate_drawdown_scalar(drawdown_pct)
-        if drawdown_scalar == 0.0:
+        if drawdown_scalar < 1e-9:
             return 0.0  # Force halt at >= 15% drawdown
 
         # 6. Loss streak scalar
@@ -415,7 +415,7 @@ class PositionSizer:
 
     def is_halt_regime(self, regime: str) -> bool:
         """Return True if the regime has a risk multiplier of 0.0 (trading halt)."""
-        return self.REGIME_RISK_MULTIPLIERS.get(regime, 0.4) == 0.0
+        return self.REGIME_RISK_MULTIPLIERS.get(regime, 0.4) < 1e-9
 
     def get_regime_multiplier(self, regime: str) -> float:
         """Return the risk multiplier for a given regime."""

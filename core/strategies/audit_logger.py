@@ -101,8 +101,8 @@ class AuditLogger:
                 with open(self.log_file, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, default=str) + "\n")
             except Exception as exc:
-                # Log failures are non-fatal; silently skip to avoid crashing trading
-                pass
+                # Log failures are non-fatal but should be visible
+                logging.getLogger(__name__).warning("AuditLogger: log_change write failed: %s", exc)
 
     def get_log(
         self,
@@ -204,8 +204,8 @@ class AuditLogger:
         with self._lock:
             try:
                 self.log_file.write_text("")
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.getLogger(__name__).warning("AuditLogger: clear failed: %s", exc)
 
 
 # Module singleton

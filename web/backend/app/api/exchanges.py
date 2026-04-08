@@ -526,7 +526,9 @@ async def list_assets(
     if quote:
         where_clauses.append(Asset.quote_currency == quote.upper())
     if search:
-        where_clauses.append(Asset.symbol.ilike(f"%{search}%"))
+        # Escape SQL LIKE wildcards in user input to prevent wildcard injection
+        _safe_search = search.replace("%", r"\%").replace("_", r"\_")
+        where_clauses.append(Asset.symbol.ilike(f"%{_safe_search}%"))
     if is_tradable is not None:
         where_clauses.append(Asset.is_tradable.is_(is_tradable))
 
