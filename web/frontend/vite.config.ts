@@ -14,14 +14,8 @@ export default defineConfig({
     },
   },
   build: {
-    // Single bundle — minimizes concurrent requests through Cloudflare Tunnel
+    // Keep CSS in a single file for reliable loading through Cloudflare Tunnel
     cssCodeSplit: false,
-    rollupOptions: {
-      output: {
-        manualChunks: undefined,
-        inlineDynamicImports: true,
-      },
-    },
   },
   server: {
     host: true,
