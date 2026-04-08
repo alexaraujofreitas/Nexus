@@ -28,6 +28,38 @@ from aiohttp import web
 
 logger = logging.getLogger("nexus.http_api")
 
+# ── Credential encryption (Fernet AES-256) ──────────────────
+_CRED_KEY_PATH = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent / "data" / ".nexus_web_key"
+
+def _get_fernet():
+    """Return a Fernet instance, creating the key file if absent."""
+    from cryptography.fernet import Fernet
+    if _CRED_KEY_PATH.exists():
+        key = _CRED_KEY_PATH.read_bytes().strip()
+    else:
+        key = Fernet.generate_key()
+        _CRED_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CRED_KEY_PATH.write_bytes(key)
+    return Fernet(key)
+
+def _encrypt_cred(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return _get_fernet().encrypt(value.encode()).decode()
+
+def _decrypt_cred(token: Optional[str]) -> Optional[str]:
+    if not token:
+        return None
+    try:
+        return _get_fernet().decrypt(token.encode()).decode()
+    except Exception:
+        return None
+
+def _mask(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return "\u2022" * 4 + value[-4:] if len(value) > 4 else "\u2022" * len(value)
+
 
 # ── Logger-name → component mapping ──────────────────────────
 # Maps Python logger name prefixes to the component names the
@@ -257,6 +289,110 @@ class AssetStore:
     def get_active_exchange(self) -> Optional[dict]:
         return next((e for e in self._exchanges if e.get("is_active")), None)
 
+    def create_exchange(self, data: dict) -> dict:
+        """Create a new exchange entry with encrypted credentials."""
+        now = datetime.now(timezone.utc).isoformat()
+        exchange_id = data.get("exchange_id", "bybit")
+        mode = data.get("mode", "live")
+        api_key = data.get("api_key") or ""
+        api_secret = data.get("api_secret") or ""
+        passphrase = data.get("passphrase") or ""
+
+        ex = {
+            "id": self._next_exchange_id,
+            "name": data.get("name", exchange_id),
+            "exchange_id": exchange_id,
+            "has_api_key": bool(api_key),
+            "has_api_secret": bool(api_secret),
+            "has_passphrase": bool(passphrase),
+            "api_key_masked": _mask(api_key),
+            "api_secret_masked": _mask(api_secret),
+            "passphrase_masked": _mask(passphrase),
+            "_api_key_enc": _encrypt_cred(api_key) if api_key else None,
+            "_api_secret_enc": _encrypt_cred(api_secret) if api_secret else None,
+            "_passphrase_enc": _encrypt_cred(passphrase) if passphrase else None,
+            "sandbox_mode": mode == "sandbox",
+            "demo_mode": mode == "demo",
+            "mode": mode,
+            "is_active": False,
+            "testnet_url": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._next_exchange_id += 1
+        self._exchanges.append(ex)
+        self._save()
+        logger.info("AssetStore: created exchange %s (id=%d, mode=%s)", ex["name"], ex["id"], mode)
+        return self._sanitize(ex)
+
+    def update_exchange(self, eid: int, data: dict) -> Optional[dict]:
+        """Update an existing exchange entry."""
+        ex = self.get_exchange(eid)
+        if not ex:
+            return None
+
+        if "name" in data and data["name"]:
+            ex["name"] = data["name"]
+
+        if "mode" in data and data["mode"]:
+            mode = data["mode"]
+            ex["mode"] = mode
+            ex["sandbox_mode"] = mode == "sandbox"
+            ex["demo_mode"] = mode == "demo"
+
+        # Only update credentials if provided and not masked placeholder
+        bullet = "\u2022"
+        api_key = data.get("api_key")
+        if api_key and bullet not in api_key:
+            ex["has_api_key"] = True
+            ex["api_key_masked"] = _mask(api_key)
+            ex["_api_key_enc"] = _encrypt_cred(api_key)
+
+        api_secret = data.get("api_secret")
+        if api_secret and bullet not in api_secret:
+            ex["has_api_secret"] = True
+            ex["api_secret_masked"] = _mask(api_secret)
+            ex["_api_secret_enc"] = _encrypt_cred(api_secret)
+
+        passphrase = data.get("passphrase")
+        if passphrase and bullet not in passphrase:
+            ex["has_passphrase"] = True
+            ex["passphrase_masked"] = _mask(passphrase)
+            ex["_passphrase_enc"] = _encrypt_cred(passphrase)
+
+        ex["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._save()
+        logger.info("AssetStore: updated exchange %s (id=%d)", ex["name"], ex["id"])
+        return self._sanitize(ex)
+
+    def delete_exchange(self, eid: int) -> Optional[dict]:
+        """Delete an exchange and its assets."""
+        ex = self.get_exchange(eid)
+        if not ex:
+            return None
+        self._exchanges = [e for e in self._exchanges if e["id"] != eid]
+        removed_count = len([a for a in self._assets if a["exchange_id"] == eid])
+        self._assets = [a for a in self._assets if a["exchange_id"] != eid]
+        self._save()
+        logger.info("AssetStore: deleted exchange %s (id=%d, removed %d assets)", ex["name"], eid, removed_count)
+        return ex
+
+    def get_decrypted_creds(self, eid: int) -> Optional[dict]:
+        """Return decrypted credentials for an exchange (for CCXT connection)."""
+        ex = self.get_exchange(eid)
+        if not ex:
+            return None
+        return {
+            "api_key": _decrypt_cred(ex.get("_api_key_enc")),
+            "api_secret": _decrypt_cred(ex.get("_api_secret_enc")),
+            "passphrase": _decrypt_cred(ex.get("_passphrase_enc")),
+        }
+
+    @staticmethod
+    def _sanitize(ex: dict) -> dict:
+        """Return a copy of the exchange dict without encrypted fields."""
+        return {k: v for k, v in ex.items() if not k.startswith("_")}
+
     # ── Asset CRUD ─────────────────────────────────────────
     def get_assets(self, exchange_id: int, quote: str = None,
                    search: str = None, is_tradable: bool = None) -> list[dict]:
@@ -392,7 +528,10 @@ class EngineHttpApi:
         # ── Exchange Management ────────────────────────────
         r.add_get("/api/v1/exchanges/supported", self._exchanges_supported)
         r.add_get("/api/v1/exchanges/", self._exchanges_list)
+        r.add_post("/api/v1/exchanges/", self._exchange_create)
         r.add_get("/api/v1/exchanges/{id}", self._exchange_get)
+        r.add_put("/api/v1/exchanges/{id}", self._exchange_update)
+        r.add_delete("/api/v1/exchanges/{id}", self._exchange_delete)
         r.add_post("/api/v1/exchanges/{id}/activate", self._exchange_activate)
         r.add_post("/api/v1/exchanges/{id}/deactivate", self._exchange_deactivate)
         r.add_post("/api/v1/exchanges/test-connection", self._exchange_test)
@@ -653,14 +792,51 @@ class EngineHttpApi:
         })
 
     async def _exchanges_list(self, req: web.Request) -> web.Response:
-        return self._json({"exchanges": self._store.get_exchanges()})
+        exchanges = [AssetStore._sanitize(e) for e in self._store.get_exchanges()]
+        return self._json({"exchanges": exchanges})
 
     async def _exchange_get(self, req: web.Request) -> web.Response:
         eid = int(req.match_info["id"])
         ex = self._store.get_exchange(eid)
         if not ex:
             raise web.HTTPNotFound(text="Exchange not found")
+        return self._json(AssetStore._sanitize(ex))
+
+    async def _exchange_create(self, req: web.Request) -> web.Response:
+        body = await req.json()
+        exchange_id = body.get("exchange_id", "")
+        if exchange_id not in SUPPORTED_EXCHANGES:
+            return self._json(
+                {"detail": f"Unsupported exchange: {exchange_id}. "
+                           f"Supported: {', '.join(sorted(SUPPORTED_EXCHANGES))}"},
+                status=400,
+            )
+        mode = body.get("mode", "live")
+        if mode not in ("live", "sandbox", "demo"):
+            return self._json({"detail": f"Invalid mode: {mode}"}, status=400)
+        info = SUPPORTED_EXCHANGES[exchange_id]
+        if mode == "sandbox" and not info["has_sandbox"]:
+            return self._json({"detail": f"{info['name']} does not support sandbox/testnet mode"}, status=400)
+        if mode == "demo" and not info["has_demo"]:
+            return self._json({"detail": "Demo trading is only available on Bybit"}, status=400)
+
+        ex = self._store.create_exchange(body)
         return self._json(ex)
+
+    async def _exchange_update(self, req: web.Request) -> web.Response:
+        eid = int(req.match_info["id"])
+        body = await req.json()
+        ex = self._store.update_exchange(eid, body)
+        if not ex:
+            raise web.HTTPNotFound(text="Exchange not found")
+        return self._json(ex)
+
+    async def _exchange_delete(self, req: web.Request) -> web.Response:
+        eid = int(req.match_info["id"])
+        ex = self._store.delete_exchange(eid)
+        if not ex:
+            raise web.HTTPNotFound(text="Exchange not found")
+        return self._json({"status": "ok", "name": ex["name"]})
 
     async def _exchange_activate(self, req: web.Request) -> web.Response:
         eid = int(req.match_info["id"])
@@ -683,16 +859,93 @@ class EngineHttpApi:
         return self._json({"status": "ok", "name": ex["name"]})
 
     async def _exchange_test(self, req: web.Request) -> web.Response:
-        # Delegate to engine for real CCXT test
-        result = await self._engine_cmd("exchange.status")
-        connected = result.get("connected", False)
-        if connected:
+        """Test exchange connection with provided credentials via CCXT."""
+        try:
+            body = await req.json()
+        except Exception:
+            body = {}
+
+        exchange_id = body.get("exchange_id", "bybit")
+        api_key = body.get("api_key", "")
+        api_secret = body.get("api_secret", "")
+        passphrase = body.get("passphrase", "")
+        mode = body.get("mode", "live")
+        stored_exchange_id = body.get("stored_exchange_id")
+
+        # When editing an existing exchange, the user may not re-enter
+        # credentials.  Fall back to the stored (encrypted) values.
+        if (not api_key or not api_secret) and stored_exchange_id:
+            creds = self._store.get_decrypted_creds(int(stored_exchange_id))
+            if creds:
+                if not api_key:
+                    api_key = creds.get("api_key", "") or ""
+                if not api_secret:
+                    api_secret = creds.get("api_secret", "") or ""
+                if not passphrase:
+                    passphrase = creds.get("passphrase", "") or ""
+                logger.info(
+                    "Test connection: using stored credentials for exchange %s",
+                    stored_exchange_id,
+                )
+
+        if not api_key or not api_secret:
+            return self._json({"status": "error", "error": "API key and secret are required"})
+
+        try:
+            import ccxt
+            exchange_class = getattr(ccxt, exchange_id, None)
+            if not exchange_class:
+                return self._json({"status": "error", "error": f"Unknown exchange: {exchange_id}"})
+
+            config = {
+                "apiKey": api_key,
+                "secret": api_secret,
+                "enableRateLimit": True,
+                "timeout": 15000,
+                "recvWindow": 20000,
+            }
+            if passphrase:
+                config["password"] = passphrase
+
+            if mode == "sandbox":
+                config["sandbox"] = True
+
+            ex = exchange_class(config)
+
+            if mode == "demo" and exchange_id == "bybit":
+                if hasattr(ex, "enable_demo_trading"):
+                    ex.enable_demo_trading(True)
+                else:
+                    demo_urls = ex.urls.get("demotrading")
+                    if demo_urls:
+                        ex.urls["api"] = demo_urls
+                    else:
+                        ex.urls["api"] = {
+                            "public": "https://api-demo.bybit.com",
+                            "private": "https://api-demo.bybit.com",
+                        }
+
+            loop = asyncio.get_event_loop()
+            balance = await loop.run_in_executor(None, ex.fetch_balance)
+
+            usdt_free = 0.0
+            if "USDT" in balance:
+                usdt_free = float(balance["USDT"].get("free", 0) or 0)
+            elif "free" in balance and "USDT" in balance["free"]:
+                usdt_free = float(balance["free"]["USDT"] or 0)
+
+            mode_labels = {"live": "Live", "sandbox": "Testnet", "demo": "Demo"}
             return self._json({
                 "status": "ok",
-                "message": "Exchange connected",
-                "markets": len(self._store._assets),
+                "message": f"Connected to {SUPPORTED_EXCHANGES.get(exchange_id, {}).get('name', exchange_id)} ({mode_labels.get(mode, mode)})",
+                "balance_usdt": round(usdt_free, 2),
+                "mode_label": mode_labels.get(mode, mode),
             })
-        return self._json({"status": "error", "error": "Exchange not connected"})
+        except Exception as e:
+            err_msg = str(e)
+            if "auth" in err_msg.lower() or "key" in err_msg.lower() or "signature" in err_msg.lower():
+                return self._json({"status": "error", "error": f"Authentication failed: {err_msg}"})
+            return self._json({"status": "error", "error": err_msg})
 
     # ================================================================
     # ASSET MANAGEMENT

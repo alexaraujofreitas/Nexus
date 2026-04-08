@@ -236,8 +236,8 @@ def generate_daily_review(save: bool = True) -> str:
 
     # ── Fetch trades ──────────────────────────────────────────────────────────
     try:
-        from core.execution.paper_executor import get_paper_executor
-        all_trades = list(get_paper_executor()._closed_trades)
+        from core.execution.order_router import order_router
+        all_trades = list(order_router.active_executor.get_closed_trades())
     except Exception:
         all_trades = []
 
@@ -260,8 +260,8 @@ def generate_daily_review(save: bool = True) -> str:
 
     # Capital
     try:
-        from core.execution.paper_executor import get_paper_executor
-        pe = get_paper_executor()
+        from core.execution.order_router import order_router
+        pe = order_router.active_executor
         cap_now  = float(pe._capital)
         cap_peak = float(pe._peak_capital)
         dd_pct   = (cap_peak - cap_now) / cap_peak if cap_peak > 0 else 0
@@ -367,8 +367,8 @@ def generate_weekly_review(save: bool = True) -> str:
 
     # ── Fetch trades ──────────────────────────────────────────────────────────
     try:
-        from core.execution.paper_executor import get_paper_executor
-        all_trades = list(get_paper_executor()._closed_trades)
+        from core.execution.order_router import order_router
+        all_trades = list(order_router.active_executor.get_closed_trades())
     except Exception:
         all_trades = []
 
@@ -387,8 +387,8 @@ def generate_weekly_review(save: bool = True) -> str:
 
     # Capital
     try:
-        from core.execution.paper_executor import get_paper_executor
-        pe        = get_paper_executor()
+        from core.execution.order_router import order_router
+        pe        = order_router.active_executor
         cap_now   = float(pe._capital)
         cap_start = 100_000.0   # baseline starting capital
         cap_peak  = float(pe._peak_capital)

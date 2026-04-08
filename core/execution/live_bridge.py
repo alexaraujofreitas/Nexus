@@ -369,6 +369,29 @@ class LiveBridge:
     # POSITION QUERIES (PaperExecutor-compatible)
     # ══════════════════════════════════════════════════════════
 
+    # ══════════════════════════════════════════════════════════
+    # PUBLIC ACCESSORS (F-03: PaperExecutor-compatible interface)
+    # ══════════════════════════════════════════════════════════
+    # These properties mirror PaperExecutor so GUI/monitoring code
+    # can use order_router.active_executor without knowing mode.
+
+    @property
+    def _capital(self) -> float:
+        """PaperExecutor-compatible: current capital (exchange balance)."""
+        return self._fetch_usdt_balance()
+
+    @property
+    def _initial_capital(self) -> float:
+        """PaperExecutor-compatible: initial capital."""
+        with self._lock:
+            return self._initial_usdt if self._initial_usdt > 0 else self._fetch_usdt_balance()
+
+    @property
+    def _peak_capital(self) -> float:
+        """PaperExecutor-compatible: peak capital."""
+        with self._lock:
+            return self._peak_usdt
+
     def get_open_positions(self) -> List[dict]:
         with self._lock:
             return list(self._positions.values())
@@ -860,8 +883,45 @@ class LiveBridge:
             side, symbol, exit_price, pnl_usdt, pnl_pct, exit_reason,
         )
 
+        # ── F-02: Persist trade to SQLite + JSONL (same as PaperExecutor) ──
+        self._save_trade_to_db(trade)
+
         bus.publish(Topics.TRADE_CLOSED, data=trade, source="live_bridge")
         return True
+
+    def _save_trade_to_db(self, trade: dict) -> None:
+        """Persist a closed trade to the paper_trades table (best-effort).
+        Matches PaperExecutor._save_trade_to_db() schema exactly."""
+        try:
+            from core.database.engine import get_session
+            from core.database.models import PaperTrade
+            with get_session() as s:
+                s.add(PaperTrade(
+                    symbol          = trade["symbol"],
+                    side            = trade["side"],
+                    regime          = trade.get("regime", ""),
+                    timeframe       = trade.get("timeframe", ""),
+                    entry_price     = trade["entry_price"],
+                    exit_price      = trade["exit_price"],
+                    stop_loss       = trade.get("stop_loss"),
+                    take_profit     = trade.get("take_profit"),
+                    size_usdt       = trade.get("size_usdt", 0.0),
+                    entry_size_usdt = trade.get("entry_size_usdt", trade.get("size_usdt", 0.0)),
+                    exit_size_usdt  = trade.get("exit_size_usdt", trade.get("size_usdt", 0.0)),
+                    pnl_usdt        = trade["pnl_usdt"],
+                    pnl_pct         = trade["pnl_pct"],
+                    score           = trade.get("score", 0.0),
+                    exit_reason     = trade.get("exit_reason", ""),
+                    models_fired    = trade.get("models_fired") or [],
+                    rationale       = trade.get("rationale", ""),
+                    duration_s      = trade.get("duration_s", 0),
+                    opened_at       = trade.get("opened_at", ""),
+                    closed_at       = trade.get("closed_at", ""),
+                ))
+            logger.info("LiveBridge: trade persisted to DB — %s PnL=$%.2f",
+                        trade["symbol"], trade.get("pnl_usdt", 0))
+        except Exception as exc:
+            logger.error("LiveBridge: DB write failed: %s", exc)
 
     def _cancel_sl_order(self, symbol: str) -> None:
         """Cancel the server-side SL order for a symbol."""
@@ -1044,6 +1104,67 @@ class LiveBridge:
     # ══════════════════════════════════════════════════════════
     # STATE
     # ══════════════════════════════════════════════════════════
+
+    def adjust_target(self, symbol: str, new_take_profit: float) -> bool:
+        """Adjust take-profit for an open position (PaperExecutor-compatible)."""
+        with self._lock:
+            pos = self._positions.get(symbol)
+            if not pos:
+                return False
+            pos["take_profit"] = new_take_profit
+        bus.publish(Topics.POSITION_UPDATED, data=pos, source="live_bridge")
+        return True
+
+    def reset(self) -> None:
+        """Reset all state (PaperExecutor-compatible). For paper mode only."""
+        logger.warning("LiveBridge: reset() called — clearing local state only (exchange state unchanged)")
+        with self._lock:
+            self._positions.clear()
+            self._closed_trades.clear()
+            self._sl_orders.clear()
+            self._pending_confirmations.clear()
+            self._balance_cache = {"usdt": 0.0, "ts": 0.0}
+            self._peak_usdt = 0.0
+            self._initial_usdt = 0.0
+
+    def get_production_status(self) -> dict:
+        """PaperExecutor-compatible production status for system health page.
+
+        Includes ``capital_usdt`` and ``peak_capital_usdt`` keys for
+        compatibility with web engine handlers that expect the same schema
+        as PaperExecutor.get_production_status().
+        """
+        state = self.get_state()
+        stats = self.get_stats()
+        capital = stats["available_capital"]
+        with self._lock:
+            peak = self._peak_usdt if self._peak_usdt > 0 else capital
+            initial = self._initial_usdt if self._initial_usdt > 0 else capital
+        return {
+            "executor_mode": "live",
+            "initialised": state["initialised"],
+            "trading_allowed": state["trading_allowed"],
+            "degraded_mode": state["degraded_mode"],
+            "degraded_reason": state.get("degraded_reason", ""),
+            "open_positions": stats["open_positions"],
+            "open_symbols": list(self._positions.keys()),
+            "total_trades": stats["total_trades"],
+            "total_pnl_usdt": stats["total_pnl_usdt"],
+            "win_rate": stats["win_rate"],
+            "profit_factor": stats["profit_factor"],
+            "drawdown_pct": stats["drawdown_pct"],
+            "available_capital": capital,
+            # PaperExecutor-compatible keys used by web engine handlers
+            "capital_usdt": capital,
+            "peak_capital_usdt": peak,
+            "initial_capital_usdt": initial,
+            "session_pnl_usdt": stats["total_pnl_usdt"],
+            "total_return_pct": round(
+                ((capital - initial) / initial * 100) if initial > 0 else 0.0, 4
+            ),
+            "sl_orders_active": state["sl_orders_active"],
+            "recovery_complete": state["recovery_complete"],
+        }
 
     def get_state(self) -> dict:
         with self._lock:

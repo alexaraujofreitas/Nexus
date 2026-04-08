@@ -149,6 +149,9 @@ class ExchangeManager:
                 "secret":          data["api_secret"],
                 "enableRateLimit": True,
                 "timeout":         15000,
+                # Bybit rejects requests when local clock drifts >5s from
+                # server.  20s recv_window tolerates NTP jitter on VPN.
+                "recvWindow":      20000,
             }
             if data["passphrase"]:
                 config["password"] = data["passphrase"]

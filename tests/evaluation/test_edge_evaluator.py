@@ -714,12 +714,13 @@ class TestE12_SafetyContract:
         assert 'set_mode("live")' not in source
         assert "set_mode('live')" not in source
 
-    def test_e12_03_no_order_router_import(self):
-        """EdgeEvaluator must not import order_router."""
+    def test_e12_03_uses_order_router_not_paper_executor(self):
+        """EdgeEvaluator must use order_router (not hardcoded paper_executor).
+        Session 52: refactored to be mode-aware via order_router.active_executor."""
         import core.evaluation.edge_evaluator as module_src
         source = inspect.getsource(module_src)
-        assert "order_router" not in source, \
-            "EdgeEvaluator must NOT import or reference order_router"
+        assert "paper_executor" not in source, \
+            "EdgeEvaluator must NOT import paper_executor directly (use order_router)"
 
     def test_e12_04_evaluate_is_read_only(self):
         """evaluate() must not modify global state (paper_executor or similar)."""

@@ -331,7 +331,8 @@ class DashboardPage(QWidget):
     def _refresh_from_executor(self):
         """Pull initial / refreshed values from the paper executor singleton."""
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
             self._refresh_portfolio_cards(_pe)
         except Exception as exc:
             logger.debug("Dashboard executor refresh: %s", exc)
@@ -462,7 +463,8 @@ class DashboardPage(QWidget):
     def _do_position_update(self):
         """Lightweight update — only refreshes portfolio value and drawdown."""
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
             dd = _pe.drawdown_pct
             if dd > 0:
                 dd_color = "#FF3355" if dd > 10 else "#FFB300"
@@ -593,7 +595,8 @@ class DashboardPage(QWidget):
 
         # Populate Last Trade row from closed trade history
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
             closed = _pe._closed_trades
             if closed:
                 t     = closed[-1]

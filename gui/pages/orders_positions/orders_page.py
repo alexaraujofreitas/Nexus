@@ -561,7 +561,8 @@ class OrdersPositionsPage(QWidget):
     # ── data refresh ────────────────────────────────────────
     def _full_refresh(self):
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
             self._all_trades = list(reversed(_pe._closed_trades))
             self._refresh_positions_from(_pe)
             self._apply_filters()
@@ -570,7 +571,8 @@ class OrdersPositionsPage(QWidget):
 
     def _refresh_positions(self):
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
             self._refresh_positions_from(_pe)
         except Exception as exc:
             logger.debug("OrdersPositionsPage positions: %s", exc)
@@ -746,7 +748,8 @@ class OrdersPositionsPage(QWidget):
     # ── row selection → detail panel ────────────────────────
     def _on_pos_selected(self, row: int):
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
             positions = _pe.get_open_positions()
             if 0 <= row < len(positions):
                 self._show_position_detail(positions[row])

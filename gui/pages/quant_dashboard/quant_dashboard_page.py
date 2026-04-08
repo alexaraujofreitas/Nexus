@@ -22,7 +22,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QBrush, QPen, QLinearGradient
 
 from gui.main_window import PageHeader
 from core.event_bus import bus, Topics
-from core.execution.paper_executor import paper_executor as _pe
+from core.execution.order_router import order_router as _router
 
 logger = logging.getLogger(__name__)
 
@@ -934,6 +934,7 @@ class PositionsPanel(QFrame):
 
     def _refresh(self):
         """Refresh table with current positions from paper executor."""
+        _pe = _router.active_executor
         positions = _pe.get_open_positions()
         self._tbl.setRowCount(len(positions))
 
@@ -1124,6 +1125,7 @@ class PortfolioPanel(QFrame):
 
     def _refresh(self):
         """Refresh metrics from paper executor."""
+        _pe = _router.active_executor
         positions = _pe.get_open_positions()
         capital = _pe.available_capital
 
@@ -1245,6 +1247,7 @@ class TradeHistoryPanel(QFrame):
 
     def _refresh(self):
         """Refresh table with closed trades from paper executor."""
+        _pe = _router.active_executor
         trades = _pe._closed_trades[-12:] if _pe._closed_trades else []
         # Reverse to show most recent first
         trades = list(reversed(trades))

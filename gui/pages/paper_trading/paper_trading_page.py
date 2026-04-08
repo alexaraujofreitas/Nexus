@@ -358,7 +358,7 @@ class PaperTradingPage(QWidget):
     def _full_refresh(self):
         """Refresh everything from the executor singleton."""
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             self._refresh_stats(_pe)
             self._refresh_positions_from(_pe)
             self._refresh_history_from(_pe)
@@ -367,7 +367,7 @@ class PaperTradingPage(QWidget):
 
     def _refresh_positions(self):
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             self._refresh_positions_from(_pe)
             self._refresh_stats(_pe)
         except Exception as exc:
@@ -599,7 +599,7 @@ class PaperTradingPage(QWidget):
         if reply != QMessageBox.Yes:
             return
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             _pe.close_position(symbol)
         except Exception as exc:
             logger.error("close_position %s: %s", symbol, exc)
@@ -607,7 +607,7 @@ class PaperTradingPage(QWidget):
     def _adjust_stop(self, symbol: str):
         """Prompt user for a new stop-loss price and apply it (tighten only)."""
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             positions = _pe.get_open_positions()
             pos = next((p for p in positions if p.get("symbol") == symbol), None)
             if not pos:
@@ -631,7 +631,7 @@ class PaperTradingPage(QWidget):
         if not ok:
             return
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             ok = _pe.adjust_stop(symbol, new_stop_loss=new_sl)
             if not ok:
                 QMessageBox.warning(self, "Adjust Stop",
@@ -645,7 +645,7 @@ class PaperTradingPage(QWidget):
     def _adjust_target(self, symbol: str):
         """Prompt user for a new take-profit price and apply it."""
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             positions = _pe.get_open_positions()
             pos = next((p for p in positions if p.get("symbol") == symbol), None)
             if not pos:
@@ -669,7 +669,7 @@ class PaperTradingPage(QWidget):
         if not ok:
             return
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             _pe.adjust_target(symbol, new_take_profit=new_tp)
             logger.info("Take-profit adjusted: %s → %.4f", symbol, new_tp)
         except Exception as exc:
@@ -730,7 +730,7 @@ class PaperTradingPage(QWidget):
 
         try:
             from core.meta_decision.order_candidate import OrderCandidate
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             from datetime import datetime
             candidate = OrderCandidate(
                 symbol=symbol, side=side,
@@ -754,7 +754,7 @@ class PaperTradingPage(QWidget):
 
     def _on_close_all(self):
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             n = len(_pe.get_open_positions())
         except Exception:
             n = 0
@@ -770,7 +770,7 @@ class PaperTradingPage(QWidget):
         if reply != QMessageBox.Yes:
             return
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             closed = _pe.close_all()
             logger.info("PaperTradingPage: manually closed %d positions", closed)
         except Exception as exc:
@@ -789,7 +789,7 @@ class PaperTradingPage(QWidget):
         if reply != QMessageBox.Yes:
             return
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             _pe.reset()
             self._full_refresh()
         except Exception as exc:

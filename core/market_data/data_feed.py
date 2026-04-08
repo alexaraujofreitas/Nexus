@@ -349,7 +349,7 @@ class LiveDataFeed(QThread):
         callbacks safely — no cross-thread Qt crash.
         """
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             for symbol, ticker in tickers.items():
                 price = ticker.get("last") or ticker.get("close")
                 if price:

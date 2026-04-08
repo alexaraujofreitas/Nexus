@@ -2250,7 +2250,8 @@ class PerformanceAnalyticsPage(QWidget):
     @Slot()
     def _refresh(self):
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
 
             stats          = _pe.get_stats()
             closed         = _pe.get_closed_trades()

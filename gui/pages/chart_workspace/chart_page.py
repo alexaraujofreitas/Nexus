@@ -932,7 +932,8 @@ class ChartWorkspacePage(QWidget):
             closed_trades = []
 
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
             open_positions = _pe.get_open_positions()
         except Exception as exc:
             logger.debug("Trade overlay: position load error: %s", exc)

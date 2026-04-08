@@ -133,6 +133,7 @@ export async function testConnection(data: {
   api_secret?: string;
   passphrase?: string;
   mode?: string;
+  stored_exchange_id?: number;
 }): Promise<ConnectionTestResult> {
   const resp = await api.post('/exchanges/test-connection', data);
   return resp.data;

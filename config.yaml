@@ -1,5 +1,5 @@
 adaptive_activation:
-  crash_long_multiplier: 0.0
+  crash_long_multiplier: 0
   crash_short_multiplier: 1.5
   enabled: true
   min_activation_weight: 0.1
@@ -47,7 +47,7 @@ app:
   theme: dark
 backtesting:
   default_fee_pct: 0.1
-  default_initial_capital: 10000.0
+  default_initial_capital: 10000
   default_slippage_pct: 0.05
   walk_forward_step_months: 3
   walk_forward_train_months: 24
@@ -63,16 +63,16 @@ crash_detector:
   recovery_bars_required: 5
   recovery_hysteresis: 1.5
   tier_thresholds:
-    defensive: 5.0
-    emergency: 8.0
-    high_alert: 7.0
-    systemic: 9.0
+    defensive: 5
+    emergency: 8
+    high_alert: 7
+    systemic: 9
   weights:
-    atr_spike: 2.0
+    atr_spike: 2
     cross_asset_decline: 1.5
-    funding_rate_flip: 1.0
+    funding_rate_flip: 1
     liquidation_cascade: 1.5
-    oi_collapse: 1.0
+    oi_collapse: 1
     orderbook_imbalance: 1.2
     price_velocity: 1.8
 data:
@@ -105,11 +105,11 @@ execution:
   - TRENDING_UP
   - TRENDING_DOWN
   - RECOVERY
-  base_size_usdt: 500.0
+  base_size_usdt: 500
 execution_mode:
   ai_filter_only: true
   backtest_parity: false
-  parity_initial_capital: 100000.0
+  parity_initial_capital: 100000
   parity_max_heat: 0.8
   parity_max_per_asset: 3
   parity_max_positions: 10
@@ -117,10 +117,10 @@ execution_mode:
 expected_value:
   enabled: true
   ev_threshold: 0.05
-  min_rr_floor: 1.0
+  min_rr_floor: 1
   regime_uncertainty_penalty: 0.15
   score_midpoint: 0.5
-  sigmoid_steepness: 8.0
+  sigmoid_steepness: 8
 filters:
   btc_trend:
     enabled: false
@@ -158,11 +158,11 @@ ltf_confirmation:
   ema_period: 9
   ema_slope_bars: 3
   ohlcv_limit: 100
-  rsi_max_long: 72.0
-  rsi_min_short: 28.0
+  rsi_max_long: 72
+  rsi_min_short: 28
   rsi_period: 14
-  rsi_void_long: 78.0
-  rsi_void_short: 22.0
+  rsi_void_long: 78
+  rsi_void_short: 22
   timeframe: 15m
   volume_lookback: 20
   volume_ratio_min: 0.6
@@ -176,7 +176,7 @@ model_weights:
   momentum_breakout: 0.25
   orchestrator: 0.22
   order_book: 0.18
-  rl_ensemble: 0.0
+  rl_ensemble: 0
   sentiment: 0.12
   trend: 0.35
   vwap_reversion: 0.28
@@ -184,11 +184,11 @@ models:
   donchian_breakout:
     entry_buffer_atr: 0.1
     lookback: 20
-    rsi_long_min: 50.0
-    rsi_short_max: 50.0
+    rsi_long_min: 50
+    rsi_short_max: 50
     sl_atr_mult: 1.5
     strength_base: 0.35
-    tp_atr_mult: 3.0
+    tp_atr_mult: 3
     vol_mult_min: 1.3
   funding_rate:
     min_confidence: 0.55
@@ -220,7 +220,7 @@ models:
     min_confidence: 0.6
     min_signal: 0.35
     sl_atr_mult: 1.5
-    tp_atr_mult: 2.0
+    tp_atr_mult: 2
   sentiment:
     max_age_minutes: 90
     min_confidence: 0.55
@@ -230,7 +230,7 @@ models:
     tp_atr_mult: 2.5
   trend:
     adx_bonus_max: 0.3
-    adx_min: 25.0
+    adx_min: 25
     ema20_bonus: 0.15
     entry_buffer_atr: 0.2
     macd_bonus: 0.2
@@ -250,10 +250,10 @@ models:
 mr_pbl_slc:
   pullback_long:
     ema_prox_atr_mult: 0.5
-    rsi_min: 40.0
+    rsi_min: 40
     sl_atr_mult: 2.5
-    tp_atr_mult: 3.0
-    wick_strength: 1.0
+    tp_atr_mult: 3
+    wick_strength: 1
 ms_garch:
   enabled: true
   refit_every_n_bars: 100
@@ -313,14 +313,14 @@ oi_signal:
   liq_modifier_enabled: true
   min_data_quality: 2
   oi_modifier_enabled: true
-  spike_threshold_pct: 30.0
+  spike_threshold_pct: 30
   trend_confirm_bonus: 0.05
   weak_trend_penalty: 0.03
 orchestrator:
   veto_enabled: true
 performance_thresholds:
   hard_block_min_trades: 30
-  hard_block_pf_below: 1.0
+  hard_block_pf_below: 1
   hard_block_wr_below: 0.4
   min_trades_for_verdict: 20
 phase_2c:
@@ -339,14 +339,14 @@ phase_2c:
     sl_range_pct: 0.1
     strength_base: 0.35
     strength_cap: 0.8
-    tp_range_mult: 1.0
+    tp_range_mult: 1
   shadow_tracking:
     enabled: true
 portfolio_guard:
   enabled: true
   max_same_group_same_dir: 4
   multipliers:
-  - 1.0
+  - 1
   - 0.8
   - 0.55
   - 0.3
@@ -362,9 +362,9 @@ regime_affinity:
     accumulation: 0.35
     bear_trend: 0.85
     bull_trend: 0.85
-    crisis: 0.0
+    crisis: 0
     distribution: 0.5
-    liquidation_cascade: 0.0
+    liquidation_cascade: 0
     ranging: 0.15
     recovery: 0.65
     squeeze: 0.75
@@ -401,10 +401,10 @@ regime_affinity:
     accumulation: 0.8
     bear_trend: 0.08
     bull_trend: 0.05
-    crisis: 0.0
+    crisis: 0
     distribution: 0.7
-    liquidation_cascade: 0.0
-    ranging: 1.0
+    liquidation_cascade: 0
+    ranging: 1
     recovery: 0.4
     squeeze: 0.4
     uncertain: 0.2
@@ -414,9 +414,9 @@ regime_affinity:
     accumulation: 0.3
     bear_trend: 0.7
     bull_trend: 0.7
-    crisis: 0.0
+    crisis: 0
     distribution: 0.4
-    liquidation_cascade: 0.0
+    liquidation_cascade: 0
     ranging: 0.1
     recovery: 0.6
     squeeze: 0.8
@@ -453,9 +453,9 @@ regime_affinity:
     accumulation: 0.7
     bear_trend: 0.8
     bull_trend: 0.8
-    crisis: 0.0
+    crisis: 0
     distribution: 0.6
-    liquidation_cascade: 0.0
+    liquidation_cascade: 0
     ranging: 0.7
     recovery: 0.7
     squeeze: 0.5
@@ -478,10 +478,10 @@ regime_affinity:
   trend:
     accumulation: 0.2
     bear_trend: 0.9
-    bull_trend: 1.0
-    crisis: 0.0
+    bull_trend: 1
+    crisis: 0
     distribution: 0.2
-    liquidation_cascade: 0.0
+    liquidation_cascade: 0
     ranging: 0.1
     recovery: 0.7
     squeeze: 0.3
@@ -502,30 +502,30 @@ regime_affinity:
     volatility_compression: 0.7
     volatility_expansion: 0.15
 risk:
-  default_stop_loss_pct: 2.0
-  default_take_profit_pct: 4.0
+  default_stop_loss_pct: 2
+  default_take_profit_pct: 4
   max_concurrent_positions: 10
   max_open_positions: 10
-  max_portfolio_drawdown_pct: 15.0
-  max_position_pct: 2.0
+  max_portfolio_drawdown_pct: 15
+  max_position_pct: 2
   max_spread_pct: 0.3
-  max_strategy_drawdown_pct: 10.0
+  max_strategy_drawdown_pct: 10
   min_risk_reward: 1.3
   min_sharpe_live: 0.5
 risk_engine:
   atr_percentile_lookback_days: 90
-  daily_loss_limit_pct: 2.0
+  daily_loss_limit_pct: 2
   fat_tail_risk_multiplier: 1.5
   kelly_fraction: 0.25
   loss_streak_size_multiplier: 0.5
   loss_streak_trigger: 3
   max_leverage_by_regime:
-    bear_trend: 2.0
-    bull_trend: 3.0
+    bear_trend: 2
+    bull_trend: 3
     ranging: 1.5
-    uncertain: 1.0
+    uncertain: 1
     volatility_expansion: 1.5
-  max_leverage_defensive_mode: 1.0
+  max_leverage_defensive_mode: 1
   max_position_pct: 0.04
   max_positions_per_symbol: 10
   max_trades_per_scan_cycle: 1
@@ -538,7 +538,7 @@ rl:
   enabled: false
   model_dir: ''
   replay_buffer_size: 50000
-  reward_leverage: 10.0
+  reward_leverage: 10
   shadow_only: true
   train_every_n_candles: 10
 rlmf:
@@ -597,32 +597,32 @@ staged_candidates:
   retention_seconds: 86400
   ttl_seconds: 10800
 symbol_allocation:
-  btc_dominance_high: 55.0
-  btc_dominance_low: 45.0
-  btc_dominance_pct: 50.0
+  btc_dominance_high: 55
+  btc_dominance_low: 45
+  btc_dominance_pct: 50
   mode: STATIC
   profiles:
     alt_season:
-      ADA/USDT: 1.0
+      ADA/USDT: 1
       ALGO/USDT: 0.9
       AVAX/USDT: 1.1
       BCH/USDT: 0.9
-      BNB/USDT: 1.0
+      BNB/USDT: 1
       BTC/USDT: 0.7
       DOGE/USDT: 1.1
       ETH/USDT: 1.2
-      HBAR/USDT: 1.0
+      HBAR/USDT: 1
       HYPE/USDT: 1.2
-      ICP/USDT: 1.0
+      ICP/USDT: 1
       LINK/USDT: 1.1
       NEAR/USDT: 1.1
-      ONDO/USDT: 1.0
+      ONDO/USDT: 1
       RENDER/USDT: 1.1
       SOL/USDT: 1.5
       SUI/USDT: 1.2
       TRX/USDT: 0.9
-      XLM/USDT: 1.0
-      XRP/USDT: 1.0
+      XLM/USDT: 1
+      XRP/USDT: 1
     btc_dominant:
       ADA/USDT: 0.6
       ALGO/USDT: 0.5
@@ -650,7 +650,7 @@ symbol_allocation:
       AVAX/USDT: 0.8
       BCH/USDT: 0.8
       BNB/USDT: 0.8
-      BTC/USDT: 1.0
+      BTC/USDT: 1
       DOGE/USDT: 0.8
       ETH/USDT: 1.2
       HBAR/USDT: 0.7
@@ -671,7 +671,7 @@ symbol_allocation:
     AVAX/USDT: 0.7
     BCH/USDT: 0.7
     BNB/USDT: 0.8
-    BTC/USDT: 1.0
+    BTC/USDT: 1
     DOGE/USDT: 0.7
     ETH/USDT: 1.2
     HBAR/USDT: 0.7

@@ -853,8 +853,8 @@ class ConfluenceScorer:
             _capital = float(capital_usdt_override)
         else:
             try:
-                from core.execution.paper_executor import get_paper_executor
-                _pe = get_paper_executor()
+                from core.execution.order_router import order_router
+                _pe = order_router.active_executor
                 _capital = _pe._capital  # current compounding capital
             except Exception:
                 _capital = float(_s.get("scanner.capital_usdt", 100_000.0))

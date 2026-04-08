@@ -697,7 +697,7 @@ class NotificationManager:
 
             # ── Collect live trading stats ────────────────────────────────────
             try:
-                from core.execution.paper_executor import paper_executor as _pe
+                from core.execution.order_router import order_router; _pe = order_router.active_executor
                 stats = _pe.get_stats()
 
                 # Filter closed trades to today only
@@ -856,7 +856,7 @@ class NotificationManager:
 
         # ── Portfolio / Performance ───────────────────────────
         try:
-            from core.execution.paper_executor import paper_executor as _pe
+            from core.execution.order_router import order_router; _pe = order_router.active_executor
             stats = _pe.get_stats()
 
             # Compute true total equity = free cash + mark-to-market value of open positions.
@@ -905,7 +905,7 @@ class NotificationManager:
 
         # ── Open Trades Detail ─────────────────────────────────
         try:
-            from core.execution.paper_executor import paper_executor as _pe_open
+            from core.execution.order_router import order_router; _pe_open = order_router.active_executor
             _all_open = [
                 p for pos_list in _pe_open._positions.values() for p in pos_list
             ]
@@ -925,9 +925,9 @@ class NotificationManager:
 
         # ── Recent Closed Trades Detail (last 10) ──────────────
         try:
-            from core.execution.paper_executor import paper_executor as _pe_closed
+            from core.execution.order_router import order_router; _pe_closed = order_router.active_executor
             data["closed_trades_detail"] = [
-                dict(t) for t in list(_pe_closed._closed_trades)[-10:]
+                dict(t) for t in list(_pe_closed.get_closed_trades())[-10:]
             ]
         except Exception as exc:
             logger.debug("NotificationManager: closed trades detail error — %s", exc)

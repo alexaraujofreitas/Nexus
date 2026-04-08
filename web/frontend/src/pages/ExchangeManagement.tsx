@@ -314,6 +314,9 @@ function ExchangeDialog({
         api_secret: apiSecret || undefined,
         passphrase: passphrase || undefined,
         mode,
+        // When editing, pass the stored exchange DB id so the backend
+        // can look up saved credentials if the user didn't re-enter them
+        ...(isEdit && exchange ? { stored_exchange_id: exchange.id } : {}),
       });
       if (result.status === 'ok' || result.status === 'success') {
         const parts = ['Connected'];

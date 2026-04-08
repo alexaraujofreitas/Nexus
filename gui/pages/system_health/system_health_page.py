@@ -740,8 +740,8 @@ class SystemHealthPage(QWidget):
             pass
 
         try:
-            from core.execution.paper_executor import get_paper_executor
-            _pe = get_paper_executor()
+            from core.execution.order_router import order_router
+            _pe = order_router.active_executor
             if hasattr(_pe, "get_production_status"):
                 ps = _pe.get_production_status()
                 if ps.get("circuit_breaker_on", False):

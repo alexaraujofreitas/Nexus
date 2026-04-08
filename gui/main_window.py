@@ -235,6 +235,14 @@ class NexusStatusBar(QStatusBar):
         self._clock.setStyleSheet("color: #4A5568; font-size: 13px; padding: 0 12px;")
         self.addPermanentWidget(self._clock)
 
+        # Execution mode indicator (F-06)
+        self._mode_label = QLabel("PAPER MODE")
+        self._mode_label.setStyleSheet(
+            "color: #00FF88; font-size: 13px; font-weight: bold; padding: 0 12px; "
+            "background-color: rgba(0,255,136,0.15); border-radius: 4px;"
+        )
+        self.addPermanentWidget(self._mode_label)
+
         # Exchange status — name updated at runtime by MainWindow._restore_status_bar_exchange()
         self._exchange_status = QLabel("⬤ Exchange: Disconnected")
         self._exchange_status.setObjectName("status_disconnected")
@@ -290,6 +298,21 @@ class NexusStatusBar(QStatusBar):
             self._model_status.setText("⬤ AI: Offline")
             self._model_status.setStyleSheet("color: #4A5568; font-size: 13px; padding: 0 12px;")
 
+    def set_execution_mode(self, mode: str):
+        """Update the execution mode indicator (F-06)."""
+        if mode == "live":
+            self._mode_label.setText("LIVE MODE")
+            self._mode_label.setStyleSheet(
+                "color: #FF3355; font-size: 13px; font-weight: bold; padding: 0 12px; "
+                "background-color: rgba(255,51,85,0.15); border-radius: 4px;"
+            )
+        else:
+            self._mode_label.setText("PAPER MODE")
+            self._mode_label.setStyleSheet(
+                "color: #00FF88; font-size: 13px; font-weight: bold; padding: 0 12px; "
+                "background-color: rgba(0,255,136,0.15); border-radius: 4px;"
+            )
+
 
 class MainWindow(QMainWindow):
     """
@@ -303,6 +326,7 @@ class MainWindow(QMainWindow):
     _sig_exchange_error     = Signal(str, str)          # name, reason
     _sig_feed_status        = Signal(bool)              # active
     _sig_exchange_mode      = Signal(str)               # exchange mode string
+    _sig_mode_changed       = Signal(str)               # execution mode: "paper" | "live"
     _sig_ai_status          = Signal(bool)              # AI online/offline
 
     def __init__(self):
@@ -317,6 +341,7 @@ class MainWindow(QMainWindow):
         self._navigate_to("dashboard")
         self._restore_exchange_mode()
         self._restore_status_bar_exchange()
+        self._restore_execution_mode()
         self._start_ai_health_check()
         logger.info("MainWindow initialized")
 
@@ -430,6 +455,7 @@ class MainWindow(QMainWindow):
         self._sig_exchange_error.connect(self._update_exchange_error)   # (str, str)
         self._sig_feed_status.connect(self._update_feed_status)
         self._sig_exchange_mode.connect(self.sidebar.set_trading_mode)
+        self._sig_mode_changed.connect(self.status_bar.set_execution_mode)
         self._sig_ai_status.connect(self.status_bar.set_model_active)
 
     def _connect_events(self):
@@ -437,6 +463,7 @@ class MainWindow(QMainWindow):
         bus.subscribe(Topics.EXCHANGE_CONNECTED, self._on_exchange_connected)
         bus.subscribe(Topics.EXCHANGE_ERROR, self._on_exchange_error)
         bus.subscribe(Topics.FEED_STATUS, self._on_feed_status)
+        bus.subscribe(Topics.MODE_CHANGED, self._on_mode_changed)
 
     def _restore_exchange_mode(self):
         """
@@ -473,6 +500,14 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             logger.debug("_restore_status_bar_exchange: %s", exc)
 
+    def _restore_execution_mode(self):
+        """Set initial execution mode indicator from order_router."""
+        try:
+            from core.execution.order_router import order_router
+            self.status_bar.set_execution_mode(order_router.mode)
+        except Exception as exc:
+            logger.debug("_restore_execution_mode: %s", exc)
+
     def _navigate_to(self, page_key: str):
         if page_key in self._pages:
             self.stack.setCurrentWidget(self._pages[page_key])
@@ -502,6 +537,11 @@ class MainWindow(QMainWindow):
     def _on_feed_status(self, event):
         data = event.data or {}
         self._sig_feed_status.emit(data.get("active", False))
+
+    def _on_mode_changed(self, event):
+        data = event.data or {}
+        mode = data.get("new_mode", "paper")
+        self._sig_mode_changed.emit(mode)
 
     # ── Slot handlers (always execute on main thread) ───────────────
 

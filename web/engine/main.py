@@ -88,7 +88,7 @@ class TradingEngineService:
 
         # ── Core component references (populated during init) ──
         self._settings = None          # config.settings.AppSettings
-        self._pe = None                # core.execution.paper_executor.PaperExecutor
+        self._pe = None                # active executor (PaperExecutor or LiveBridge via order_router)
         self._scanner = None           # core.scanning.scanner.AssetScanner
         self._exchange_manager = None  # core.market_data.exchange_manager
         self._orchestrator = None      # core.orchestrator.orchestrator_engine
@@ -134,7 +134,7 @@ class TradingEngineService:
             (5, "Creating ExchangeManager",     self._init_exchange),
             (6, "Creating OrchestratorEngine",  self._init_orchestrator),
             (7, "Creating AgentCoordinator",    self._init_agents),
-            (8, "Creating PaperExecutor",       self._init_executor),
+            (8, "Initializing active executor",  self._init_executor),
             (9, "Creating CrashDefenseCtrl",    self._init_crash_defense),
             (10, "Creating NotificationManager", self._init_notifications),
             (11, "Loading positions & history",  self._init_positions),
@@ -239,9 +239,17 @@ class TradingEngineService:
 
     async def _init_exchange(self):
         """Import and store reference to ExchangeManager singleton.
-        Auto-loads the active exchange from DB if one is configured."""
+
+        Syncs the SQLite exchanges table from web_assets.json so that
+        exchange_manager.load_active_exchange() connects to the correct
+        endpoint (testnet vs demo vs live).  web_assets.json is the
+        single source of truth for exchange configuration in the web UI.
+        """
         from core.market_data.exchange_manager import exchange_manager
         self._exchange_manager = exchange_manager
+
+        # ── Sync DB from web_assets.json (single source of truth) ──
+        self._sync_exchange_db_from_assets()
 
         # Auto-connect: load DB-configured exchange so scanner has data
         if not exchange_manager.get_exchange():
@@ -254,6 +262,80 @@ class TradingEngineService:
             except Exception as exc:
                 logger.warning("ExchangeManager auto-connect failed: %s", exc)
         logger.info("ExchangeManager ready")
+
+    def _sync_exchange_db_from_assets(self):
+        """Sync SQLite exchanges table from web_assets.json.
+
+        The web UI manages exchanges via AssetStore (web_assets.json),
+        but exchange_manager reads from SQLite.  This method ensures
+        the DB reflects the web_assets.json config so the ccxt instance
+        connects to the correct endpoint (testnet vs demo vs live).
+
+        Only updates mode flags (sandbox_mode, demo_mode) for the active
+        exchange.  Credentials are NOT touched — they remain encrypted
+        in the DB as-is.
+        """
+        try:
+            import json as _json
+            from pathlib import Path
+            from core.database.engine import get_session
+            from core.database.models import Exchange as ExchangeModel
+
+            store_path = Path(__file__).resolve().parent.parent.parent / "data" / "web_assets.json"
+            if not store_path.exists():
+                logger.debug("web_assets.json not found — skipping DB sync")
+                return
+
+            data = _json.loads(store_path.read_text())
+            active_asset = None
+            for ex in data.get("exchanges", []):
+                if ex.get("is_active"):
+                    active_asset = ex
+                    break
+
+            if not active_asset:
+                logger.debug("No active exchange in web_assets.json — skipping DB sync")
+                return
+
+            asset_mode = active_asset.get("mode", "unknown")
+            asset_name = active_asset.get("name", "Unknown")
+            target_sandbox = (asset_mode == "sandbox")
+            target_demo = (asset_mode == "demo")
+
+            with get_session() as session:
+                db_model = session.query(ExchangeModel).filter_by(is_active=True).first()
+                if not db_model:
+                    logger.debug("No active exchange in DB — skipping sync")
+                    return
+
+                changed = False
+                if db_model.sandbox_mode != target_sandbox:
+                    logger.info(
+                        "DB sync: sandbox_mode %s → %s (from web_assets.json '%s')",
+                        db_model.sandbox_mode, target_sandbox, asset_name,
+                    )
+                    db_model.sandbox_mode = target_sandbox
+                    changed = True
+                if getattr(db_model, "demo_mode", False) != target_demo:
+                    logger.info(
+                        "DB sync: demo_mode %s → %s (from web_assets.json '%s')",
+                        getattr(db_model, "demo_mode", False), target_demo, asset_name,
+                    )
+                    db_model.demo_mode = target_demo
+                    changed = True
+
+                if changed:
+                    session.commit()
+                    logger.info(
+                        "Exchange DB synced from web_assets.json: mode='%s' "
+                        "(sandbox=%s, demo=%s)",
+                        asset_mode, target_sandbox, target_demo,
+                    )
+                else:
+                    logger.debug("Exchange DB already matches web_assets.json — no sync needed")
+
+        except Exception as exc:
+            logger.warning("Exchange DB sync from web_assets.json failed: %s", exc)
 
     async def _init_orchestrator(self):
         """Import and store reference to OrchestratorEngine singleton."""
@@ -287,17 +369,155 @@ class TradingEngineService:
         )
 
     async def _init_executor(self):
-        """Construct PaperExecutor (no global singleton — engine owns it)."""
-        from core.execution.paper_executor import PaperExecutor
-        initial_capital = 100_000.0
-        if self._settings:
-            initial_capital = self._settings.get(
-                "risk_engine.initial_capital_usdt", 100_000.0,
+        """Set order_router mode from exchange config, then get active executor.
+
+        Reads the active exchange from web_assets.json:
+          - mode "sandbox" or "live" → order_router "live" → LiveBridge
+          - mode "demo" or absent    → order_router "paper" → PaperExecutor
+
+        When live mode is selected, initializes the full Phase 8 subsystem
+        (ExchangeAdapter, IdempotencyStore, LiveExecutor, ReconciliationEngine,
+        RecoveryManager) and injects them into LiveBridge via set_components().
+        This mirrors the desktop main.py Phase 8 initialization.
+
+        All downstream ``self._pe`` references automatically get the
+        correct executor.
+        """
+        from core.execution.order_router import order_router
+
+        # Determine execution mode from the active exchange config
+        exchange_mode = self._get_active_exchange_mode()
+        if exchange_mode in ("sandbox", "live"):
+            order_router.set_mode("live")
+            logger.info(
+                "Exchange mode '%s' → order_router set to LIVE (LiveBridge)",
+                exchange_mode,
             )
-        self._pe = PaperExecutor(initial_capital_usdt=initial_capital)
+            # Initialize Phase 8 LiveBridge subsystem
+            self._init_phase8_live_bridge()
+        else:
+            logger.info(
+                "Exchange mode '%s' → order_router stays PAPER (PaperExecutor)",
+                exchange_mode,
+            )
+
+        self._pe = order_router.active_executor
+
+        # Log which executor we got
+        executor_name = type(self._pe).__name__
+        router_mode = getattr(order_router, '_mode', 'unknown')
         logger.info(
-            "PaperExecutor ready (capital=%.2f USDT)", initial_capital,
+            "Executor ready: %s (mode=%s, exchange=%s)",
+            executor_name, router_mode, exchange_mode,
         )
+
+    def _init_phase8_live_bridge(self):
+        """Initialize Phase 8 live execution subsystem and inject into LiveBridge.
+
+        Mirrors the desktop main.py Phase 8 initialization sequence:
+        1. Get CCXT exchange instance from exchange_manager
+        2. Create ExchangeAdapter (CCXT wrapper with retry/error classification)
+        3. Create IdempotencyStore (persistent order dedup)
+        4. Create Phase8 LiveExecutor (10-state order FSM)
+        5. Create ReconciliationEngine + RecoveryManager
+        6. Inject all into LiveBridge via set_components()
+        7. Run startup recovery (exchange state → local state)
+        """
+        try:
+            from core.market_data.exchange_manager import exchange_manager as _em
+
+            ccxt_exchange = _em.get_exchange()
+            if ccxt_exchange is None:
+                logger.warning(
+                    "Phase 8 init: no CCXT exchange instance — "
+                    "LiveBridge will report capital=0 until exchange connects"
+                )
+                return
+
+            logger.info("=" * 50)
+            logger.info("  PHASE 8 LIVE SUBSYSTEM INITIALIZATION (web)")
+            logger.info("  Exchange mode: %s", _em.mode)
+            logger.info("=" * 50)
+
+            # 1. ExchangeAdapter
+            from core.intraday.live import (
+                ExchangeAdapter,
+                IdempotencyStore,
+                LiveExecutor as Phase8LiveExecutor,
+                OrderReconciliationEngine,
+                RestartRecoveryManager,
+            )
+            from pathlib import Path
+
+            adapter = ExchangeAdapter(exchange=ccxt_exchange)
+            logger.info("Phase 8 (web): ExchangeAdapter ready")
+
+            # 2. IdempotencyStore
+            store_path = Path(__file__).resolve().parent.parent.parent / "data" / "idempotency_store.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            idem_store = IdempotencyStore(store_path=store_path)
+            loaded = idem_store.load()
+            logger.info("Phase 8 (web): IdempotencyStore ready (%d entries loaded)", loaded)
+
+            # 3. Phase 8 LiveExecutor (10-state FSM)
+            p8_executor = Phase8LiveExecutor(
+                exchange_adapter=adapter,
+                idempotency_store=idem_store,
+            )
+            logger.info("Phase 8 (web): LiveExecutor ready (10-state FSM active)")
+
+            # 4. ReconciliationEngine + RecoveryManager
+            recon_engine = OrderReconciliationEngine(exchange_adapter=adapter)
+            recovery_mgr = RestartRecoveryManager(
+                exchange_adapter=adapter,
+                idempotency_store=idem_store,
+                reconciliation_engine=recon_engine,
+            )
+            logger.info("Phase 8 (web): ReconciliationEngine + RecoveryManager ready")
+
+            # 5. Inject into LiveBridge
+            from core.execution.live_bridge import live_bridge
+            live_bridge.set_components(
+                exchange_adapter=adapter,
+                idempotency_store=idem_store,
+                phase8_executor=p8_executor,
+                reconciliation_engine=recon_engine,
+                recovery_manager=recovery_mgr,
+            )
+            logger.info("Phase 8 (web): LiveBridge components injected")
+
+            # 6. Run startup recovery (exchange = single source of truth)
+            logger.info("Phase 8 (web): === STARTUP RECOVERY ===")
+            report = live_bridge.run_startup_recovery(auto_resolve=True)
+            trading_ok = report.get("trading_allowed", False)
+            logger.info(
+                "Phase 8 (web): Recovery complete — trading_allowed=%s",
+                trading_ok,
+            )
+
+        except Exception as exc:
+            logger.error(
+                "Phase 8 (web) initialization failed: %s\n%s",
+                exc, traceback.format_exc(),
+            )
+
+    def _get_active_exchange_mode(self) -> str:
+        """Read the active exchange mode from web_assets.json.
+
+        Returns 'demo', 'sandbox', 'live', or 'unknown'.
+        """
+        try:
+            import json as _json
+            from pathlib import Path
+            store_path = Path(__file__).resolve().parent.parent.parent / "data" / "web_assets.json"
+            if store_path.exists():
+                data = _json.loads(store_path.read_text())
+                for ex in data.get("exchanges", []):
+                    if ex.get("is_active"):
+                        return ex.get("mode", "unknown")
+        except Exception as exc:
+            logger.warning("Could not read exchange mode from web_assets.json: %s", exc)
+        return "unknown"
 
     async def _init_crash_defense(self):
         """Initialize CrashDefenseController and inject executor."""
@@ -1853,7 +2073,10 @@ class TradingEngineService:
             )
 
             # Build cumulative capital curve
-            initial_capital = getattr(self._pe, '_initial_capital_usdt', 100_000.0)
+            initial_capital = getattr(self._pe, '_initial_capital_usdt', 0.0) or (
+                self._pe.get_production_status().get("initial_capital_usdt", 0.0)
+                if hasattr(self._pe, 'get_production_status') else 0.0
+            )
             capital = initial_capital
             peak_capital = initial_capital
             drawdown_points = []
@@ -2197,7 +2420,7 @@ class TradingEngineService:
                 "positions": positions,
                 "count": len(positions),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": "paper_executor"
+                "data_source": type(self._pe).__name__ if self._pe else "none"
             }
         except Exception as e:
             logger.error(f"get_active_positions failed: {e}")
@@ -2211,7 +2434,7 @@ class TradingEngineService:
             if self._pe:
                 status = self._pe.get_production_status() if hasattr(self._pe, 'get_production_status') else {}
                 stats = self._pe.get_stats() if hasattr(self._pe, 'get_stats') else {}
-                capital = status.get("capital_usdt", 0) or getattr(self._pe, '_capital_usdt', 100000)
+                capital = status.get("capital_usdt", 0) or status.get("available_capital", 0)
                 peak = status.get("peak_capital_usdt", capital)
 
                 # Calculate portfolio heat
@@ -2241,7 +2464,7 @@ class TradingEngineService:
                 "status": "ok",
                 "portfolio": portfolio,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": "paper_executor"
+                "data_source": type(self._pe).__name__ if self._pe else "none"
             }
         except Exception as e:
             logger.error(f"get_portfolio_state failed: {e}")
@@ -2286,7 +2509,7 @@ class TradingEngineService:
                     "net_pnl": round(total_realized + total_unrealized - fees_paid, 2),
                 },
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": "paper_executor"
+                "data_source": type(self._pe).__name__ if self._pe else "none"
             }
         except Exception as e:
             logger.error(f"get_live_pnl failed: {e}")
@@ -2309,7 +2532,7 @@ class TradingEngineService:
 
             if self._pe:
                 status = self._pe.get_production_status() if hasattr(self._pe, 'get_production_status') else {}
-                capital = status.get("capital_usdt", 100000)
+                capital = status.get("capital_usdt", 0) or status.get("available_capital", 0)
                 peak = status.get("peak_capital_usdt", capital)
 
                 risk["drawdown_pct"] = status.get("drawdown_pct", 0)
@@ -2342,7 +2565,7 @@ class TradingEngineService:
                 "status": "ok",
                 "risk": risk,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": "paper_executor"
+                "data_source": type(self._pe).__name__ if self._pe else "none"
             }
         except Exception as e:
             logger.error(f"get_risk_state failed: {e}")
@@ -2404,7 +2627,7 @@ class TradingEngineService:
                 "trades": trades,
                 "count": len(trades),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": "paper_executor"
+                "data_source": type(self._pe).__name__ if self._pe else "none"
             }
         except Exception as e:
             logger.error(f"get_recent_trades_monitor failed: {e}")

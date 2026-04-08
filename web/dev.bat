@@ -52,26 +52,18 @@ echo ========================================
 echo  NexusTrader Local Dev Launcher
 echo ========================================
 echo.
-echo  NOTE: Redis is not available locally.
-echo  The engine runs standalone with SQLite.
-echo  Web dashboard will show "Engine Disconnected"
-echo  (this is expected without Redis).
+echo  The engine runs its own HTTP API on :8000
+echo  (aiohttp, no PostgreSQL/Redis needed).
+echo  Vite proxies /api -> :8000 automatically.
 echo.
 
-echo [1/3] Starting Backend API (:8000)...
-set NEXUS_DEBUG=true
-set NEXUS_JWT_SECRET=dev-only-insecure-secret-do-not-use-in-prod!!
-set NEXUS_DATABASE_URL=postgresql://nexus:nexus@localhost:5432/nexustrader
-set NEXUS_REDIS_URL=redis://localhost:6379/0
-start "NexusTrader Backend" cmd /k "cd /d %~dp0backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
-
-echo [2/3] Starting Frontend (Vite :5173)...
+echo [1/2] Starting Frontend (Vite :5173)...
 start "NexusTrader Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
 
-echo [3/3] Starting Engine...
+echo [2/2] Starting Engine (aiohttp API :8000)...
 echo.
 echo ========================================
-echo  Backend:   http://localhost:8000
+echo  API:       http://localhost:8000
 echo  Frontend:  http://localhost:5173
 echo  Engine:    Running in this window
 echo ========================================
