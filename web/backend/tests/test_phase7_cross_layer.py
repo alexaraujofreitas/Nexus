@@ -61,7 +61,7 @@ class TestMiddlewareStackOrder:
         mw = SecurityHeadersMiddleware(app=None)
         resp = await mw.dispatch(MagicMock(), call_next)
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
-        assert resp.headers["X-Frame-Options"] == "DENY"
+        assert resp.headers["X-Frame-Options"] == "SAMEORIGIN"
         assert "max-age=31536000" in resp.headers["Strict-Transport-Security"]
         assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
