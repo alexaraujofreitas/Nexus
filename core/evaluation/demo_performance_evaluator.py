@@ -125,8 +125,8 @@ class DemoPerformanceEvaluator:
         """
         Run all readiness checks and return a ReadinessAssessment.
 
-        If closed_trades is None, fetches from the module-level paper_executor
-        singleton automatically.
+        If closed_trades is None, fetches from the active executor via order_router
+        automatically.
 
         Also runs the EdgeEvaluator and attaches the EdgeAssessment as
         assessment.edge_assessment.  The two evaluations are independent.
@@ -162,8 +162,8 @@ class DemoPerformanceEvaluator:
     @staticmethod
     def _fetch_trades() -> list[dict]:
         try:
-            from core.execution.paper_executor import paper_executor
-            return paper_executor.get_closed_trades()
+            from core.execution.order_router import order_router
+            return order_router.active_executor.get_closed_trades()
         except Exception as exc:
             logger.warning("DemoPerformanceEvaluator: could not fetch trades — %s", exc)
             return []

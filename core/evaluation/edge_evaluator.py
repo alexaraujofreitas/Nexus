@@ -360,7 +360,7 @@ class EdgeEvaluator:
         """
         Run all edge checks and return an EdgeAssessment.
 
-        If closed_trades is None, fetches from the paper_executor singleton.
+        If closed_trades is None, fetches from the active executor via order_router.
         """
         with self._lock:
             if closed_trades is None:
@@ -379,8 +379,8 @@ class EdgeEvaluator:
     @staticmethod
     def _fetch_trades() -> list[dict]:
         try:
-            from core.execution.paper_executor import paper_executor
-            return paper_executor.get_closed_trades()
+            from core.execution.order_router import order_router
+            return order_router.active_executor.get_closed_trades()
         except Exception as exc:
             logger.warning("EdgeEvaluator: could not fetch trades — %s", exc)
             return []
