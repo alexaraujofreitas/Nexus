@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import requests
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -36,6 +37,8 @@ class ScalpingAgent(BaseAgent):
         super().__init__(name, parent)
         # Cache current price by symbol for VWAP calculation
         self._current_prices: dict[str, float] = {}
+        # Reuse HTTP session for connection pooling (M-22)
+        self._session = requests.Session()
 
     # ── Abstract interface implementation ──────────────────────────
 
@@ -346,7 +349,7 @@ class ScalpingAgent(BaseAgent):
         """Fetch order book from Binance (20 levels)."""
         try:
             url = f"https://api.binance.com/api/v3/depth?symbol={symbol}&limit=20"
-            resp = requests.get(url, timeout=5)
+            resp = self._session.get(url, timeout=5)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
@@ -357,7 +360,7 @@ class ScalpingAgent(BaseAgent):
         """Fetch recent trades from Binance (50 trades)."""
         try:
             url = f"https://api.binance.com/api/v3/trades?symbol={symbol}&limit=50"
-            resp = requests.get(url, timeout=5)
+            resp = self._session.get(url, timeout=5)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
@@ -371,7 +374,7 @@ class ScalpingAgent(BaseAgent):
                 f"https://api.binance.com/api/v3/klines"
                 f"?symbol={symbol}&interval={interval}&limit={limit}"
             )
-            resp = requests.get(url, timeout=5)
+            resp = self._session.get(url, timeout=5)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
@@ -382,7 +385,7 @@ class ScalpingAgent(BaseAgent):
         """Fetch current price from Binance ticker."""
         try:
             url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
-            resp = requests.get(url, timeout=5)
+            resp = self._session.get(url, timeout=5)
             resp.raise_for_status()
             data = resp.json()
             return float(data.get("price", 0))

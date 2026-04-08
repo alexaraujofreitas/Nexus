@@ -86,8 +86,6 @@ def _migrate_schema():
     """
     migrations = [
         # (table, column, SQL type + default)
-        ("trading_rules", "status",         "VARCHAR(20) DEFAULT 'draft'"),
-        ("trading_rules", "runs_completed", "INTEGER DEFAULT 0"),
         ("exchanges",     "demo_mode",      "BOOLEAN DEFAULT 0"),
         # Session 30: position-sizing transparency columns.
         # entry_size_usdt = original USDT deployed when trade opened.
