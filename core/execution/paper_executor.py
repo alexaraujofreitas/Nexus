@@ -1040,55 +1040,55 @@ class PaperExecutor:
 
             # Iterate over a copy — positions may be closed during iteration
             for pos in list(self._positions.get(symbol, [])):
-            exit_reason = pos.update(price, parity_mode=_parity)
+                exit_reason = pos.update(price, parity_mode=_parity)
 
-            # ── v1.2: Auto-partial-exit at +1R (Phase 5 winning config) ──────
-            # DISABLED in parity mode — backtest uses static SL/TP only.
-            # When unrealized P&L reaches exactly +1R (based on original risk),
-            # close 33% of the position and move SL to breakeven.
-            # The SL breakeven move is handled inside pos.update() via
-            # _breakeven_applied.  Both flags persist across restarts to prevent
-            # duplicate partial closes after a system restart.
-            # Only fires when: price not already at SL/TP, initial risk > 0,
-            # partial not already applied, and exit mode is "partial" in config.
-            if (
-                not _parity
-                and not exit_reason
-                and not pos._auto_partial_applied
-                and pos._initial_risk > 0
-            ):
-                try:
-                    from config.settings import settings as _s_pe
-                    _exit_mode = _s_pe.get("exit.mode", "partial")
-                    if _exit_mode == "partial":
-                        _partial_pct = float(_s_pe.get("exit.partial_pct", 0.33))
-                        _trigger_r   = float(_s_pe.get("exit.partial_r_trigger", 1.0))
-                        _ur = (
-                            (price - pos.entry_price) / pos._initial_risk
-                            if pos.side == "buy"
-                            else (pos.entry_price - price) / pos._initial_risk
-                        )
-                        if _ur >= _trigger_r:
-                            pos._auto_partial_applied = True
-                            logger.info(
-                                "PaperExecutor: AUTO-PARTIAL triggered for %s %s @ %.4f "
-                                "(unrealised_R=%.2f >= trigger %.1fR) — closing %.0f%%",
-                                pos.side, symbol, price, _ur, _trigger_r, _partial_pct * 100,
+                # ── v1.2: Auto-partial-exit at +1R (Phase 5 winning config) ──────
+                # DISABLED in parity mode — backtest uses static SL/TP only.
+                # When unrealized P&L reaches exactly +1R (based on original risk),
+                # close 33% of the position and move SL to breakeven.
+                # The SL breakeven move is handled inside pos.update() via
+                # _breakeven_applied.  Both flags persist across restarts to prevent
+                # duplicate partial closes after a system restart.
+                # Only fires when: price not already at SL/TP, initial risk > 0,
+                # partial not already applied, and exit mode is "partial" in config.
+                if (
+                    not _parity
+                    and not exit_reason
+                    and not pos._auto_partial_applied
+                    and pos._initial_risk > 0
+                ):
+                    try:
+                        from config.settings import settings as _s_pe
+                        _exit_mode = _s_pe.get("exit.mode", "partial")
+                        if _exit_mode == "partial":
+                            _partial_pct = float(_s_pe.get("exit.partial_pct", 0.33))
+                            _trigger_r   = float(_s_pe.get("exit.partial_r_trigger", 1.0))
+                            _ur = (
+                                (price - pos.entry_price) / pos._initial_risk
+                                if pos.side == "buy"
+                                else (pos.entry_price - price) / pos._initial_risk
                             )
-                            self.partial_close(symbol, _partial_pct)
-                            # partial_close already published POSITION_UPDATED; skip below
-                            continue
-                except Exception as _ap_exc:
-                    logger.debug(
-                        "PaperExecutor: auto-partial check failed for %s (non-fatal): %s",
-                        symbol, _ap_exc,
-                    )
-            # ─────────────────────────────────────────────────────────────────
+                            if _ur >= _trigger_r:
+                                pos._auto_partial_applied = True
+                                logger.info(
+                                    "PaperExecutor: AUTO-PARTIAL triggered for %s %s @ %.4f "
+                                    "(unrealised_R=%.2f >= trigger %.1fR) — closing %.0f%%",
+                                    pos.side, symbol, price, _ur, _trigger_r, _partial_pct * 100,
+                                )
+                                self.partial_close(symbol, _partial_pct)
+                                # partial_close already published POSITION_UPDATED; skip below
+                                continue
+                    except Exception as _ap_exc:
+                        logger.debug(
+                            "PaperExecutor: auto-partial check failed for %s (non-fatal): %s",
+                            symbol, _ap_exc,
+                        )
+                # ─────────────────────────────────────────────────────────────────
 
-            if exit_reason:
-                self._close_position(symbol, price, exit_reason, pos)
-            else:
-                bus.publish(Topics.POSITION_UPDATED, data=pos.to_dict(), source="paper_executor")
+                if exit_reason:
+                    self._close_position(symbol, price, exit_reason, pos)
+                else:
+                    bus.publish(Topics.POSITION_UPDATED, data=pos.to_dict(), source="paper_executor")
 
     def close_position(self, symbol: str, price: Optional[float] = None) -> bool:
         """
@@ -1096,25 +1096,27 @@ class PaperExecutor:
         Uses the position's last known price if *price* is not given.
         Returns True if the position existed and was closed.
         """
-        pos_list = self._positions.get(symbol, [])
-        if not pos_list:
-            return False
-        pos = pos_list[0]  # Close oldest
-        exit_price = price if price else pos.current_price
-        self._close_position(symbol, exit_price, "manual_close", pos)
-        return True
+        with self._lock:
+            pos_list = self._positions.get(symbol, [])
+            if not pos_list:
+                return False
+            pos = pos_list[0]  # Close oldest
+            exit_price = price if price else pos.current_price
+            self._close_position(symbol, exit_price, "manual_close", pos)
+            return True
 
     def close_all(self) -> int:
         """
         Manually close every open position at its last known mark price.
         Returns the number of positions closed.
         """
-        count = 0
-        for symbol in list(self._positions.keys()):
-            for pos in list(self._positions.get(symbol, [])):
-                self._close_position(symbol, pos.current_price, "manual_close", pos)
-                count += 1
-        return count
+        with self._lock:
+            count = 0
+            for symbol in list(self._positions.keys()):
+                for pos in list(self._positions.get(symbol, [])):
+                    self._close_position(symbol, pos.current_price, "manual_close", pos)
+                    count += 1
+            return count
 
     def close_all_longs(self, exit_reason: str = "crash_defense_emergency") -> int:
         """
@@ -1122,17 +1124,18 @@ class PaperExecutor:
         Used by CrashDefenseController EMERGENCY tier.
         Returns the number of positions closed.
         """
-        count = 0
-        for symbol in list(self._positions.keys()):
-            for pos in list(self._positions.get(symbol, [])):
-                if pos.side == "buy":
-                    self._close_position(symbol, pos.current_price, exit_reason, pos)
-                    count += 1
-        logger.warning(
-            "PaperExecutor.close_all_longs(): closed %d long position(s) — reason=%s",
-            count, exit_reason,
-        )
-        return count
+        with self._lock:
+            count = 0
+            for symbol in list(self._positions.keys()):
+                for pos in list(self._positions.get(symbol, [])):
+                    if pos.side == "buy":
+                        self._close_position(symbol, pos.current_price, exit_reason, pos)
+                        count += 1
+            logger.warning(
+                "PaperExecutor.close_all_longs(): closed %d long position(s) — reason=%s",
+                count, exit_reason,
+            )
+            return count
 
     def move_all_longs_to_breakeven(self) -> int:
         """
@@ -1489,7 +1492,7 @@ class PaperExecutor:
                     closed_at       = trade.get("closed_at", ""),
                 ))
         except Exception as exc:
-            logger.warning("PaperExecutor: DB write failed: %s", exc)
+            logger.error("PaperExecutor: DB write failed: %s", exc)
 
     def _load_history(self) -> None:
         """
@@ -1736,7 +1739,11 @@ class PaperExecutor:
         # Apply exit slippage
         exit_side = "sell" if pos.side == "buy" else "buy"
         exit_fill = self._apply_slippage(exit_price, exit_side)
-        pnl_pct  = ((exit_fill - pos.entry_price) / pos.entry_price * 100) if pos.side == "buy" else ((pos.entry_price - exit_fill) / pos.entry_price * 100)
+        # H-15: guard against division by zero entry_price
+        if pos.entry_price > 0:
+            pnl_pct = ((exit_fill - pos.entry_price) / pos.entry_price * 100) if pos.side == "buy" else ((pos.entry_price - exit_fill) / pos.entry_price * 100)
+        else:
+            pnl_pct = 0.0
         pnl_usdt = pos.size_usdt * pnl_pct / 100
 
         # Calculate actual duration in seconds
