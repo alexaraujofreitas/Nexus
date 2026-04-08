@@ -37,6 +37,16 @@ class _StartupConnectThread(QThread):
     Runs once at startup: connects the active exchange in the background
     so the status bar and live feed update automatically without blocking
     the main window from appearing.
+
+    Session 52: When exchange mode is live/sandbox (testnet), this thread
+    also initialises the Phase 8 live execution subsystem:
+      1. Instantiate ExchangeAdapter, IdempotencyStore, Phase 8 LiveExecutor
+      2. Instantiate ReconciliationEngine, RecoveryManager
+      3. Inject into LiveBridge
+      4. Run startup recovery (LOAD → FETCH → RECONCILE → REBUILD)
+      5. Switch OrderRouter to live mode
+      6. Start periodic reconciliation scheduler
+    Trading is BLOCKED until recovery completes with is_clean == True.
     """
     def run(self):
         try:
@@ -45,6 +55,109 @@ class _StartupConnectThread(QThread):
             logger.info("Startup auto-connect completed")
         except Exception as e:
             logger.warning("Startup auto-connect failed: %s", e)
+            return
+
+        # ── Phase 8 Live Subsystem Initialization ──────────
+        # Only activate for live / sandbox (testnet) modes.
+        try:
+            from core.market_data.exchange_manager import exchange_manager as _em
+            if not _em.is_connected:
+                logger.info("No exchange connected — Phase 8 init skipped")
+                return
+
+            # Check exchange mode
+            mode = getattr(_em, 'mode', 'Unknown')
+            is_live_mode = mode in ("Live", "Testnet", "Demo Trading")
+
+            if not is_live_mode:
+                logger.info("Exchange mode '%s' — Phase 8 live init skipped (paper only)", mode)
+                return
+
+            logger.info("=" * 50)
+            logger.info("  PHASE 8 LIVE SUBSYSTEM INITIALIZATION")
+            logger.info("  Exchange mode: %s", mode)
+            logger.info("=" * 50)
+
+            ccxt_exchange = _em.get_exchange()
+            if ccxt_exchange is None:
+                logger.error("Phase 8 init: exchange instance is None — aborting")
+                return
+
+            # 1. Instantiate ExchangeAdapter
+            from core.intraday.live import (
+                ExchangeAdapter,
+                IdempotencyStore,
+                LiveExecutor as Phase8LiveExecutor,
+                OrderReconciliationEngine,
+                RestartRecoveryManager,
+            )
+            from pathlib import Path
+
+            adapter = ExchangeAdapter(exchange=ccxt_exchange)
+            logger.info("Phase 8: ExchangeAdapter ready")
+
+            # 2. Instantiate IdempotencyStore
+            store_path = Path(__file__).parent / "data" / "idempotency_store.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            idem_store = IdempotencyStore(store_path=store_path)
+            loaded = idem_store.load()
+            logger.info("Phase 8: IdempotencyStore ready (%d entries loaded)", loaded)
+
+            # 3. Instantiate Phase 8 LiveExecutor
+            p8_executor = Phase8LiveExecutor(
+                exchange_adapter=adapter,
+                idempotency_store=idem_store,
+            )
+            logger.info("Phase 8: LiveExecutor ready (10-state FSM active)")
+
+            # 4. Instantiate ReconciliationEngine + RecoveryManager
+            recon_engine = OrderReconciliationEngine(exchange_adapter=adapter)
+            recovery_mgr = RestartRecoveryManager(
+                exchange_adapter=adapter,
+                idempotency_store=idem_store,
+                reconciliation_engine=recon_engine,
+            )
+            logger.info("Phase 8: ReconciliationEngine + RecoveryManager ready")
+
+            # 5. Inject into LiveBridge
+            from core.execution.live_bridge import live_bridge
+            live_bridge.set_components(
+                exchange_adapter=adapter,
+                idempotency_store=idem_store,
+                phase8_executor=p8_executor,
+                reconciliation_engine=recon_engine,
+                recovery_manager=recovery_mgr,
+            )
+            logger.info("Phase 8: LiveBridge components injected")
+
+            # 6. Run startup recovery (F-03)
+            logger.info("Phase 8: === STARTUP RECOVERY ===")
+            report = live_bridge.run_startup_recovery(auto_resolve=True)
+            trading_ok = report.get("trading_allowed", False)
+            logger.info(
+                "Phase 8: Recovery complete — trading_allowed=%s", trading_ok,
+            )
+
+            # 7. Switch OrderRouter to live mode
+            from core.execution.order_router import order_router
+            order_router.set_mode("live")
+            logger.info("Phase 8: OrderRouter switched to LIVE mode → Phase 8 LiveBridge")
+
+            # 8. Store references for reconciliation scheduler (started from main thread)
+            self._phase8_ready = True
+            self._live_bridge = live_bridge
+
+            logger.info("=" * 50)
+            logger.info("  PHASE 8 LIVE SUBSYSTEM ACTIVE")
+            logger.info("  Trading allowed: %s", trading_ok)
+            logger.info("=" * 50)
+
+        except Exception as exc:
+            logger.error(
+                "Phase 8 live subsystem init failed (falling back to paper): %s",
+                exc, exc_info=True,
+            )
+            self._phase8_ready = False
 
 from core.database.engine import init_database
 from gui.theme.theme_manager import ThemeManager
@@ -396,6 +509,32 @@ def main():
         # status bar and live feed update without blocking the UI.
         # 800 ms delay lets Qt finish painting the window first.
         _conn_thread = _StartupConnectThread(window)
+
+        def _on_connect_finished():
+            """
+            After exchange connect + Phase 8 init completes, start the
+            periodic reconciliation scheduler on the main thread (Qt-safe).
+            """
+            try:
+                if getattr(_conn_thread, '_phase8_ready', False):
+                    bridge = getattr(_conn_thread, '_live_bridge', None)
+                    if bridge and bridge.is_initialised:
+                        from core.services.reconciliation_scheduler import ReconciliationScheduler
+                        recon_sched = ReconciliationScheduler(
+                            live_bridge=bridge,
+                            interval_ms=45_000,  # 45 seconds
+                            parent=window,
+                        )
+                        recon_sched.start()
+                        window._reconciliation_scheduler = recon_sched  # prevent GC
+                        logger.info(
+                            "ReconciliationScheduler started (45s interval) — "
+                            "periodic exchange state sync ACTIVE"
+                        )
+            except Exception as exc:
+                logger.warning("ReconciliationScheduler start failed (non-fatal): %s", exc)
+
+        _conn_thread.finished.connect(_on_connect_finished)
         QTimer.singleShot(800, _conn_thread.start)
         window._startup_connect_thread = _conn_thread   # keep reference
 

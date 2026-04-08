@@ -3,11 +3,16 @@
 #
 # Routes approved OrderCandidates to the appropriate executor:
 #   "paper" mode → PaperExecutor  (simulated, no real money)
-#   "live"  mode → LiveExecutor   (real CCXT orders)
+#   "live"  mode → LiveBridge     (Phase 8 production subsystem)
 #
-# Phase A: live mode is now fully wired.
-# Auto-execution gate: conditionally auto-submit to LiveExecutor
-# without requiring UI confirmation.
+# Session 52: live mode now routes to LiveBridge which wraps
+# the Phase 8 production-grade live execution subsystem
+# (core/intraday/live/) with:
+#   - 10-state order lifecycle FSM
+#   - Idempotency store
+#   - Exchange adapter with retry + error classification
+#   - Server-side SL order placement
+#   - Startup recovery + periodic reconciliation
 # ============================================================
 from __future__ import annotations
 
@@ -46,6 +51,8 @@ class OrderRouter:
                 {"old_mode": old, "new_mode": mode},
                 source="order_router",
             )
+            if mode == "live":
+                logger.info("OrderRouter: live mode → routing to Phase 8 LiveBridge")
 
     @property
     def mode(self) -> str:
@@ -57,10 +64,13 @@ class OrderRouter:
         Return the executor singleton for the current mode.
         Callers (scanner, risk page) use this to read positions/capital
         without coupling to a specific executor class.
+
+        Session 52: live mode now routes to LiveBridge (Phase 8 subsystem)
+        instead of core/execution/live_executor.
         """
         if self._mode == "live":
-            from core.execution.live_executor import live_executor
-            return live_executor
+            from core.execution.live_bridge import live_bridge
+            return live_bridge
         from core.execution.paper_executor import paper_executor
         return paper_executor
 

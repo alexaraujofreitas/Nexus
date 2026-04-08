@@ -15,7 +15,7 @@ from typing import Optional
 from core.agents.base_agent import BaseAgent
 from core.event_bus import bus, Topics
 from core.execution.paper_executor import paper_executor
-from core.execution.live_executor import live_executor
+from core.execution.order_router import order_router as _monitor_router
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +64,8 @@ class PositionMonitorAgent(BaseAgent):
         Fetch current market data and position info.
         Returns dict with prices and positions.
         """
-        # Get open positions from both executors
-        paper_positions = paper_executor.get_open_positions()
-        live_positions = live_executor.get_open_positions()
-
-        all_positions = paper_positions + live_positions
+        # Get open positions from the active executor (paper or live bridge)
+        all_positions = _monitor_router.active_executor.get_open_positions()
 
         if not all_positions:
             return {"positions": [], "prices": {}, "regime": self._current_regime}
@@ -512,8 +509,7 @@ class PositionMonitorAgent(BaseAgent):
 
             elif action == "full_close":
                 logger.info("PositionMonitorAgent: closing %s", symbol)
-                paper_executor.close_position(symbol)
-                live_executor.close_position(symbol)
+                _monitor_router.active_executor.close_position(symbol)
                 return True
 
             return False
