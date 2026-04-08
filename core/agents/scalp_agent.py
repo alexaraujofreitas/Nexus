@@ -71,12 +71,15 @@ class ScalpingAgent(BaseAgent):
 
                 # Fetch order book (20 levels)
                 ob = self._fetch_order_book(binance_symbol)
+                time.sleep(0.25)
 
                 # Fetch recent trades (50 trades)
                 trades = self._fetch_recent_trades(binance_symbol)
+                time.sleep(0.25)
 
                 # Fetch 1-minute klines (30 bars)
                 klines = self._fetch_klines(binance_symbol, "1m", 30)
+                time.sleep(0.25)
 
                 # Fetch current price
                 ticker = self._fetch_ticker(binance_symbol)
