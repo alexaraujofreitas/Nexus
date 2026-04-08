@@ -1883,105 +1883,104 @@ class PaperExecutor:
                 except Exception as _st_exc:
                     logger.debug("PaperExecutor: shadow tracker outcome error (non-fatal): %s", _st_exc)
 
-        # ── Feed CalibratorMonitor (Session 23) ──────────────────────────
-        # Record the prediction that was made at entry time vs the actual outcome.
-        # The predicted probability is stored on the position as 'win_prob' if
-        # the calibrator was used; fall back to score-based sigmoid estimate.
-        try:
-            from core.learning.calibrator_monitor import get_calibrator_monitor
-            _pred_prob = float(getattr(pos, "win_prob", None) or (pos.score or 0.5))
-            get_calibrator_monitor().record(
-                predicted_prob=_pred_prob,
-                actual_win=_won,
+            # ── Feed CalibratorMonitor (Session 23) ──────────────────────────
+            # Record the prediction that was made at entry time vs the actual outcome.
+            # The predicted probability is stored on the position as 'win_prob' if
+            # the calibrator was used; fall back to score-based sigmoid estimate.
+            try:
+                from core.learning.calibrator_monitor import get_calibrator_monitor
+                _pred_prob = float(getattr(pos, "win_prob", None) or (pos.score or 0.5))
+                get_calibrator_monitor().record(
+                    predicted_prob=_pred_prob,
+                    actual_win=_won,
+                )
+            except Exception as _cm_exc:
+                logger.debug("PaperExecutor: calibrator monitor record failed (non-fatal): %s", _cm_exc)
+
+            # ── Feed trade monitor for 75-trade checkpoint metrics ────
+            try:
+                from core.monitoring.trade_monitor import get_trade_monitor
+                get_trade_monitor().record_trade(
+                    score=trade.get("score", 0.0),
+                    models_fired=_models,
+                    won=_won,
+                    exit_reason=reason,
+                    realized_r=_realized_r,
+                    pnl_usdt=trade.get("pnl_usdt", 0.0),
+                    regime=_regime_str,
+                    symbol=symbol,
+                )
+            except Exception as _mon_exc:
+                logger.debug("PaperExecutor: trade monitor record failed (non-fatal): %s", _mon_exc)
+
+            # ── Enhanced trade log (Phase 1 feature extraction dataset) ──
+            try:
+                from core.analytics.trade_log import log_trade as _log_trade
+                _utc_hour = pos.opened_at.hour if pos.opened_at else None
+                _log_trade(
+                    symbol=symbol, side=pos.side, direction=pos.side,
+                    entry_price=pos.entry_price, exit_price=exit_fill,
+                    stop_loss=pos.stop_loss, take_profit=pos.take_profit,
+                    size_usdt=pos.size_usdt, regime=pos.regime or "unknown",
+                    regime_confidence=float(getattr(pos, "regime_confidence", 0.0) or 0.0),
+                    confluence_score=float(pos.score or 0.0),
+                    models_fired=pos.models_fired or [], timeframe=pos.timeframe or "1h",
+                    pnl_pct=float(trade.get("pnl_pct") or 0.0),
+                    pnl_usdt=float(trade.get("pnl_usdt") or 0.0),
+                    exit_reason=reason, realized_r=_realized_r,
+                    utc_hour_at_entry=_utc_hour,
+                    opened_at=trade.get("opened_at"), closed_at=trade.get("closed_at"),
+                )
+            except Exception as _tl_exc:
+                logger.debug("PaperExecutor: trade log write failed (non-fatal): %s", _tl_exc)
+
+            # ── Model performance tracking (Phase 2) ──
+            try:
+                from core.analytics.model_performance_tracker import get_model_performance_tracker
+                get_model_performance_tracker().record(
+                    models_fired=pos.models_fired or [],
+                    won=_won,
+                    realized_r=_realized_r,
+                    regime=pos.regime or "unknown",
+                )
+            except Exception as _mp_exc:
+                logger.debug("PaperExecutor: model perf tracker failed (non-fatal): %s", _mp_exc)
+
+            # ── Live vs Backtest tracker (Session 26) ──
+            try:
+                from core.monitoring.live_vs_backtest import get_live_vs_backtest_tracker
+                get_live_vs_backtest_tracker().record(trade)
+            except Exception as _lvb_exc:
+                logger.debug("PaperExecutor: live_vs_backtest record failed (non-fatal): %s", _lvb_exc)
+
+            # ── Filter stats outcome enrichment (Phase 3) ──
+            try:
+                from core.analytics.filter_stats import get_filter_stats_tracker
+                _fst = get_filter_stats_tracker()
+                _r_val = _realized_r if _realized_r is not None else 0.0
+                # All executed trades passed both scanner filters — record outcome
+                # so the tracker can build a quality proxy for accepted candidates.
+                for _fn in ("time_of_day", "volatility"):
+                    _fst.record_trade_outcome(_fn, _r_val)
+            except Exception as _fst_exc:
+                logger.debug("PaperExecutor: filter stats record failed (non-fatal): %s", _fst_exc)
+
+            logger.info(
+                "PaperExecutor: CLOSED %s @ %.4f | reason=%s | PnL=%.2f%%  (%.2f USDT) | R=%.2f",
+                symbol, exit_price, reason, pnl_pct, pnl_usdt,
+                _realized_r if _realized_r is not None else 0.0,
             )
-        except Exception as _cm_exc:
-            logger.debug("PaperExecutor: calibrator monitor record failed (non-fatal): %s", _cm_exc)
+            bus.publish(Topics.TRADE_CLOSED, data=trade, source="paper_executor")
+            self._save_trade_to_db(trade)
 
-        # ── Feed trade monitor for 75-trade checkpoint metrics ────
-        try:
-            from core.monitoring.trade_monitor import get_trade_monitor
-            get_trade_monitor().record_trade(
-                score=trade.get("score", 0.0),
-                models_fired=_models,
-                won=_won,
-                exit_reason=reason,
-                realized_r=_realized_r,
-                pnl_usdt=trade.get("pnl_usdt", 0.0),
-                regime=_regime_str,
-                symbol=symbol,
-            )
-        except Exception as _mon_exc:
-            logger.debug("PaperExecutor: trade monitor record failed (non-fatal): %s", _mon_exc)
-
-        # ── Enhanced trade log (Phase 1 feature extraction dataset) ──
-        try:
-            from core.analytics.trade_log import log_trade as _log_trade
-            _utc_hour = pos.opened_at.hour if pos.opened_at else None
-            _log_trade(
-                symbol=symbol, side=pos.side, direction=pos.side,
-                entry_price=pos.entry_price, exit_price=exit_fill,
-                stop_loss=pos.stop_loss, take_profit=pos.take_profit,
-                size_usdt=pos.size_usdt, regime=pos.regime or "unknown",
-                regime_confidence=float(getattr(pos, "regime_confidence", 0.0) or 0.0),
-                confluence_score=float(pos.score or 0.0),
-                models_fired=pos.models_fired or [], timeframe=pos.timeframe or "1h",
-                pnl_pct=float(trade.get("pnl_pct") or 0.0),
-                pnl_usdt=float(trade.get("pnl_usdt") or 0.0),
-                exit_reason=reason, realized_r=_realized_r,
-                utc_hour_at_entry=_utc_hour,
-                opened_at=trade.get("opened_at"), closed_at=trade.get("closed_at"),
-            )
-        except Exception as _tl_exc:
-            logger.debug("PaperExecutor: trade log write failed (non-fatal): %s", _tl_exc)
-
-        # ── Model performance tracking (Phase 2) ──
-        try:
-            from core.analytics.model_performance_tracker import get_model_performance_tracker
-            get_model_performance_tracker().record(
-                models_fired=pos.models_fired or [],
-                won=_won,
-                realized_r=_realized_r,
-                regime=pos.regime or "unknown",
-            )
-        except Exception as _mp_exc:
-            logger.debug("PaperExecutor: model perf tracker failed (non-fatal): %s", _mp_exc)
-
-        # ── Live vs Backtest tracker (Session 26) ──
-        try:
-            from core.monitoring.live_vs_backtest import get_live_vs_backtest_tracker
-            get_live_vs_backtest_tracker().record(trade)
-        except Exception as _lvb_exc:
-            logger.debug("PaperExecutor: live_vs_backtest record failed (non-fatal): %s", _lvb_exc)
-
-        # ── Filter stats outcome enrichment (Phase 3) ──
-        try:
-            from core.analytics.filter_stats import get_filter_stats_tracker
-            _fst = get_filter_stats_tracker()
-            _r_val = _realized_r if _realized_r is not None else 0.0
-            # All executed trades passed both scanner filters — record outcome
-            # so the tracker can build a quality proxy for accepted candidates.
-            for _fn in ("time_of_day", "volatility"):
-                _fst.record_trade_outcome(_fn, _r_val)
-        except Exception as _fst_exc:
-            logger.debug("PaperExecutor: filter stats record failed (non-fatal): %s", _fst_exc)
-
-        logger.info(
-            "PaperExecutor: CLOSED %s @ %.4f | reason=%s | PnL=%.2f%%  (%.2f USDT) | R=%.2f",
-            symbol, exit_price, reason, pnl_pct, pnl_usdt,
-            _realized_r if _realized_r is not None else 0.0,
-        )
-        bus.publish(Topics.TRADE_CLOSED, data=trade, source="paper_executor")
-        self._save_trade_to_db(trade)
-
-        # ── Rolling demo telemetry ────────────────────────────────────────────
-        try:
-            self._log_rolling_demo_metrics()
-        except Exception as _rl_exc:
-            logger.debug("PaperExecutor: rolling metrics log failed: %s", _rl_exc)
+            # ── Rolling demo telemetry ────────────────────────────────────────
+            try:
+                self._log_rolling_demo_metrics()
+            except Exception as _rl_exc:
+                logger.debug("PaperExecutor: rolling metrics log failed: %s", _rl_exc)
         finally:
             # M-7: ensure open-positions snapshot is always persisted even if
-            # any downstream consumer (learning, monitoring, DB write) failed
-            # inside the outer try block.
+            # any downstream consumer (learning, monitoring, DB write) fails.
             self._save_open_positions()
 
     def _log_rolling_demo_metrics(self) -> None:
