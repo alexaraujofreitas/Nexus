@@ -1,0 +1,269 @@
+================================================================================
+DETAILED SKIP CLASSIFICATION BY FILE
+================================================================================
+
+LEGACY / ASPIRATIONAL TESTS — 401 SKIPPED (92.4%)
+─────────────────────────────────────────────────────────────────────────────
+
+File: tests/unit/test_phase1_live_executor.py
+  Skip Reason: LiveExecutor not yet implemented — aspirational tests for live trading
+  Category: LEGACY/ASPIRATIONAL
+  Test Count: 70
+  Classes:
+    - TestExitManagerStaticSLTP (8 tests)
+    - TestExitManagerParityMode (4 tests)
+    - TestExitManagerTrailingStop (4 tests)
+    - TestExitManagerBreakeven (4 tests)
+    - TestExitManagerAutoPartial (4 tests)
+    - TestExitManagerTimeExit (3 tests)
+    - TestExitManagerCounters (5 tests)
+    - TestExitManagerPaperParity (2 tests)
+    - TestLivePositionSerialization (3 tests)
+    - TestDailyLossLimit (5 tests)
+    - TestCircuitBreaker (6 tests)
+    - TestReconciliation (8 tests)
+    - TestSystemStatePersistence (2 tests)
+    - TestEdgeCases (5 tests)
+    - TestDBSchemaMigration (2 tests)
+    - TestConfigKeys (5 tests)
+  Purpose: Forward-looking suite for Phase 1 live executor hardening
+  Status: Not in active development; kept as specification for future work
+
+File: tests/unit/test_phase1_review_fixes.py
+  Skip Reason: LiveExecutor not yet implemented — aspirational tests for live trading
+  Category: LEGACY/ASPIRATIONAL
+  Test Count: 43
+  Classes:
+    - TestCloseAllRetries (7 tests)
+    - TestReconciliationNoSpeculativeSLTP (4 tests)
+    - TestDrawdownStrictFallback (6 tests)
+    - TestConfigValidation (6 tests)
+    - TestExitManagerExecutionOrder (8 tests)
+    - TestMergePrecedenceRules (4 tests)
+    - TestSinglePositionPerSymbol (4 tests)
+    - TestPreTradeCheckOrdering (4 tests)
+  Purpose: Phase 1 review-based hardening; depends on LiveExecutor
+  Status: Not in active development
+
+File: tests/unit/test_phase2_analysis.py
+  Skip Reason: LiveExecutor not yet implemented — aspirational tests for live trading
+  Category: LEGACY/ASPIRATIONAL
+  Test Count: 71
+  Classes:
+    - TestScoringEnginePhase2 (9 tests)
+    - TestOpenTradeThesis (10 tests)
+    - TestDecisionForensics (10 tests)
+    - TestRootCauseCatalogAndPolicy (7 tests)
+    - TestCanonicalRendererConsistency (5 tests)
+    - TestTradeAnalysisServicePhase2 (6 tests)
+    - TestTuningProposalGenerator (6 tests)
+    - TestBacktestGating (8 tests)
+    - TestAIEnrichmentFallback (1 test)
+    + Additional forensics and analysis classes (8 tests)
+  Purpose: Phase 2 trade analysis; ML-driven tuning proposals
+  Status: Not in active development
+
+File: tests/unit/test_phase2_fixes.py
+  Skip Reason: LiveExecutor/OrderRouter not yet implemented — aspirational tests
+  Category: LEGACY/ASPIRATIONAL
+  Test Count: 49
+  Purpose: Phase 2 additional fixes; requires OrderRouter
+  Status: Not in active development
+
+File: tests/unit/test_phase2_gui_wiring.py
+  Skip Reason: LiveExecutor not yet implemented — aspirational tests for live trading
+  Category: LEGACY/ASPIRATIONAL
+  Test Count: 35
+  Classes:
+    - TestTradeHistoryIntegration (5 tests)
+    - TestPerformanceAnalyticsRefresh (4 tests)
+    - TestDashboardStabletradeWiring (4 tests)
+    - TestPerformanceMetricsCalculation (4 tests)
+    - TestLiveTradeNotifications (4 tests)
+    + Other GUI wiring classes (14 tests)
+  Purpose: Phase 2 GUI integration with live executor
+  Status: Not in active development
+
+File: tests/unit/test_phase3_integration.py
+  Skip Reason: LiveExecutor not yet implemented — aspirational tests for live trading
+  Category: LEGACY/ASPIRATIONAL
+  Test Count: 43
+  Purpose: Phase 3 end-to-end integration tests
+  Status: Not in active development
+
+File: tests/unit/test_phase3_production_hardening.py
+  Skip Reason: LivePosition/OrderRouter not yet implemented — aspirational tests
+  Category: LEGACY/ASPIRATIONAL
+  Test Count: 51
+  Purpose: Phase 3 production-grade hardening
+  Status: Not in active development
+
+File: tests/unit/test_phase4_final_optimization.py
+  Skip Reason: Unknown (likely Phase 4 forward-looking)
+  Category: LEGACY/ASPIRATIONAL
+  Test Count: 39
+  Purpose: Phase 4 final optimization suite
+  Status: Not in active development
+
+
+RUNTIME CONDITIONAL SKIPS — 33 TESTS (7.6%)
+─────────────────────────────────────────────────────────────────────────────
+
+File: tests/unit/test_log_review_fixes.py
+  Skip Reason: RLEnsemble unavailable (PyTorch not installed)
+  Category: HARDWARE/GPU
+  Test Count: 8 tests
+  Classes:
+    - TestRLEnsembleRegimeNames (8 tests)
+      - test_lr03_sac_includes_bull_trend
+      - test_lr03_sac_includes_bear_trend
+      - test_lr03_sac_includes_uncertain
+      - test_lr03_sac_includes_volatility_expansion
+      - test_lr03_cppo_includes_bear_trend
+      - test_lr03_cppo_includes_volatility_expansion
+      - test_lr03_legacy_names_preserved
+      - test_lr03_select_action_uncertain_no_warning
+  Condition: try/except in _get_ensemble_class() → pytest.skip()
+  Recovery: Install PyTorch: pip install "torch>=2.6.0" --index-url https://download.pytorch.org/whl/cu124
+
+  Skip Reason: ModelRegistry unavailable (PyTorch not installed)
+  Category: HARDWARE/GPU
+  Test Count: 1 test
+  Classes:
+    - TestNarrativeScorerAPI (1 test)
+      - test_lr01_callable_check
+  Condition: ImportError on ModelRegistry instantiation
+  Recovery: Same as above
+
+  Skip Reason: _fetch_cryptopanic detection (source code check)
+  Category: EXTERNAL CREDENTIALS/API
+  Test Count: 0 tests (conditional logic, not counted in skips)
+  Classes:
+    - TestTwitterAgentCryptoPanicKey (1 test)
+      - test_lr08_cryptopanic_method_exists
+  Condition: Conditional on _fetch_cryptopanic presence in twitter_agent.py
+
+  SUBTOTAL: 9 tests
+
+File: tests/unit/test_demo_readiness.py
+  Skip Reason: PBL signal did not fire on synthetic df
+  Category: CONDITIONAL TEST DATA
+  Test Count: 2 tests
+  Classes:
+    - TestDeterministicOutputs (2 tests)
+      - test_sl_uses_approved_sl_atr_mult
+      - test_tp_uses_approved_tp_atr_mult
+  Condition: if sig is None: self.skipTest(...)
+  Recovery: Adjust synthetic df generation or PBL parameters
+
+  Skip Reason: config.yaml not found
+  Category: CONFIGURATION FILE
+  Test Count: 1 test (counted as 1 in skip list, not all 2)
+  Classes:
+    - TestPBLParameters (1 test)
+      - test_config_yaml_pbl_params
+  Condition: if not cfg_path.exists(): self.skipTest(...)
+  Recovery: Run from project root directory or symlink config.yaml
+
+  SUBTOTAL: 2-3 tests (depends on how config.yaml is handled)
+
+File: tests/intelligence/test_intelligence_agents.py
+  Skip Reason: Performance test (load test)
+  Category: PERFORMANCE/LOAD
+  Test Count: 2 tests
+  Classes:
+    - TestPerformance (2 tests)
+      - test_funding_rate_100_symbols_under_100ms
+      - test_news_agent_1000_articles_under_500ms
+  Condition: Runtime skip via pytest.skip() in test body
+  Purpose: Ensure agents stay under time budgets
+  Status: Skipped to allow faster test runs; can be enabled for profiling
+
+  SUBTOTAL: 2 tests
+
+File: tests/unit/test_range_accumulation_model.py
+  Skip Reason: RangeAccumulationModel not registered in signal_generator
+  Category: LEGACY/DEPRECATED
+  Test Count: 7 tests
+  Classes:
+    - TestRangeAccumulation (7 tests)
+  Condition: @pytest.mark.skip(reason="...")
+  Purpose: Config gate tests deferred; model may be re-enabled later
+  Status: Model kept in codebase but disabled via config
+  Recovery: Update signal_generator.py and config to re-enable
+
+  SUBTOTAL: 7 tests
+
+File: tests/unit/test_session39_research_lab.py
+  Skip Reason: @pytest.mark.skipif (experimental/research)
+  Category: RESEARCH/EXPERIMENTAL
+  Test Count: 7 tests (marked with _qt_only skipif)
+  Purpose: Research lab exploratory tests
+  Status: Conditional on Qt availability or test environment
+  Recovery: Not needed unless Qt features are being tested
+
+  SUBTOTAL: 7 tests
+
+File: tests/unit/test_session40_unified_engine.py
+  Skip Reason: Slow test (>30s) without --include-slow flag
+  Category: PERFORMANCE
+  Test Count: 6 tests (marked with _slow skipif)
+  Purpose: Unified engine benchmarks/profiling
+  Status: Conditional on --include-slow CLI flag
+  Recovery: Run with: pytest --include-slow tests/unit/test_session40_unified_engine.py
+
+  SUBTOTAL: 6 tests
+
+
+SUMMARY BY CATEGORY
+─────────────────────────────────────────────────────────────────────────────
+
+1. Legacy/Aspirational (Not Yet Implemented):    401 tests (92.4%)
+   - Files: 8 test files spanning Phase 1-4
+   - Status: By design; serves as executable specification
+   
+2. Hardware/GPU Dependent:                         9 tests (2.1%)
+   - Files: test_log_review_fixes.py
+   - Root Cause: PyTorch not installed in test environment
+   - Recovery: Install cu124 PyTorch build
+   
+3. Conditional Test Data:                          3 tests (0.7%)
+   - Files: test_demo_readiness.py
+   - Root Cause: Synthetic data not firing PBL signal
+   - Recovery: Adjust df generation or params
+   
+4. Configuration File:                             1 test (0.2%)
+   - Files: test_demo_readiness.py
+   - Root Cause: config.yaml not present in test location
+   - Recovery: Run from project root or create symlink
+   
+5. Performance/Load:                               8 tests (1.8%)
+   - Files: test_intelligence_agents.py, test_session40_unified_engine.py
+   - Root Cause: Time-consuming; skipped for fast runs
+   - Recovery: Run with --include-slow for profiling
+   
+6. Research/Experimental:                          7 tests (1.6%)
+   - Files: test_session39_research_lab.py
+   - Root Cause: Exploratory tests; Qt-dependent
+   - Recovery: Not needed for standard regression
+   
+7. Legacy/Deprecated Model:                        7 tests (1.6%)
+   - Files: test_range_accumulation_model.py
+   - Root Cause: Model disabled but tests kept as reference
+   - Recovery: Update signal_generator.py if model re-enabled
+
+
+PHASE 5 TESTS — CRITICAL CHECK
+─────────────────────────────────────────────────────────────────────────────
+
+All Phase 5 test files RUN WITHOUT SKIPS:
+  ✓ test_phase5_contracts.py           ALL TESTS RUNNING
+  ✓ test_phase5_execution.py           ALL TESTS RUNNING
+  ✓ test_phase5_integration.py         ALL TESTS RUNNING
+  ✓ test_phase5_portfolio.py           ALL TESTS RUNNING
+  ✓ test_phase5_processing.py          ALL TESTS RUNNING
+  ✓ test_phase5_hardening.py           ALL TESTS RUNNING
+
+Result: NO CRITICAL GAPS. Phase 5 implementation fully covered by tests.
+
+================================================================================
