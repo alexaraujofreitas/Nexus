@@ -431,20 +431,21 @@ class TestF02_ServerSideStopLoss:
         state = bridge.get_state()
         assert state["sl_orders_active"] == 1
 
-    def test_sl_failure_does_not_block_trade(self):
-        """SL placement failure should NOT prevent the position from being opened."""
+    def test_sl_failure_closes_unprotected_position(self):
+        """v2 Safety: SL placement failure → position CLOSED (fail-closed)."""
         bridge, adapter, _, executor, _, recovery = _make_bridge_with_mocks()
         bridge.run_startup_recovery()
         error_mock = MagicMock()
         error_mock.message = "exchange timeout"
-        adapter.create_order.return_value = _FakeExchangeResponse(
-            success=False, error=error_mock,
-        )
+        error_resp = _FakeExchangeResponse(success=False, error=error_mock)
+        close_resp = _FakeExchangeResponse(success=True, exchange_order_id="close-001", avg_price=59900.0)
+        # SL fails 3x, then close succeeds
+        adapter.create_order.side_effect = [error_resp, error_resp, error_resp, close_resp]
         candidate = _make_candidate()
         result = bridge.submit(candidate)
-        # Position should still be opened even though SL failed
-        assert result is True
-        assert len(bridge.get_open_positions()) == 1
+        # v2: position is closed because SL failed — fail-closed
+        assert result is False
+        assert len(bridge.get_open_positions()) == 0
 
     def test_sl_cancelled_on_position_close(self):
         bridge, adapter, _, executor, _, recovery = _make_bridge_with_mocks()
@@ -508,8 +509,13 @@ class TestF03_StartupRecovery:
                 "entryPrice": 3000.0,
                 "markPrice": 3050.0,
                 "unrealizedPnl": 100.0,
+                "stopLoss": 2800.0,
             }
         ]
+        # Provide existing stop order so _verify_sl_coverage doesn't close
+        stop_order = MagicMock()
+        stop_order.raw = {"type": "stop", "symbol": "ETH/USDT"}
+        adapter.fetch_open_orders.return_value = [stop_order]
         bridge.run_startup_recovery()
         positions = bridge.get_open_positions()
         assert len(positions) == 1
@@ -593,8 +599,13 @@ class TestF04_F05_ExchangeBalance:
                 "entryPrice": 150.0,
                 "markPrice": 145.0,
                 "unrealizedPnl": 250.0,
+                "stopLoss": 160.0,
             }
         ]
+        # Provide existing stop order
+        stop_order = MagicMock()
+        stop_order.raw = {"type": "stop", "symbol": "SOL/USDT"}
+        adapter.fetch_open_orders.return_value = [stop_order]
         bridge.run_startup_recovery()
         pos = bridge.get_open_positions()[0]
         assert pos["side"] == "sell"  # short → sell
@@ -606,8 +617,13 @@ class TestF04_F05_ExchangeBalance:
         bridge, adapter, *_ = _make_bridge_with_mocks()
         adapter.fetch_positions.return_value = [
             {"symbol": "BTC/USDT", "contracts": 0, "side": "long", "entryPrice": 60000},
-            {"symbol": "ETH/USDT", "contracts": 1.0, "side": "long", "entryPrice": 3000},
+            {"symbol": "ETH/USDT", "contracts": 1.0, "side": "long", "entryPrice": 3000,
+             "stopLoss": 2800.0},
         ]
+        # Provide existing stop order for ETH
+        stop_order = MagicMock()
+        stop_order.raw = {"type": "stop", "symbol": "ETH/USDT"}
+        adapter.fetch_open_orders.return_value = [stop_order]
         bridge.run_startup_recovery()
         positions = bridge.get_open_positions()
         assert len(positions) == 1

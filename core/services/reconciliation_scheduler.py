@@ -1,13 +1,11 @@
 # ============================================================
-# NEXUS TRADER — Periodic Reconciliation Scheduler (F-06)
+# NEXUS TRADER — Periodic Reconciliation Scheduler (v2 Safety)
 #
 # Background scheduler that runs OrderReconciliationEngine every
-# 30–60 seconds to detect and resolve state drift between
-# internal tracking and actual exchange state.
+# 30–60 seconds. FAIL-CLOSED: any mismatch → degraded mode.
 #
 # Integration: instantiated in main.py after exchange connects
-# and startup recovery completes. Uses QTimer for Qt-safe
-# periodic execution.
+# and startup recovery completes.
 # ============================================================
 from __future__ import annotations
 
@@ -21,16 +19,14 @@ from core.event_bus import bus, Topics
 
 logger = logging.getLogger(__name__)
 
-# Default interval: 45 seconds (between 30-60s requirement)
 DEFAULT_INTERVAL_MS = 45_000
-# If mismatches exceed this threshold, pause trading
-MISMATCH_PAUSE_THRESHOLD = 2
+MISMATCH_PAUSE_THRESHOLD = 1  # v2: ANY mismatch blocks trading
 
 
 class ReconciliationScheduler(QObject):
     """
-    Periodic background reconciliation between internal state
-    and exchange state. Uses LiveBridge.run_reconciliation().
+    Periodic reconciliation. FAIL-CLOSED on mismatch.
+    LiveBridge.run_reconciliation() handles entering degraded mode.
     """
 
     def __init__(
@@ -51,7 +47,6 @@ class ReconciliationScheduler(QObject):
         self._total_mismatches = 0
 
     def start(self) -> None:
-        """Start the periodic reconciliation loop."""
         if self._running:
             return
         self._timer = QTimer(self)
@@ -65,7 +60,6 @@ class ReconciliationScheduler(QObject):
         )
 
     def stop(self) -> None:
-        """Stop the periodic reconciliation loop."""
         if self._timer:
             self._timer.stop()
         self._running = False
@@ -86,22 +80,12 @@ class ReconciliationScheduler(QObject):
                 mismatch_count = result.get("mismatch_count", 0)
                 if mismatch_count > 0:
                     self._total_mismatches += mismatch_count
-                    if mismatch_count >= self._mismatch_pause_threshold:
-                        logger.error(
-                            "ReconciliationScheduler: %d mismatches >= threshold %d — "
-                            "consider pausing trading",
-                            mismatch_count, self._mismatch_pause_threshold,
-                        )
-                        bus.publish(Topics.SYSTEM_ALERT, {
-                            "type": "reconciliation_threshold_exceeded",
-                            "mismatch_count": mismatch_count,
-                            "threshold": self._mismatch_pause_threshold,
-                            "message": (
-                                f"Reconciliation found {mismatch_count} mismatches "
-                                f"(threshold={self._mismatch_pause_threshold})"
-                            ),
-                            "severity": "critical",
-                        }, source="reconciliation_scheduler")
+                    # LiveBridge.run_reconciliation() already enters degraded mode
+                    logger.error(
+                        "ReconciliationScheduler: %d mismatches detected — "
+                        "LiveBridge entered degraded mode",
+                        mismatch_count,
+                    )
             else:
                 self._consecutive_failures += 1
                 errors = result.get("errors", [])
@@ -109,13 +93,16 @@ class ReconciliationScheduler(QObject):
                     "ReconciliationScheduler: cycle failed (%d consecutive) — %s",
                     self._consecutive_failures, errors,
                 )
-                # After 5 consecutive failures, log critical
-                if self._consecutive_failures >= 5:
+                if self._consecutive_failures >= 3:
                     logger.error(
                         "ReconciliationScheduler: %d consecutive failures — "
-                        "exchange connectivity may be compromised",
+                        "entering degraded mode (exchange connectivity compromised)",
                         self._consecutive_failures,
                     )
+                    if hasattr(self._bridge, '_enter_degraded_mode'):
+                        self._bridge._enter_degraded_mode(
+                            f"reconciliation_failed_{self._consecutive_failures}_consecutive"
+                        )
         except Exception as exc:
             self._consecutive_failures += 1
             logger.error("ReconciliationScheduler: exception in cycle: %s", exc)

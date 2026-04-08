@@ -1,19 +1,18 @@
 # ============================================================
-# NEXUS TRADER — Live Execution Bridge
+# NEXUS TRADER — Live Execution Bridge  (Safety-Hardened v2)
 #
 # Bridges the gap between the main application (which uses the
 # OrderCandidate / PaperExecutor interface) and the Phase 8
 # production-grade live subsystem (core/intraday/live/).
 #
-# This bridge:
-#   1. Exposes the same interface as PaperExecutor so callers
-#      (scanner, risk page, crash defense, UI) work unchanged
-#   2. Converts OrderCandidate → ExecutionRequest → Phase 8
-#      LiveExecutor.execute()
-#   3. Places server-side SL orders on exchange after entry fill
-#   4. Fetches balance/positions from exchange (not internal sim)
-#   5. Supports periodic reconciliation via ReconciliationEngine
-#   6. Supports startup recovery via RestartRecoveryManager
+# SAFETY INVARIANTS (v2):
+#   1. NO unprotected position: SL must be exchange-confirmed,
+#      or position is immediately closed, or trading is blocked.
+#   2. ALL orders go through FSM lifecycle + idempotency store.
+#   3. Exchange is SINGLE SOURCE OF TRUTH for balance/positions.
+#   4. Reconciliation is FAIL-CLOSED: mismatch → trading blocked.
+#   5. Balance cache NEVER used for sizing — always force-refresh.
+#   6. Crash-safe: restart recovery handles all partial states.
 #
 # Thread safety: RLock guards all mutable state.
 # ============================================================
@@ -31,15 +30,26 @@ from core.event_bus import bus, Topics
 
 logger = logging.getLogger(__name__)
 
-# Sentinel: lazily initialised when set_components() is called
-_UNINIT = "UNINITIALISED"
+# ── Constants ────────────────────────────────────────────────
+SL_MAX_RETRIES = 3              # Retry SL placement up to 3 times
+SL_RETRY_DELAY_S = 0.5         # Backoff between SL retries
+BALANCE_CACHE_TTL = 10.0        # Reduced from 30s — tighter safety
+BALANCE_SIZING_ALWAYS_FORCE = True  # Force-refresh for every sizing decision
+MAX_SINGLE_TRADE_PCT = 0.50     # No single trade > 50% of balance
+DEGRADED_MISMATCH_THRESHOLD = 1 # Any mismatch → degraded mode
 
 
 class LiveBridge:
     """
-    Adapter exposing the PaperExecutor-compatible interface on top of
-    the Phase 8 production live execution subsystem.
+    Safety-hardened adapter exposing PaperExecutor-compatible interface
+    on top of Phase 8 production live execution subsystem.
     """
+
+    # ── SL protection states ──
+    SL_CONFIRMED = "confirmed"
+    SL_PENDING = "pending"
+    SL_FAILED = "failed"
+    SL_NONE = "none"
 
     def __init__(self):
         self._lock = threading.RLock()
@@ -54,18 +64,20 @@ class LiveBridge:
         # ── State ──
         self._positions: Dict[str, dict] = {}     # symbol → position dict
         self._closed_trades: List[dict] = []
-        self._sl_orders: Dict[str, str] = {}      # symbol → exchange SL order ID
+        self._sl_orders: Dict[str, dict] = {}     # symbol → {order_id, status, price}
         self._pending_confirmations: Dict[str, Any] = {}
 
         # ── Balance cache ──
         self._balance_cache: Dict[str, Any] = {"usdt": 0.0, "ts": 0.0}
-        self._BALANCE_CACHE_TTL = 30.0
+        self._BALANCE_CACHE_TTL = BALANCE_CACHE_TTL
         self._peak_usdt: float = 0.0
         self._initial_usdt: float = 0.0
 
-        # ── Recovery state ──
+        # ── Recovery & degraded state ──
         self._recovery_complete = False
         self._trading_allowed = False
+        self._degraded_mode = False   # Set True on reconciliation mismatch
+        self._degraded_reason = ""
 
         self._initialised = False
 
@@ -92,12 +104,52 @@ class LiveBridge:
     def is_initialised(self) -> bool:
         return self._initialised
 
-    # ── Startup Recovery (F-03) ───────────────────────────────
+    @property
+    def is_degraded(self) -> bool:
+        return self._degraded_mode
+
+    def _can_trade(self) -> bool:
+        """Check all preconditions for trading."""
+        if not self._initialised:
+            return False
+        if not self._trading_allowed:
+            return False
+        if self._degraded_mode:
+            return False
+        return True
+
+    def exit_degraded_mode(self) -> bool:
+        """
+        Manually exit degraded mode after operator confirms state is clean.
+        Only works if reconciliation passes clean.
+        """
+        result = self.run_reconciliation()
+        if result.get("success") and result.get("mismatch_count", 1) == 0:
+            with self._lock:
+                self._degraded_mode = False
+                self._degraded_reason = ""
+            logger.info("LiveBridge: exited degraded mode — trading ALLOWED")
+            return True
+        logger.warning("LiveBridge: cannot exit degraded mode — reconciliation not clean")
+        return False
+
+    # ══════════════════════════════════════════════════════════
+    # STARTUP RECOVERY (F-03 + Fix 5: Crash Scenarios)
+    # ══════════════════════════════════════════════════════════
+
     def run_startup_recovery(self, auto_resolve: bool = True) -> dict:
         """
         Run Phase 8 RestartRecoveryManager.
         Returns the RecoveryReport as a dict.
         Trading is blocked until this returns clean.
+
+        Handles crash scenarios:
+        - crash after submit before ACK → idempotency store has 'submitted' entries
+        - crash after partial fill → reconciliation detects fill mismatch
+        - restart with open orders → recovery reconciles against exchange
+        - restart with open positions → positions hydrated from exchange
+        - restart with missing SL → _verify_sl_coverage() detects and fixes
+        - restart with unknown order state → reconciliation resolves
         """
         if not self._initialised:
             logger.error("LiveBridge: cannot run recovery — components not initialised")
@@ -129,10 +181,12 @@ class LiveBridge:
                 report.exchange_balance_usdt,
                 report.orders_recovered,
             )
-            # Hydrate positions from exchange
+            # Hydrate positions from exchange (EXCHANGE IS TRUTH)
             self._hydrate_positions_from_exchange()
             # Hydrate balance
             self._fetch_usdt_balance(force=True)
+            # Verify SL coverage for all hydrated positions
+            self._verify_sl_coverage()
         else:
             logger.error(
                 "LiveBridge: RECOVERY INCOMPLETE — trading BLOCKED | "
@@ -148,7 +202,10 @@ class LiveBridge:
         return report.to_dict()
 
     def _hydrate_positions_from_exchange(self) -> None:
-        """Fetch current exchange positions and populate internal state."""
+        """
+        Fetch current exchange positions and populate internal state.
+        EXCHANGE IS TRUTH — internal state is completely replaced.
+        """
         if not self._exchange_adapter:
             return
         try:
@@ -164,7 +221,6 @@ class LiveBridge:
                     side = "buy" if side_raw == "long" else "sell"
                     entry_price = float(ep.get("entryPrice", 0) or 0)
                     unrealised = float(ep.get("unrealizedPnl", 0) or 0)
-                    # Build position dict matching PaperExecutor interface
                     self._positions[symbol] = {
                         "symbol": symbol,
                         "side": side,
@@ -189,18 +245,83 @@ class LiveBridge:
                     len(self._positions),
                 )
         except Exception as exc:
-            logger.error("LiveBridge: position hydration failed: %s", exc)
+            logger.error("LiveBridge: position hydration failed: %s — entering degraded mode", exc)
+            self._enter_degraded_mode(f"position_hydration_failed: {exc}")
 
-    # ── Balance (F-04) ────────────────────────────────────────
+    def _verify_sl_coverage(self) -> None:
+        """
+        After startup, check that every open position has a server-side SL.
+        Query open orders on exchange; for any position without a matching
+        conditional stop order, place one. If placement fails after retries,
+        close the unprotected position.
+        """
+        with self._lock:
+            positions = dict(self._positions)
+        if not positions:
+            return
+
+        logger.info("LiveBridge: verifying SL coverage for %d position(s)...", len(positions))
+
+        # Fetch all open conditional/stop orders from exchange
+        exchange_stop_orders = set()
+        try:
+            open_orders = self._exchange_adapter.fetch_open_orders()
+            for order_resp in open_orders:
+                raw = getattr(order_resp, "raw", None) or {}
+                order_type = raw.get("type", "").lower() if isinstance(raw, dict) else ""
+                symbol = raw.get("symbol", "") if isinstance(raw, dict) else ""
+                if "stop" in order_type or "conditional" in order_type:
+                    exchange_stop_orders.add(symbol)
+        except Exception as exc:
+            logger.warning("LiveBridge: cannot fetch open orders for SL verification: %s", exc)
+
+        for symbol, pos in positions.items():
+            if symbol in exchange_stop_orders:
+                with self._lock:
+                    self._sl_orders[symbol] = {
+                        "order_id": "recovered",
+                        "status": self.SL_CONFIRMED,
+                        "price": pos.get("stop_loss", 0.0),
+                    }
+                logger.info("LiveBridge: SL verified for %s (existing exchange stop)", symbol)
+                continue
+
+            # No SL found — place one
+            sl_price = pos.get("stop_loss", 0.0)
+            if sl_price <= 0:
+                logger.warning(
+                    "LiveBridge: position %s has no SL price — CLOSING unprotected position",
+                    symbol,
+                )
+                self._close_position_on_exchange(symbol, "no_sl_on_restart")
+                continue
+
+            success = self._place_server_side_stop_with_retry(symbol, pos)
+            if not success:
+                logger.error(
+                    "LiveBridge: FAILED to place SL for %s after %d retries — "
+                    "CLOSING unprotected position",
+                    symbol, SL_MAX_RETRIES,
+                )
+                self._close_position_on_exchange(symbol, "sl_placement_failed_on_restart")
+
+    # ══════════════════════════════════════════════════════════
+    # BALANCE (Fix 3 + Fix 6: Exchange Truth + No Stale Cache)
+    # ══════════════════════════════════════════════════════════
+
     def _fetch_usdt_balance(self, force: bool = False) -> float:
-        """Fetch free USDT from exchange with 30-second cache."""
+        """
+        Fetch free USDT from exchange.
+        Cache with reduced TTL (10s). On failure, returns 0.0 (fail-closed)
+        for sizing decisions, cached value only for display.
+        """
         now = time.monotonic()
         if not force:
             with self._lock:
                 if now - self._balance_cache["ts"] < self._BALANCE_CACHE_TTL:
                     return self._balance_cache["usdt"]
         if not self._exchange_adapter:
-            return self._balance_cache.get("usdt", 0.0)
+            return 0.0
         try:
             bal = self._exchange_adapter.fetch_balance()
             usdt = float(bal.get("USDT", {}).get("free", 0.0) if isinstance(bal.get("USDT"), dict)
@@ -214,11 +335,19 @@ class LiveBridge:
             return usdt
         except Exception as exc:
             logger.warning("LiveBridge: balance fetch failed: %s", exc)
-            return self._balance_cache.get("usdt", 0.0)
+            # FAIL-CLOSED: return 0.0 so sizing decisions reject the trade
+            return 0.0
+
+    def _fetch_usdt_balance_for_sizing(self) -> float:
+        """
+        ALWAYS force-refresh for sizing. Never use cache.
+        Returns 0.0 on failure (fail-closed — trade will be rejected).
+        """
+        return self._fetch_usdt_balance(force=True)
 
     @property
     def available_capital(self) -> float:
-        """Free USDT balance from exchange (not simulated)."""
+        """Free USDT balance from exchange (cached for display, not sizing)."""
         if not self._initialised:
             return 0.0
         try:
@@ -236,10 +365,12 @@ class LiveBridge:
             dd = (self._peak_usdt - current) / self._peak_usdt * 100.0
         return max(0.0, dd)
 
-    # ── Position queries (PaperExecutor-compatible) ───────────
+    # ══════════════════════════════════════════════════════════
+    # POSITION QUERIES (PaperExecutor-compatible)
+    # ══════════════════════════════════════════════════════════
+
     def get_open_positions(self) -> List[dict]:
         with self._lock:
-            # Return flat list (PaperExecutor returns list, not dict)
             return list(self._positions.values())
 
     def get_closed_trades(self) -> List[dict]:
@@ -269,21 +400,27 @@ class LiveBridge:
             "open_positions": len(self._positions),
             "drawdown_pct": round(self.drawdown_pct, 4),
             "available_capital": round(self.available_capital, 2),
+            "degraded_mode": self._degraded_mode,
         }
 
-    # ── Order Submission (F-01) ───────────────────────────────
+    # ══════════════════════════════════════════════════════════
+    # ORDER SUBMISSION (F-01 + Fix 2: FSM + Idempotency)
+    # ══════════════════════════════════════════════════════════
+
     def submit(self, candidate) -> bool:
         """
         Submit an OrderCandidate for live execution.
-        Bridges to Phase 8 LiveExecutor.execute().
+        Bridges to Phase 8 LiveExecutor.execute() with full FSM/idempotency.
         """
-        if not self._initialised:
-            logger.error("LiveBridge: cannot submit — components not initialised")
-            return False
-        if not self._trading_allowed:
+        if not self._can_trade():
+            reason = "not_initialised"
+            if self._degraded_mode:
+                reason = f"degraded_mode: {self._degraded_reason}"
+            elif not self._trading_allowed:
+                reason = "recovery_incomplete"
             logger.warning(
-                "LiveBridge: trading NOT allowed (recovery incomplete) — rejecting %s",
-                getattr(candidate, "symbol", "?"),
+                "LiveBridge: cannot trade (%s) — rejecting %s",
+                reason, getattr(candidate, "symbol", "?"),
             )
             return False
 
@@ -325,10 +462,11 @@ class LiveBridge:
     def _execute_candidate(self, candidate) -> bool:
         """
         Convert OrderCandidate → ExecutionRequest and call Phase 8 LiveExecutor.
-        Then place server-side SL order (F-02).
+        Then place server-side SL order with retry. If SL fails, close position.
+        ALL orders tracked through FSM + idempotency.
         """
         symbol = candidate.symbol
-        side = candidate.side  # "buy" or "sell"
+        side = candidate.side
 
         # Check duplicate symbol
         with self._lock:
@@ -336,20 +474,20 @@ class LiveBridge:
                 logger.warning("LiveBridge: already have position in %s — skipping", symbol)
                 return False
 
-        # ── F-04: Fresh balance check before sizing ──
-        fresh_balance = self._fetch_usdt_balance(force=True)
+        # ── Fix 6: ALWAYS force-refresh balance for sizing ──
+        fresh_balance = self._fetch_usdt_balance_for_sizing()
         size_usdt = getattr(candidate, "position_size_usdt", 0.0) or 0.0
-        if size_usdt > fresh_balance * 0.5:  # Hard safety cap: no single trade > 50% of balance
+        if fresh_balance <= 0:
+            logger.error("LiveBridge: exchange balance unavailable or zero — rejecting (fail-closed)")
+            return False
+        if size_usdt > fresh_balance * MAX_SINGLE_TRADE_PCT:
             logger.warning(
-                "LiveBridge: position size $%.2f exceeds 50%% of exchange balance $%.2f — rejecting",
-                size_usdt, fresh_balance,
+                "LiveBridge: position size $%.2f exceeds %.0f%% of exchange balance $%.2f — rejecting",
+                size_usdt, MAX_SINGLE_TRADE_PCT * 100, fresh_balance,
             )
             return False
-        if fresh_balance <= 0:
-            logger.error("LiveBridge: exchange balance is zero or negative — rejecting")
-            return False
 
-        # Build ExecutionRequest-like object for Phase 8 LiveExecutor
+        # Build ExecutionRequest
         try:
             from core.intraday.execution_contracts import ExecutionRequest, Side
         except ImportError:
@@ -386,25 +524,53 @@ class LiveBridge:
             logger.error("LiveBridge: failed to build ExecutionRequest: %s", exc)
             return False
 
-        # ── Execute via Phase 8 LiveExecutor ──
+        # ── Fix 2: Register in idempotency store BEFORE submission ──
+        if self._idempotency_store:
+            from core.intraday.live.order_lifecycle import make_client_order_id
+            client_oid = make_client_order_id(
+                request.request_id, symbol, side, now_ms,
+            )
+            self._idempotency_store.register(
+                client_order_id=client_oid,
+                request_id=request.request_id,
+                symbol=symbol,
+                side=side,
+            )
+            self._idempotency_store.mark_submitted(client_oid)
+
+        # ── Execute via Phase 8 LiveExecutor (FSM lifecycle) ──
         try:
             order_record, fill_record = self._phase8_executor.execute(request)
         except Exception as exc:
             logger.error("LiveBridge: Phase 8 execution failed for %s: %s", symbol, exc)
+            if self._idempotency_store and 'client_oid' in locals():
+                self._idempotency_store.mark_failed(client_oid, str(exc))
             return False
 
-        if order_record.status in ("rejected", "failed"):
+        # ── Fix 2: Mark confirmed in idempotency store ──
+        if self._idempotency_store and 'client_oid' in locals():
+            if hasattr(order_record, 'order_id') and order_record.order_id:
+                self._idempotency_store.mark_confirmed(client_oid, order_record.order_id)
+            elif hasattr(order_record, 'status') and order_record.status in ("rejected", "failed"):
+                self._idempotency_store.mark_failed(
+                    client_oid,
+                    getattr(order_record, 'failure_reason', 'rejected'),
+                )
+
+        if hasattr(order_record, 'status') and order_record.status in ("rejected", "failed"):
             logger.warning(
                 "LiveBridge: order %s for %s — reason: %s",
-                order_record.status, symbol, order_record.failure_reason,
+                order_record.status, symbol,
+                getattr(order_record, 'failure_reason', ''),
             )
             return False
 
         if fill_record is None:
-            logger.warning("LiveBridge: no fill for %s — order status=%s", symbol, order_record.status)
+            logger.warning("LiveBridge: no fill for %s — order status=%s", symbol,
+                           getattr(order_record, 'status', '?'))
             return False
 
-        # ── Build position dict (PaperExecutor-compatible) ──
+        # ── Build position dict ──
         fill_price = fill_record.price
         fill_qty = fill_record.quantity
         filled_size_usdt = fill_price * fill_qty
@@ -427,7 +593,7 @@ class LiveBridge:
             "timeframe": getattr(candidate, "timeframe", ""),
             "rationale": getattr(candidate, "rationale", ""),
             "opened_at": opened_at,
-            "entry_order_id": order_record.order_id,
+            "entry_order_id": getattr(order_record, 'order_id', ''),
         }
 
         with self._lock:
@@ -435,11 +601,20 @@ class LiveBridge:
 
         logger.info(
             "LiveBridge: POSITION OPENED %s %s @ %.4f qty=%.6f size=$%.2f [Phase8 order=%s]",
-            side, symbol, fill_price, fill_qty, filled_size_usdt, order_record.order_id,
+            side, symbol, fill_price, fill_qty, filled_size_usdt,
+            getattr(order_record, 'order_id', ''),
         )
 
-        # ── F-02: Place server-side SL order ──
-        self._place_server_side_stop(symbol, position)
+        # ── Fix 1: Place SL with retry — if fails, CLOSE position ──
+        sl_success = self._place_server_side_stop_with_retry(symbol, position)
+        if not sl_success:
+            logger.error(
+                "LiveBridge: SL FAILED after %d retries for %s — "
+                "CLOSING UNPROTECTED POSITION (fail-closed)",
+                SL_MAX_RETRIES, symbol,
+            )
+            self._close_position_on_exchange(symbol, "sl_placement_failed")
+            return False
 
         # Invalidate balance cache
         with self._lock:
@@ -448,64 +623,130 @@ class LiveBridge:
         # Publish trade opened event
         bus.publish(Topics.TRADE_OPENED, data=position, source="live_bridge")
 
+        # Mark completed in idempotency store
+        if self._idempotency_store and 'client_oid' in locals():
+            self._idempotency_store.mark_completed(client_oid)
+
         return True
 
-    # ── Server-Side Stop Loss (F-02) ──────────────────────────
-    def _place_server_side_stop(self, symbol: str, position: dict) -> None:
+    # ══════════════════════════════════════════════════════════
+    # SERVER-SIDE STOP LOSS (Fix 1: Exchange-Confirmed)
+    # ══════════════════════════════════════════════════════════
+
+    def _place_server_side_stop_with_retry(self, symbol: str, position: dict) -> bool:
         """
-        Place a stop-market order on the exchange as server-side protection.
-        If this fails, log a CRITICAL warning but don't block the trade.
+        Place SL with retry. Returns True only if exchange ACK received.
+        Tracks SL in _sl_orders with status.
+        Registers SL order in idempotency store.
         """
         if not self._exchange_adapter:
-            return
+            return False
         sl_price = position.get("stop_loss", 0.0)
         if sl_price <= 0:
-            logger.warning("LiveBridge: no SL price for %s — server-side stop NOT placed", symbol)
-            return
+            logger.warning("LiveBridge: no SL price for %s — cannot place server-side stop", symbol)
+            return False
 
         side = position.get("side", "buy")
         close_side = "sell" if side == "buy" else "buy"
         qty = position.get("quantity", 0.0)
 
-        try:
-            response = self._exchange_adapter.create_order(
-                symbol=symbol,
-                order_type="stop",
-                side=close_side,
-                quantity=qty,
-                price=None,  # market stop
-                params={
-                    "stopPrice": sl_price,
-                    "reduceOnly": True,
-                    "triggerPrice": sl_price,
-                },
+        # Register SL order intent in idempotency store
+        sl_client_oid = None
+        if self._idempotency_store:
+            from core.intraday.live.order_lifecycle import make_client_order_id
+            sl_client_oid = make_client_order_id(
+                f"SL-{symbol}", symbol, close_side, int(time.time() * 1000),
             )
-            if response.success:
-                with self._lock:
-                    self._sl_orders[symbol] = response.exchange_order_id
-                logger.info(
-                    "LiveBridge: SERVER-SIDE SL placed for %s at %.4f (order=%s)",
-                    symbol, sl_price, response.exchange_order_id,
-                )
-            else:
-                err = response.error
-                logger.error(
-                    "LiveBridge: FAILED to place server-side SL for %s at %.4f — %s",
-                    symbol, sl_price, err.message if err else "unknown",
-                )
-                bus.publish(Topics.SYSTEM_ALERT, {
-                    "type": "sl_placement_failed",
-                    "symbol": symbol,
-                    "stop_loss": sl_price,
-                    "message": f"Server-side SL FAILED for {symbol}",
-                    "severity": "critical",
-                }, source="live_bridge")
-        except Exception as exc:
-            logger.error(
-                "LiveBridge: exception placing server-side SL for %s: %s", symbol, exc,
+            self._idempotency_store.register(
+                client_order_id=sl_client_oid,
+                request_id=f"SL-{symbol}",
+                symbol=symbol,
+                side=close_side,
             )
 
-    # ── Tick Monitoring (backup SL/TP) ────────────────────────
+        # Mark SL as pending
+        with self._lock:
+            self._sl_orders[symbol] = {
+                "order_id": "",
+                "status": self.SL_PENDING,
+                "price": sl_price,
+                "client_oid": sl_client_oid,
+            }
+
+        for attempt in range(SL_MAX_RETRIES):
+            try:
+                response = self._exchange_adapter.create_order(
+                    symbol=symbol,
+                    order_type="stop",
+                    side=close_side,
+                    quantity=qty,
+                    price=None,
+                    client_order_id=sl_client_oid,
+                    params={
+                        "stopPrice": sl_price,
+                        "reduceOnly": True,
+                        "triggerPrice": sl_price,
+                    },
+                )
+                if response.success:
+                    with self._lock:
+                        self._sl_orders[symbol] = {
+                            "order_id": response.exchange_order_id,
+                            "status": self.SL_CONFIRMED,
+                            "price": sl_price,
+                            "client_oid": sl_client_oid,
+                        }
+                    if self._idempotency_store and sl_client_oid:
+                        self._idempotency_store.mark_confirmed(
+                            sl_client_oid, response.exchange_order_id,
+                        )
+                    logger.info(
+                        "LiveBridge: SERVER-SIDE SL CONFIRMED for %s at %.4f "
+                        "(order=%s, attempt=%d)",
+                        symbol, sl_price, response.exchange_order_id, attempt + 1,
+                    )
+                    return True
+                else:
+                    err = response.error
+                    logger.warning(
+                        "LiveBridge: SL attempt %d/%d failed for %s: %s",
+                        attempt + 1, SL_MAX_RETRIES, symbol,
+                        err.message if hasattr(err, 'message') else str(err),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "LiveBridge: SL attempt %d/%d exception for %s: %s",
+                    attempt + 1, SL_MAX_RETRIES, symbol, exc,
+                )
+
+            if attempt < SL_MAX_RETRIES - 1:
+                time.sleep(SL_RETRY_DELAY_S * (attempt + 1))
+
+        # All retries exhausted
+        with self._lock:
+            self._sl_orders[symbol] = {
+                "order_id": "",
+                "status": self.SL_FAILED,
+                "price": sl_price,
+                "client_oid": sl_client_oid,
+            }
+        if self._idempotency_store and sl_client_oid:
+            self._idempotency_store.mark_failed(sl_client_oid, "all_retries_exhausted")
+
+        bus.publish(Topics.SYSTEM_ALERT, {
+            "type": "sl_placement_failed",
+            "symbol": symbol,
+            "stop_loss": sl_price,
+            "message": f"Server-side SL FAILED for {symbol} after {SL_MAX_RETRIES} retries — position closed",
+            "severity": "critical",
+        }, source="live_bridge")
+
+        return False
+
+    # ══════════════════════════════════════════════════════════
+    # TICK MONITORING (backup SL/TP)
+    # ══════════════════════════════════════════════════════════
+
     def on_tick(self, symbol: str, price: float) -> None:
         """Client-side SL/TP backup monitor (exchange stops are primary)."""
         with self._lock:
@@ -515,14 +756,12 @@ class LiveBridge:
             pos["current_price"] = price
             entry = pos["entry_price"]
             side = pos["side"]
-            # Compute unrealized PnL %
             if entry > 0:
                 if side == "buy":
                     pos["unrealized_pnl"] = (price - entry) / entry * 100
                 else:
                     pos["unrealized_pnl"] = (entry - price) / entry * 100
 
-        # Check SL/TP (client-side backup — server-side is primary)
         sl = pos.get("stop_loss", 0.0)
         tp = pos.get("take_profit", 0.0)
         exit_reason = None
@@ -540,14 +779,18 @@ class LiveBridge:
 
         if exit_reason:
             logger.info(
-                "LiveBridge: CLIENT-SIDE %s triggered for %s at %.4f (server-side SL may have already filled)",
+                "LiveBridge: CLIENT-SIDE %s triggered for %s at %.4f "
+                "(server-side SL may have already filled)",
                 exit_reason, symbol, price,
             )
             self._close_position_on_exchange(symbol, exit_reason)
         else:
             bus.publish(Topics.POSITION_UPDATED, data=pos, source="live_bridge")
 
-    # ── Position Close ────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════
+    # POSITION CLOSE
+    # ══════════════════════════════════════════════════════════
+
     def _close_position_on_exchange(self, symbol: str, exit_reason: str = "manual_close") -> bool:
         """Close a position via market order on the exchange."""
         with self._lock:
@@ -601,7 +844,6 @@ class LiveBridge:
             "closed_at": datetime.now(timezone.utc).isoformat(),
             "duration_s": 0,
         }
-        # Compute duration
         try:
             opened = datetime.fromisoformat(pos["opened_at"])
             trade["duration_s"] = int((datetime.now(timezone.utc) - opened).total_seconds())
@@ -611,7 +853,7 @@ class LiveBridge:
         with self._lock:
             self._positions.pop(symbol, None)
             self._closed_trades.append(trade)
-            self._balance_cache["ts"] = 0.0  # invalidate
+            self._balance_cache["ts"] = 0.0
 
         logger.info(
             "LiveBridge: POSITION CLOSED %s %s @ %.4f PnL=$%.2f (%.2f%%) reason=%s",
@@ -624,8 +866,11 @@ class LiveBridge:
     def _cancel_sl_order(self, symbol: str) -> None:
         """Cancel the server-side SL order for a symbol."""
         with self._lock:
-            sl_oid = self._sl_orders.pop(symbol, None)
-        if sl_oid and self._exchange_adapter:
+            sl_info = self._sl_orders.pop(symbol, None)
+        if not sl_info:
+            return
+        sl_oid = sl_info.get("order_id", "")
+        if sl_oid and sl_oid != "recovered" and self._exchange_adapter:
             try:
                 self._exchange_adapter.cancel_order(sl_oid, symbol)
                 logger.info("LiveBridge: cancelled server-side SL order %s for %s", sl_oid, symbol)
@@ -636,7 +881,6 @@ class LiveBridge:
         return self._close_position_on_exchange(symbol, "manual_close")
 
     def close_all(self) -> int:
-        """Close all open positions."""
         with self._lock:
             symbols = list(self._positions.keys())
         count = 0
@@ -646,7 +890,6 @@ class LiveBridge:
         return count
 
     def close_all_longs(self, exit_reason: str = "close_all_longs") -> int:
-        """Close all long (buy) positions."""
         with self._lock:
             longs = [s for s, p in self._positions.items() if p.get("side") == "buy"]
         count = 0
@@ -656,7 +899,6 @@ class LiveBridge:
         return count
 
     def partial_close(self, symbol: str, reduce_pct: float) -> bool:
-        """Partially close a position."""
         with self._lock:
             pos = self._positions.get(symbol)
             if not pos:
@@ -680,17 +922,20 @@ class LiveBridge:
             if not response.success:
                 return False
 
-            close_price = response.avg_price if response.avg_price > 0 else pos["current_price"]
-
             with self._lock:
                 pos["quantity"] -= close_qty
                 pos["size_usdt"] = pos["quantity"] * pos["entry_price"]
                 self._balance_cache["ts"] = 0.0
 
             logger.info(
-                "LiveBridge: partial close %.0f%% of %s — closed %.6f @ %.4f",
-                reduce_pct * 100, symbol, close_qty, close_price,
+                "LiveBridge: partial close %.0f%% of %s — closed %.6f",
+                reduce_pct * 100, symbol, close_qty,
             )
+
+            # Update server-side SL for reduced quantity
+            self._cancel_sl_order(symbol)
+            self._place_server_side_stop_with_retry(symbol, pos)
+
             bus.publish(Topics.POSITION_UPDATED, data=pos, source="live_bridge")
             return True
         except Exception as exc:
@@ -698,7 +943,6 @@ class LiveBridge:
             return False
 
     def move_all_longs_to_breakeven(self) -> int:
-        """Move all long SLs to entry price (breakeven)."""
         with self._lock:
             longs = [(s, dict(p)) for s, p in self._positions.items() if p.get("side") == "buy"]
         count = 0
@@ -710,22 +954,52 @@ class LiveBridge:
         return count
 
     def adjust_stop(self, symbol: str, new_stop: float) -> bool:
-        """Adjust SL for a position and update server-side stop."""
         with self._lock:
             pos = self._positions.get(symbol)
             if not pos:
                 return False
             pos["stop_loss"] = new_stop
 
-        # Cancel old SL and place new one
         self._cancel_sl_order(symbol)
-        self._place_server_side_stop(symbol, pos)
+        success = self._place_server_side_stop_with_retry(symbol, pos)
+        if not success:
+            logger.error(
+                "LiveBridge: adjust_stop SL placement failed for %s — "
+                "CLOSING unprotected position",
+                symbol,
+            )
+            self._close_position_on_exchange(symbol, "sl_adjust_failed")
+            return False
         bus.publish(Topics.POSITION_UPDATED, data=pos, source="live_bridge")
         return True
 
-    # ── Periodic Reconciliation (F-06) ────────────────────────
+    # ══════════════════════════════════════════════════════════
+    # DEGRADED MODE (Fix 4: Fail-Closed Reconciliation)
+    # ══════════════════════════════════════════════════════════
+
+    def _enter_degraded_mode(self, reason: str) -> None:
+        """Enter degraded mode — all new trading blocked."""
+        with self._lock:
+            self._degraded_mode = True
+            self._degraded_reason = reason
+        logger.error("LiveBridge: ENTERING DEGRADED MODE — %s", reason)
+        bus.publish(Topics.SYSTEM_ALERT, {
+            "type": "degraded_mode_entered",
+            "reason": reason,
+            "message": f"Trading BLOCKED — degraded mode: {reason}",
+            "severity": "critical",
+        }, source="live_bridge")
+
+    # ══════════════════════════════════════════════════════════
+    # PERIODIC RECONCILIATION (Fix 3 + Fix 4: Fail-Closed)
+    # ══════════════════════════════════════════════════════════
+
     def run_reconciliation(self) -> dict:
-        """Run reconciliation engine and return result."""
+        """
+        Run reconciliation engine. If mismatches found:
+        - Exchange state OVERRIDES local state (no merge)
+        - Trading enters degraded mode
+        """
         if not self._initialised or not self._reconciliation_engine:
             return {"success": False, "errors": ["not_initialised"]}
 
@@ -751,15 +1025,14 @@ class LiveBridge:
                     result.mismatch_count,
                     [m.to_dict() for m in result.mismatches],
                 )
-                # Re-hydrate positions from exchange on any mismatch
+                # EXCHANGE OVERRIDES LOCAL — re-hydrate completely
                 self._hydrate_positions_from_exchange()
 
-                bus.publish(Topics.SYSTEM_ALERT, {
-                    "type": "reconciliation_mismatch",
-                    "mismatch_count": result.mismatch_count,
-                    "message": f"Reconciliation found {result.mismatch_count} mismatch(es)",
-                    "severity": "high" if result.mismatch_count > 1 else "medium",
-                }, source="live_bridge")
+                # Fix 4: FAIL-CLOSED — enter degraded mode
+                if result.mismatch_count >= DEGRADED_MISMATCH_THRESHOLD:
+                    self._enter_degraded_mode(
+                        f"reconciliation_mismatch: {result.mismatch_count} mismatch(es)"
+                    )
             else:
                 logger.debug("LiveBridge: reconciliation clean — 0 mismatches")
 
@@ -768,16 +1041,28 @@ class LiveBridge:
             logger.error("LiveBridge: reconciliation failed: %s", exc)
             return {"success": False, "errors": [str(exc)]}
 
-    # ── State for debugging ───────────────────────────────────
+    # ══════════════════════════════════════════════════════════
+    # STATE
+    # ══════════════════════════════════════════════════════════
+
     def get_state(self) -> dict:
         with self._lock:
+            sl_summary = {}
+            for sym, info in self._sl_orders.items():
+                sl_summary[sym] = info.get("status", "unknown")
             return {
                 "initialised": self._initialised,
                 "recovery_complete": self._recovery_complete,
                 "trading_allowed": self._trading_allowed,
+                "degraded_mode": self._degraded_mode,
+                "degraded_reason": self._degraded_reason,
                 "open_positions": len(self._positions),
                 "closed_trades": len(self._closed_trades),
-                "sl_orders_active": len(self._sl_orders),
+                "sl_orders": sl_summary,
+                "sl_orders_active": sum(
+                    1 for i in self._sl_orders.values()
+                    if i.get("status") == self.SL_CONFIRMED
+                ),
                 "pending_confirmations": len(self._pending_confirmations),
                 "balance_cache_usdt": self._balance_cache.get("usdt", 0.0),
                 "peak_usdt": self._peak_usdt,
