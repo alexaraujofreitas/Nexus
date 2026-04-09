@@ -95,7 +95,7 @@ function PortfolioSummary({ portfolio, pnl }: { portfolio: any; pnl: any }) {
   const pnlColor = (v: number): StatColor => v >= 0 ? 'green' : 'red';
   const heatColor = (v: number): StatColor => v > 5 ? 'red' : v > 3 ? 'yellow' : 'green';
   const stats: { label: string; value: string; color: StatColor }[] = [
-    { label: 'Equity',         value: formatUSD(portfolio.equity),             color: 'default' },
+    { label: 'Capital',        value: formatUSD(portfolio.equity),             color: 'default' },
     { label: 'Daily PnL',      value: formatUSD(pnl.daily_pnl),               color: pnlColor(pnl.daily_pnl) },
     { label: 'Unrealized PnL', value: formatUSD(pnl.total_unrealized),         color: pnlColor(pnl.total_unrealized) },
     { label: 'Realized PnL',   value: formatUSD(pnl.total_realized),           color: pnlColor(pnl.total_realized) },

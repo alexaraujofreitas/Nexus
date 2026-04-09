@@ -1,12 +1,11 @@
-/** Format a number as USD currency. Omits cents for values >= $1,000. */
+/** Format a number as USDT. Omits cents for values >= 1,000. */
 export function formatUSD(value: number): string {
   const abs = Math.abs(value);
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
+  const formatted = new Intl.NumberFormat('en-US', {
     minimumFractionDigits: abs >= 1000 ? 0 : 2,
     maximumFractionDigits: abs >= 1000 ? 0 : 2,
   }).format(value);
+  return `${formatted} USDT`;
 }
 
 /** Format a percentage */

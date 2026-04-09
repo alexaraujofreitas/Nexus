@@ -102,6 +102,21 @@ class TradingEngineService:
         # EventBus publication). Existing positions are unaffected.
         self._trading_paused = False
 
+        # ── Cached exchange balance (for dashboard) ────────────
+        self._cached_balance_usdt: float = 0.0
+        self._cached_balance_ts: float = 0.0
+        self._BALANCE_CACHE_TTL: float = 30.0  # seconds
+
+        # ── Cached exchange closed orders ──────────────────────
+        self._cached_exchange_trades: list[dict] = []
+        self._cached_exchange_trades_ts: float = 0.0
+        self._TRADES_CACHE_TTL: float = 30.0  # seconds
+
+        # ── Cached exchange open positions ─────────────────────
+        self._cached_exchange_positions: list[dict] = []
+        self._cached_exchange_positions_ts: float = 0.0
+        self._POSITIONS_CACHE_TTL: float = 10.0  # seconds
+
     async def start(self):
         """Full 14-step startup sequence."""
         logger.info("=== NexusTrader Engine Service Starting ===")
@@ -500,6 +515,134 @@ class TradingEngineService:
                 "Phase 8 (web) initialization failed: %s\n%s",
                 exc, traceback.format_exc(),
             )
+
+    async def _fetch_exchange_balance_cached(self) -> float:
+        """Return the exchange USDT balance, cached for 30s."""
+        now = time.time()
+        if now - self._cached_balance_ts < self._BALANCE_CACHE_TTL:
+            return self._cached_balance_usdt
+        try:
+            result = await self._cmd_exchange_fetch_balance({})
+            if result.get("status") == "ok":
+                self._cached_balance_usdt = result.get("balance_usdt", 0.0)
+                self._cached_balance_ts = now
+        except Exception as exc:
+            logger.debug("Exchange balance fetch failed (cached): %s", exc)
+        return self._cached_balance_usdt
+
+    async def _fetch_exchange_trades_cached(self) -> list[dict]:
+        """Return closed orders from the exchange, cached for 30s."""
+        now = time.time()
+        if now - self._cached_exchange_trades_ts < self._TRADES_CACHE_TTL:
+            return self._cached_exchange_trades
+        try:
+            if not self._exchange_manager:
+                return self._cached_exchange_trades
+            exchange = self._exchange_manager.get_exchange()
+            if not exchange:
+                return self._cached_exchange_trades
+
+            loop = asyncio.get_event_loop()
+            # Fetch closed orders for USDT-margined pairs (last 7 days by default)
+            raw_orders = await loop.run_in_executor(
+                None, lambda: exchange.fetch_closed_orders(None, limit=200)
+            )
+
+            trades = []
+            for o in raw_orders:
+                if o.get("status") != "closed":
+                    continue
+                info = o.get("info", {})
+                symbol = o.get("symbol", "")
+                side = o.get("side", "")
+                avg_price = float(o.get("average", 0) or o.get("price", 0) or 0)
+                filled = float(o.get("filled", 0) or 0)
+                cost = float(o.get("cost", 0) or 0)
+                fee_cost = 0.0
+                fee_obj = o.get("fee")
+                if fee_obj and isinstance(fee_obj, dict):
+                    fee_cost = float(fee_obj.get("cost", 0) or 0)
+                # Bybit-specific P&L from info
+                pnl = float(info.get("cumExecFee", 0) or 0)
+                closed_pnl = float(info.get("closedPnl", 0) or info.get("realisedPnl", 0) or 0)
+
+                trades.append({
+                    "id": o.get("id", ""),
+                    "symbol": symbol,
+                    "side": side,
+                    "entry_price": avg_price,
+                    "exit_price": avg_price,
+                    "size_usdt": round(cost, 2),
+                    "quantity": filled,
+                    "pnl_usdt": round(closed_pnl, 2),
+                    "fees": round(abs(fee_cost), 4),
+                    "closed_at": o.get("datetime", ""),
+                    "exit_reason": o.get("type", "limit"),
+                    "order_type": o.get("type", ""),
+                    "status": o.get("status", ""),
+                    "reduce_only": info.get("reduceOnly", False),
+                })
+
+            # Sort newest first
+            trades.sort(key=lambda t: t.get("closed_at", ""), reverse=True)
+            self._cached_exchange_trades = trades
+            self._cached_exchange_trades_ts = now
+            logger.debug("Fetched %d closed orders from exchange", len(trades))
+        except Exception as exc:
+            logger.debug("Exchange trades fetch failed (cached): %s", exc)
+        return self._cached_exchange_trades
+
+    async def _fetch_exchange_positions_cached(self) -> list[dict]:
+        """Return open positions from the exchange, cached for 10s."""
+        now = time.time()
+        if now - self._cached_exchange_positions_ts < self._POSITIONS_CACHE_TTL:
+            return self._cached_exchange_positions
+        try:
+            if not self._exchange_manager:
+                return self._cached_exchange_positions
+            exchange = self._exchange_manager.get_exchange()
+            if not exchange:
+                return self._cached_exchange_positions
+
+            loop = asyncio.get_event_loop()
+            raw_positions = await loop.run_in_executor(
+                None, exchange.fetch_positions
+            )
+
+            positions = []
+            for p in raw_positions:
+                contracts = float(p.get("contracts", 0) or 0)
+                if contracts == 0:
+                    continue  # skip empty positions
+                side_raw = p.get("side", "")
+                entry_price = float(p.get("entryPrice", 0) or 0)
+                mark_price = float(p.get("markPrice", 0) or 0)
+                notional = float(p.get("notional", 0) or 0)
+                unrealized_pnl = float(p.get("unrealizedPnl", 0) or 0)
+                info = p.get("info", {})
+
+                positions.append({
+                    "symbol": p.get("symbol", ""),
+                    "side": "long" if side_raw == "long" else "short",
+                    "entry_price": entry_price,
+                    "current_price": mark_price,
+                    "size_usdt": round(abs(notional), 2),
+                    "quantity": contracts,
+                    "pnl_unrealized": round(unrealized_pnl, 2),
+                    "pnl_pct": round(unrealized_pnl / abs(notional) * 100, 2) if notional else 0,
+                    "stop_loss": float(info.get("stopLoss", 0) or 0) or None,
+                    "take_profit": float(info.get("takeProfit", 0) or 0) or None,
+                    "leverage": p.get("leverage", 1),
+                    "margin_mode": p.get("marginMode", "cross"),
+                    "opened_at": p.get("datetime", ""),
+                })
+
+            self._cached_exchange_positions = positions
+            self._cached_exchange_positions_ts = now
+            logger.debug("Fetched %d open positions from exchange", len(positions))
+        except Exception as exc:
+            logger.debug("Exchange positions fetch failed (cached): %s", exc)
+        return self._cached_exchange_positions
 
     def _get_active_exchange_mode(self) -> str:
         """Read the active exchange mode from web_assets.json.
@@ -910,10 +1053,8 @@ class TradingEngineService:
     # ── Command Handlers (wired to real core/ components) ───
 
     async def _cmd_get_positions(self, params: dict) -> dict:
-        """Return all open positions from PaperExecutor."""
-        if not self._pe:
-            return {"status": "error", "detail": "PaperExecutor not initialized"}
-        positions = self._pe.get_open_positions()
+        """Return all open positions from the active exchange."""
+        positions = await self._fetch_exchange_positions_cached()
         return {"status": "ok", "positions": positions, "count": len(positions)}
 
     async def _cmd_get_portfolio(self, params: dict) -> dict:
@@ -1082,12 +1223,17 @@ class TradingEngineService:
         """Aggregated dashboard snapshot: portfolio + crash defense + recent trades."""
         result = {"status": "ok"}
 
+        # Fetch exchange balance (cached 30s) for capital display
+        exchange_balance = await self._fetch_exchange_balance_cached()
+
         # Portfolio
         if self._pe:
             prod = self._pe.get_production_status()
             stats = self._pe.get_stats()
+            # Use exchange balance when available, fall back to PaperExecutor capital
+            capital = exchange_balance if exchange_balance > 0 else prod.get("capital_usdt", 0.0)
             result["portfolio"] = {
-                "capital_usdt": prod.get("capital_usdt", 0.0),
+                "capital_usdt": capital,
                 "peak_capital_usdt": prod.get("peak_capital_usdt", 0.0),
                 "total_return_pct": prod.get("total_return_pct", 0.0),
                 "drawdown_pct": prod.get("drawdown_pct", 0.0),
@@ -1781,40 +1927,38 @@ class TradingEngineService:
         return result
 
     async def _cmd_get_trade_history(self, params: dict) -> dict:
-        """Return paginated trade history from the database."""
+        """Return paginated trade history from the active exchange."""
         page = params.get("page", 1)
         per_page = min(params.get("per_page", 50), 200)  # cap at 200
 
-        if not self._pe:
-            return {"status": "error", "detail": "PaperExecutor not initialized"}
+        # Fetch from exchange (cached 30s)
+        closed = await self._fetch_exchange_trades_cached()
 
-        # Get closed trades from PaperExecutor's in-memory list
-        closed = list(reversed(getattr(self._pe, '_closed_trades', [])))
         start = (page - 1) * per_page
         end = start + per_page
         page_trades = closed[start:end]
 
-        # Summary stats across all trades (excluding partial closes)
-        full = [t for t in closed if t.get("exit_reason") != "partial_close"]
-        total_wins = sum(1 for t in full if (t.get("pnl_usdt") or 0) > 0)
-        total_losses = sum(1 for t in full if (t.get("pnl_usdt") or 0) <= 0)
-        total_pnl_usdt = round(sum(t.get("pnl_usdt") or 0 for t in full), 2)
-        entry_sum = sum(abs(t.get("size_usdt") or t.get("entry_size_usdt") or 0) for t in full)
+        # Summary stats
+        total_wins = sum(1 for t in closed if (t.get("pnl_usdt") or 0) > 0)
+        total_losses = sum(1 for t in closed if (t.get("pnl_usdt") or 0) <= 0)
+        total_pnl_usdt = round(sum(t.get("pnl_usdt") or 0 for t in closed), 2)
+        entry_sum = sum(abs(t.get("size_usdt") or 0) for t in closed)
         total_pnl_pct = round((total_pnl_usdt / entry_sum * 100) if entry_sum > 0 else 0.0, 2)
 
         return {
             "status": "ok",
             "trades": page_trades,
-            "total": len(full),
+            "total": len(closed),
             "page": page,
             "per_page": per_page,
-            "pages": (len(full) + per_page - 1) // per_page if per_page > 0 else 0,
+            "pages": (len(closed) + per_page - 1) // per_page if per_page > 0 else 0,
             "summary": {
                 "wins": total_wins,
                 "losses": total_losses,
                 "total_pnl_usdt": total_pnl_usdt,
                 "total_pnl_pct": total_pnl_pct,
             },
+            "data_source": "exchange",
         }
 
     async def _cmd_update_config(self, params: dict) -> dict:
@@ -2371,56 +2515,16 @@ class TradingEngineService:
     # ── Demo Monitor Handlers (Phase 8H) ────────────────────────
 
     async def _cmd_get_active_positions(self, params: dict) -> dict:
-        """All open positions with enriched monitor fields."""
+        """All open positions from the active exchange."""
         try:
             from datetime import datetime, timezone
-            positions = []
-            if self._pe:
-                for pos in self._pe.get_open_positions():
-                    p = dict(pos) if isinstance(pos, dict) else (pos.to_dict() if hasattr(pos, 'to_dict') else pos)
-                    # Compute duration from opened_at
-                    opened_at = p.get("opened_at", "")
-                    duration_s = 0
-                    if opened_at:
-                        try:
-                            dt = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
-                            if dt.tzinfo is None:
-                                dt = dt.replace(tzinfo=timezone.utc)
-                            duration_s = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
-                        except Exception:
-                            pass
-                    # Compute pnl_pct
-                    entry = p.get("entry_price", 0)
-                    current = p.get("current_price", entry)
-                    size = p.get("size_usdt", 0) or p.get("entry_size_usdt", 0)
-                    side = p.get("side", "buy")
-                    pnl = p.get("unrealized_pnl", 0) or 0
-                    pnl_pct = (pnl / size * 100) if size else 0.0
-
-                    positions.append({
-                        "symbol": p.get("symbol", ""),
-                        "side": "long" if side in ("buy", "long") else "short",
-                        "entry_price": entry,
-                        "current_price": current,
-                        "size_usdt": size,
-                        "pnl_unrealized": pnl,
-                        "pnl_pct": round(pnl_pct, 2),
-                        "duration_s": duration_s,
-                        "stop_loss": p.get("stop_loss"),
-                        "take_profit": p.get("take_profit"),
-                        "regime_at_entry": p.get("regime", "unknown"),
-                        "models_fired": p.get("models_fired", []),
-                        "score": p.get("score", 0),
-                        "opened_at": opened_at,
-                        "_auto_partial_applied": p.get("_auto_partial_applied", False),
-                        "_breakeven_applied": p.get("_breakeven_applied", False),
-                    })
+            positions = await self._fetch_exchange_positions_cached()
             return {
                 "status": "ok",
                 "positions": positions,
                 "count": len(positions),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": type(self._pe).__name__ if self._pe else "none"
+                "data_source": "exchange",
             }
         except Exception as e:
             logger.error(f"get_active_positions failed: {e}")
@@ -2434,7 +2538,10 @@ class TradingEngineService:
             if self._pe:
                 status = self._pe.get_production_status() if hasattr(self._pe, 'get_production_status') else {}
                 stats = self._pe.get_stats() if hasattr(self._pe, 'get_stats') else {}
-                capital = status.get("capital_usdt", 0) or status.get("available_capital", 0)
+                pe_capital = status.get("capital_usdt", 0) or status.get("available_capital", 0)
+                # Use exchange balance when available, fall back to PaperExecutor capital
+                exchange_bal = await self._fetch_exchange_balance_cached()
+                capital = exchange_bal if exchange_bal > 0 else pe_capital
                 peak = status.get("peak_capital_usdt", capital)
 
                 # Calculate portfolio heat
@@ -2471,45 +2578,35 @@ class TradingEngineService:
             return {"status": "error", "detail": str(e)}
 
     async def _cmd_get_live_pnl(self, params: dict) -> dict:
-        """Real-time PnL breakdown."""
+        """Real-time PnL breakdown from the active exchange."""
         try:
             from datetime import datetime, timezone
             total_unrealized = 0.0
             total_realized = 0.0
-            daily_pnl = 0.0
             fees_paid = 0.0
 
-            if self._pe:
-                # Unrealized from open positions
-                for pos in self._pe.get_open_positions():
-                    p = pos if isinstance(pos, dict) else (pos.to_dict() if hasattr(pos, 'to_dict') else {})
-                    total_unrealized += p.get("unrealized_pnl", 0) or 0
+            # Unrealized from exchange open positions
+            positions = await self._fetch_exchange_positions_cached()
+            for p in positions:
+                total_unrealized += p.get("pnl_unrealized", 0) or 0
 
-                # Realized from closed trades
-                closed = getattr(self._pe, '_closed_trades', [])
-                for tr in closed:
-                    t = tr if isinstance(tr, dict) else (tr.to_dict() if hasattr(tr, 'to_dict') else {})
-                    pnl = t.get("pnl_usdt", 0) or 0
-                    total_realized += pnl
-                    # Estimate fees: 0.04% per side × 2 sides × size
-                    size = t.get("size_usdt", 0) or t.get("entry_size_usdt", 0) or 0
-                    fees_paid += size * 0.0004 * 2
-
-                # Daily PnL from session
-                status = self._pe.get_production_status() if hasattr(self._pe, 'get_production_status') else {}
-                daily_pnl = status.get("session_pnl_usdt", total_realized)
+            # Realized from exchange closed trades
+            closed = await self._fetch_exchange_trades_cached()
+            for t in closed:
+                total_realized += t.get("pnl_usdt", 0) or 0
+                fees_paid += t.get("fees", 0) or 0
 
             return {
                 "status": "ok",
                 "pnl": {
                     "total_unrealized": round(total_unrealized, 2),
                     "total_realized": round(total_realized, 2),
-                    "daily_pnl": round(daily_pnl, 2),
-                    "fees_paid": round(fees_paid, 2),
+                    "daily_pnl": round(total_realized, 2),
+                    "fees_paid": round(fees_paid, 4),
                     "net_pnl": round(total_realized + total_unrealized - fees_paid, 2),
                 },
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": type(self._pe).__name__ if self._pe else "none"
+                "data_source": "exchange",
             }
         except Exception as e:
             logger.error(f"get_live_pnl failed: {e}")
@@ -2572,62 +2669,46 @@ class TradingEngineService:
             return {"status": "error", "detail": str(e)}
 
     async def _cmd_get_recent_trades_monitor(self, params: dict) -> dict:
-        """Last 50 closed trades with enriched monitor fields."""
+        """Last 50 closed trades from the active exchange."""
         try:
             from datetime import datetime, timezone
+
+            # Fetch from exchange (cached 30s)
+            closed = await self._fetch_exchange_trades_cached()
+            recent = closed[:50]  # already sorted newest first
+
             trades = []
-            if self._pe:
-                closed = list(getattr(self._pe, '_closed_trades', []))
-                # Most recent 50
-                recent = closed[-50:] if len(closed) > 50 else closed
-                recent.reverse()  # newest first
+            for t in recent:
+                entry = t.get("entry_price", 0) or 0
+                exit_p = t.get("exit_price", 0) or 0
+                pnl = t.get("pnl_usdt", 0) or 0
+                size = t.get("size_usdt", 0) or 0
+                fees = t.get("fees", 0) or 0
 
-                for tr in recent:
-                    t = tr if isinstance(tr, dict) else (tr.to_dict() if hasattr(tr, 'to_dict') else {})
-                    entry = t.get("entry_price", 0) or 0
-                    exit_p = t.get("exit_price", 0) or 0
-                    pnl = t.get("pnl_usdt", 0) or 0
-                    size = t.get("size_usdt", 0) or t.get("entry_size_usdt", 0) or 0
-                    sl = t.get("stop_loss", 0) or 0
-
-                    # R-multiple calculation
-                    risk_per_unit = abs(entry - sl) if sl else 0
-                    if risk_per_unit > 0 and entry > 0:
-                        side = t.get("side", "buy")
-                        if side in ("buy", "long"):
-                            r_multiple = (exit_p - entry) / risk_per_unit
-                        else:
-                            r_multiple = (entry - exit_p) / risk_per_unit
-                    else:
-                        r_multiple = pnl / (size * 0.01) if size else 0
-
-                    # Fees estimate
-                    fees = size * 0.0004 * 2
-
-                    trades.append({
-                        "symbol": t.get("symbol", ""),
-                        "side": t.get("side", ""),
-                        "entry_price": entry,
-                        "exit_price": exit_p,
-                        "pnl_usdt": round(pnl, 2),
-                        "pnl_pct": t.get("pnl_pct", 0),
-                        "r_multiple": round(r_multiple, 2),
-                        "duration_s": t.get("duration_s", 0),
-                        "regime": t.get("regime", "unknown"),
-                        "exit_reason": t.get("exit_reason", ""),
-                        "models_fired": t.get("models_fired", []),
-                        "fees_estimated": round(fees, 2),
-                        "slippage": t.get("slippage", 0),
-                        "closed_at": t.get("closed_at", ""),
-                        "score": t.get("score", 0),
-                    })
+                trades.append({
+                    "symbol": t.get("symbol", ""),
+                    "side": t.get("side", ""),
+                    "entry_price": entry,
+                    "exit_price": exit_p,
+                    "pnl_usdt": round(pnl, 2),
+                    "pnl_pct": round(pnl / size * 100, 2) if size else 0,
+                    "r_multiple": 0,
+                    "duration_s": 0,
+                    "regime": "",
+                    "exit_reason": t.get("exit_reason", ""),
+                    "models_fired": [],
+                    "fees_estimated": round(fees, 4),
+                    "slippage": 0,
+                    "closed_at": t.get("closed_at", ""),
+                    "score": 0,
+                })
 
             return {
                 "status": "ok",
                 "trades": trades,
                 "count": len(trades),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": type(self._pe).__name__ if self._pe else "none"
+                "data_source": "exchange",
             }
         except Exception as e:
             logger.error(f"get_recent_trades_monitor failed: {e}")
