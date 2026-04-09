@@ -102,6 +102,11 @@ class TradingEngineService:
         # EventBus publication). Existing positions are unaffected.
         self._trading_paused = False
 
+        # ── Cached CCXT exchange instance (built from web store) ──
+        self._web_ccxt: object = None       # ccxt.Exchange instance
+        self._web_ccxt_ts: float = 0.0
+        self._WEB_CCXT_TTL: float = 300.0   # rebuild every 5 min
+
         # ── Cached exchange balance (for dashboard) ────────────
         self._cached_balance_usdt: float = 0.0
         self._cached_balance_ts: float = 0.0
@@ -516,16 +521,97 @@ class TradingEngineService:
                 exc, traceback.format_exc(),
             )
 
+    def _get_web_ccxt(self):
+        """Build or return a cached CCXT instance from web_assets.json credentials.
+
+        Uses the same decryption key as Test Connection (`.nexus_web_key`),
+        bypassing exchange_manager which uses a different key (`.nexus_key`).
+        """
+        now = time.time()
+        if self._web_ccxt and (now - self._web_ccxt_ts < self._WEB_CCXT_TTL):
+            return self._web_ccxt
+
+        try:
+            if not self._http_api:
+                return None
+            store = self._http_api._store
+            active = store.get_active_exchange()
+            if not active:
+                return None
+
+            creds = store.get_decrypted_creds(active["id"])
+            if not creds or not creds.get("api_key") or not creds.get("api_secret"):
+                return None
+
+            import ccxt
+            exchange_id = active.get("exchange_id", "bybit")
+            exchange_class = getattr(ccxt, exchange_id, None)
+            if not exchange_class:
+                return None
+
+            config = {
+                "apiKey": creds["api_key"],
+                "secret": creds["api_secret"],
+                "enableRateLimit": True,
+                "timeout": 15000,
+                "recvWindow": 20000,
+            }
+            if creds.get("passphrase"):
+                config["password"] = creds["passphrase"]
+
+            mode = active.get("mode", "live")
+            if mode == "sandbox":
+                config["sandbox"] = True
+
+            # Bybit Demo: set swap default type
+            if mode == "demo" and exchange_id == "bybit":
+                config.setdefault("options", {})["defaultType"] = "swap"
+
+            ex = exchange_class(config)
+
+            # Apply demo trading URLs (same logic as Test Connection)
+            if mode == "demo" and exchange_id == "bybit":
+                if hasattr(ex, "enable_demo_trading"):
+                    ex.enable_demo_trading(True)
+                else:
+                    demo_urls = ex.urls.get("demotrading")
+                    if demo_urls:
+                        ex.urls["api"] = demo_urls
+                    else:
+                        ex.urls["api"] = {
+                            "public": "https://api-demo.bybit.com",
+                            "private": "https://api-demo.bybit.com",
+                        }
+
+            self._web_ccxt = ex
+            self._web_ccxt_ts = now
+            logger.info("Web CCXT instance built for %s (mode=%s)", exchange_id, mode)
+            return ex
+        except Exception as exc:
+            logger.warning("Failed to build web CCXT instance: %s", exc)
+            return None
+
     async def _fetch_exchange_balance_cached(self) -> float:
         """Return the exchange USDT balance, cached for 30s."""
         now = time.time()
         if now - self._cached_balance_ts < self._BALANCE_CACHE_TTL:
             return self._cached_balance_usdt
         try:
-            result = await self._cmd_exchange_fetch_balance({})
-            if result.get("status") == "ok":
-                self._cached_balance_usdt = result.get("balance_usdt", 0.0)
-                self._cached_balance_ts = now
+            ex = self._get_web_ccxt()
+            if not ex:
+                return self._cached_balance_usdt
+
+            loop = asyncio.get_event_loop()
+            balance = await loop.run_in_executor(None, ex.fetch_balance)
+
+            usdt_free = 0.0
+            if "USDT" in balance:
+                usdt_free = float(balance["USDT"].get("free", 0) or 0)
+            elif "free" in balance and "USDT" in balance["free"]:
+                usdt_free = float(balance["free"]["USDT"] or 0)
+
+            self._cached_balance_usdt = round(usdt_free, 2)
+            self._cached_balance_ts = now
         except Exception as exc:
             logger.debug("Exchange balance fetch failed (cached): %s", exc)
         return self._cached_balance_usdt
@@ -536,16 +622,13 @@ class TradingEngineService:
         if now - self._cached_exchange_trades_ts < self._TRADES_CACHE_TTL:
             return self._cached_exchange_trades
         try:
-            if not self._exchange_manager:
-                return self._cached_exchange_trades
-            exchange = self._exchange_manager.get_exchange()
-            if not exchange:
+            ex = self._get_web_ccxt()
+            if not ex:
                 return self._cached_exchange_trades
 
             loop = asyncio.get_event_loop()
-            # Fetch closed orders for USDT-margined pairs (last 7 days by default)
             raw_orders = await loop.run_in_executor(
-                None, lambda: exchange.fetch_closed_orders(None, limit=200)
+                None, lambda: ex.fetch_closed_orders(None, limit=200)
             )
 
             trades = []
@@ -562,8 +645,6 @@ class TradingEngineService:
                 fee_obj = o.get("fee")
                 if fee_obj and isinstance(fee_obj, dict):
                     fee_cost = float(fee_obj.get("cost", 0) or 0)
-                # Bybit-specific P&L from info
-                pnl = float(info.get("cumExecFee", 0) or 0)
                 closed_pnl = float(info.get("closedPnl", 0) or info.get("realisedPnl", 0) or 0)
 
                 trades.append({
@@ -583,7 +664,6 @@ class TradingEngineService:
                     "reduce_only": info.get("reduceOnly", False),
                 })
 
-            # Sort newest first
             trades.sort(key=lambda t: t.get("closed_at", ""), reverse=True)
             self._cached_exchange_trades = trades
             self._cached_exchange_trades_ts = now
@@ -598,22 +678,18 @@ class TradingEngineService:
         if now - self._cached_exchange_positions_ts < self._POSITIONS_CACHE_TTL:
             return self._cached_exchange_positions
         try:
-            if not self._exchange_manager:
-                return self._cached_exchange_positions
-            exchange = self._exchange_manager.get_exchange()
-            if not exchange:
+            ex = self._get_web_ccxt()
+            if not ex:
                 return self._cached_exchange_positions
 
             loop = asyncio.get_event_loop()
-            raw_positions = await loop.run_in_executor(
-                None, exchange.fetch_positions
-            )
+            raw_positions = await loop.run_in_executor(None, ex.fetch_positions)
 
             positions = []
             for p in raw_positions:
                 contracts = float(p.get("contracts", 0) or 0)
                 if contracts == 0:
-                    continue  # skip empty positions
+                    continue
                 side_raw = p.get("side", "")
                 entry_price = float(p.get("entryPrice", 0) or 0)
                 mark_price = float(p.get("markPrice", 0) or 0)
