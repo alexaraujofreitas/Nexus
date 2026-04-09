@@ -2727,13 +2727,33 @@ class TradingEngineService:
         }
 
     async def _cmd_exchange_load_active(self, params: dict) -> dict:
-        """Reload exchange connection after activation."""
+        """Reload exchange connection after activation.
+
+        Syncs the DB from web_assets.json (mode flags), then rebuilds
+        the CCXT instance so the engine connects to the correct endpoint.
+        Also invalidates cached balance/trades/positions.
+        """
         try:
-            if self._exchange_manager:
-                # Re-initialize exchange manager to pick up new config
-                logger.info("Reloading exchange connection (exchange_id=%s)", params.get("exchange_id"))
-                return {"status": "ok", "detail": "Exchange reload acknowledged"}
-            return {"status": "ok", "detail": "No exchange manager — engine uses config.yaml exchange settings"}
+            if not self._exchange_manager:
+                return {"status": "ok", "detail": "No exchange manager"}
+
+            logger.info("Reloading exchange connection (exchange_id=%s)", params.get("exchange_id"))
+
+            # 1. Sync DB mode flags from web_assets.json
+            self._sync_exchange_db_from_assets()
+
+            # 2. Rebuild CCXT instance with updated config
+            ok = self._exchange_manager.load_active_exchange()
+            if not ok:
+                return {"status": "error", "detail": "load_active_exchange failed — check logs"}
+
+            # 3. Invalidate caches so next dashboard poll fetches fresh data
+            self._cached_balance_ts = 0.0
+            self._cached_exchange_trades_ts = 0.0
+            self._cached_exchange_positions_ts = 0.0
+
+            logger.info("Exchange reloaded successfully")
+            return {"status": "ok", "detail": "Exchange reloaded"}
         except Exception as e:
             logger.error("exchange.load_active failed: %s", e)
             return {"status": "error", "detail": str(e)}
