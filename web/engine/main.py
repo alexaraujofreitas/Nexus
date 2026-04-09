@@ -1299,34 +1299,42 @@ class TradingEngineService:
         """Aggregated dashboard snapshot: portfolio + crash defense + recent trades."""
         result = {"status": "ok"}
 
-        # Fetch exchange balance (cached 30s) for capital display
-        exchange_balance = await self._fetch_exchange_balance_cached()
+        # All data from the active exchange
+        capital = await self._fetch_exchange_balance_cached()
+        positions = await self._fetch_exchange_positions_cached()
+        closed = await self._fetch_exchange_trades_cached()
 
-        # Portfolio
-        if self._pe:
-            prod = self._pe.get_production_status()
-            stats = self._pe.get_stats()
-            # Use exchange balance when available, fall back to PaperExecutor capital
-            capital = exchange_balance if exchange_balance > 0 else prod.get("capital_usdt", 0.0)
-            result["portfolio"] = {
-                "capital_usdt": capital,
-                "peak_capital_usdt": prod.get("peak_capital_usdt", 0.0),
-                "total_return_pct": prod.get("total_return_pct", 0.0),
-                "drawdown_pct": prod.get("drawdown_pct", 0.0),
-                "session_pnl_usdt": prod.get("session_pnl_usdt", 0.0),
-                "open_positions": prod.get("open_positions", 0),
-                "open_symbols": prod.get("open_symbols", []),
-                "total_trades": stats.get("total_trades", 0),
-                "win_rate": stats.get("win_rate", 0.0),
-                "profit_factor": stats.get("profit_factor", 0.0),
-                "total_pnl_usdt": stats.get("total_pnl_usdt", 0.0),
-                "avg_r": stats.get("avg_r", 0.0),
-                "avg_rr": stats.get("avg_rr", 0.0),
-                "last_10_outcomes": prod.get("last_10_outcomes", []),
-                "current_losing_streak": prod.get("current_losing_streak", 0),
-            }
-        else:
-            result["portfolio"] = {}
+        # Compute stats from exchange closed orders
+        total_trades = len(closed)
+        wins = [t for t in closed if (t.get("pnl_usdt") or 0) > 0]
+        losses = [t for t in closed if (t.get("pnl_usdt") or 0) <= 0]
+        total_pnl = sum(t.get("pnl_usdt", 0) for t in closed)
+        win_rate = (len(wins) / total_trades * 100) if total_trades > 0 else 0.0
+        gross_profit = sum(t.get("pnl_usdt", 0) for t in wins)
+        gross_loss = abs(sum(t.get("pnl_usdt", 0) for t in losses))
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0.0
+
+        # Exposure from exchange open positions
+        total_exposure = sum(p.get("size_usdt", 0) for p in positions)
+
+        result["portfolio"] = {
+            "capital_usdt": capital,
+            "peak_capital_usdt": capital,
+            "total_return_pct": 0.0,
+            "drawdown_pct": 0.0,
+            "session_pnl_usdt": round(total_pnl, 2),
+            "open_positions": len(positions),
+            "open_symbols": [p.get("symbol", "") for p in positions],
+            "total_trades": total_trades,
+            "win_rate": round(win_rate, 2),
+            "profit_factor": round(profit_factor, 2),
+            "total_pnl_usdt": round(total_pnl, 2),
+            "avg_r": 0.0,
+            "avg_rr": 0.0,
+            "last_10_outcomes": [],
+            "current_losing_streak": 0,
+            "used_margin": round(total_exposure, 2),
+        }
 
         # Crash defense
         try:
@@ -2607,47 +2615,41 @@ class TradingEngineService:
             return {"status": "error", "detail": str(e)}
 
     async def _cmd_get_portfolio_state(self, params: dict) -> dict:
-        """Portfolio state with heat and margin."""
+        """Portfolio state with heat and margin from the active exchange."""
         try:
             from datetime import datetime, timezone
-            portfolio = {}
-            if self._pe:
-                status = self._pe.get_production_status() if hasattr(self._pe, 'get_production_status') else {}
-                stats = self._pe.get_stats() if hasattr(self._pe, 'get_stats') else {}
-                pe_capital = status.get("capital_usdt", 0) or status.get("available_capital", 0)
-                # Use exchange balance when available, fall back to PaperExecutor capital
-                exchange_bal = await self._fetch_exchange_balance_cached()
-                capital = exchange_bal if exchange_bal > 0 else pe_capital
-                peak = status.get("peak_capital_usdt", capital)
 
-                # Calculate portfolio heat
-                open_positions = self._pe.get_open_positions() if hasattr(self._pe, 'get_open_positions') else []
-                total_exposure = sum(
-                    (p.get("size_usdt", 0) if isinstance(p, dict) else getattr(p, 'size_usdt', 0))
-                    for p in open_positions
-                )
-                heat_pct = (total_exposure / capital * 100) if capital > 0 else 0.0
+            capital = await self._fetch_exchange_balance_cached()
+            positions = await self._fetch_exchange_positions_cached()
+            closed = await self._fetch_exchange_trades_cached()
 
-                portfolio = {
-                    "equity": capital,
-                    "balance": capital,
-                    "used_margin": total_exposure,
-                    "free_margin": max(0, capital - total_exposure),
-                    "portfolio_heat_pct": round(heat_pct, 2),
-                    "max_heat_limit": 6.0,
-                    "drawdown_pct": status.get("drawdown_pct", 0),
-                    "total_return_pct": status.get("total_return_pct", 0),
-                    "open_positions": len(open_positions),
-                    "total_trades": stats.get("total_trades", 0) or status.get("total_trades", 0),
-                    "win_rate": stats.get("win_rate", 0) or status.get("win_rate", 0),
-                    "profit_factor": stats.get("profit_factor", 0),
-                    "trading_paused": status.get("circuit_breaker_on", False) or getattr(self._pe, '_trading_paused', False),
-                }
+            total_exposure = sum(p.get("size_usdt", 0) for p in positions)
+            heat_pct = (total_exposure / capital * 100) if capital > 0 else 0.0
+
+            total_trades = len(closed)
+            wins = sum(1 for t in closed if (t.get("pnl_usdt") or 0) > 0)
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
+
+            portfolio = {
+                "equity": capital,
+                "balance": capital,
+                "used_margin": round(total_exposure, 2),
+                "free_margin": round(max(0, capital - total_exposure), 2),
+                "portfolio_heat_pct": round(heat_pct, 2),
+                "max_heat_limit": 6.0,
+                "drawdown_pct": 0.0,
+                "total_return_pct": 0.0,
+                "open_positions": len(positions),
+                "total_trades": total_trades,
+                "win_rate": round(win_rate, 2),
+                "profit_factor": 0.0,
+                "trading_paused": self._trading_paused,
+            }
             return {
                 "status": "ok",
                 "portfolio": portfolio,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": type(self._pe).__name__ if self._pe else "none"
+                "data_source": "exchange",
             }
         except Exception as e:
             logger.error(f"get_portfolio_state failed: {e}")

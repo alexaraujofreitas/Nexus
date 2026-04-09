@@ -478,8 +478,8 @@ export default function Trading() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Paper Trading</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Simulated positions and trade history</p>
+          <h1 className="text-2xl font-bold text-gray-900">Trading</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Exchange positions and trade history</p>
         </div>
       </div>
 
