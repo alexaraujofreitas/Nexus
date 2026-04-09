@@ -1984,31 +1984,31 @@ class TradingEngineService:
         return {"status": "ok", "signals": signals, "count": len(signals)}
 
     async def _cmd_get_risk_status(self, params: dict) -> dict:
-        """Return current portfolio risk metrics."""
-        result = {"status": "ok", "risk": {}}
+        """Return current portfolio risk metrics from the active exchange."""
+        capital = await self._fetch_exchange_balance_cached()
+        positions = await self._fetch_exchange_positions_cached()
+        total_exposure = sum(p.get("size_usdt", 0) for p in positions)
+        heat_pct = (total_exposure / capital * 100) if capital > 0 else 0.0
 
-        if self._pe:
-            positions = self._pe.get_open_positions()
-            prod = self._pe.get_production_status()
-            result["risk"] = {
-                "portfolio_heat_pct": prod.get("portfolio_heat_pct", 0.0),
-                "drawdown_pct": prod.get("drawdown_pct", 0.0),
-                "open_positions": len(positions),
-                "circuit_breaker_on": prod.get("circuit_breaker_on", False),
-                "daily_loss_pct": 0.0,
-            }
+        risk = {
+            "portfolio_heat_pct": round(heat_pct, 2),
+            "drawdown_pct": 0.0,
+            "open_positions": len(positions),
+            "circuit_breaker_on": False,
+            "daily_loss_pct": 0.0,
+        }
 
         # Crash defense tier
         try:
             from core.risk.crash_defense_controller import get_crash_defense_controller
             cdc = get_crash_defense_controller()
-            result["risk"]["crash_tier"] = cdc.current_tier
-            result["risk"]["is_defensive"] = cdc.is_defensive
+            risk["crash_tier"] = cdc.current_tier
+            risk["is_defensive"] = cdc.is_defensive
         except Exception:
-            result["risk"]["crash_tier"] = "UNKNOWN"
-            result["risk"]["is_defensive"] = False
+            risk["crash_tier"] = "UNKNOWN"
+            risk["is_defensive"] = False
 
-        return result
+        return {"status": "ok", "risk": risk}
 
     async def _cmd_get_trade_history(self, params: dict) -> dict:
         """Return paginated trade history from the active exchange."""
